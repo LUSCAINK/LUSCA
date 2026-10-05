@@ -1,0 +1,572 @@
+/* ─── 404 — the creature lives in the zero ─────────────────
+   Desktop: stage fills the view, the 404 sits dead-centre over the creature
+   (the hollow zero is its window), top strip + foot band overlay the edges.
+   Narrow / short: everything flows in a column; the creature covers the stage. */
+
+.nf {
+  --nf-view: calc(100dvh - var(--bar-h) - var(--status-h));
+  --nf-top-h: 36px;
+  --nf-foot-h: 220px; /* measured at runtime (ResizeObserver on the foot band) */
+  --nf-avail: calc(var(--nf-view) - var(--nf-top-h) - var(--nf-foot-h));
+  --nf-fs: min(26vw, calc(var(--nf-avail) * 0.78));
+  position: relative;
+  height: var(--nf-view);
+  min-height: 500px;
+  overflow: hidden;
+  background: var(--bg);
+  isolation: isolate;
+}
+
+/* ─── background creature ──────────────────────── */
+/* bleeds past the top so its centre lands on the stage centre (between strip and band) */
+.nf-bg {
+  position: absolute;
+  inset: calc(var(--nf-top-h) - var(--nf-foot-h)) 0 0 0;
+  z-index: 0;
+}
+.nf-bg .creature {
+  opacity: 0.4;
+  transform: scale(1);
+  transition:
+    opacity var(--dur-3) var(--ease-expo),
+    transform 1200ms var(--ease-expo);
+}
+.nf.is-watching .nf-bg .creature {
+  opacity: 1;
+  transform: scale(1.06);
+}
+.nf-veil {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 70% 62% at 50% 50%, transparent 0 34%, rgba(5, 5, 5, 0.62) 72%, rgba(5, 5, 5, 0.94) 100%),
+    linear-gradient(var(--line) 1px, transparent 1px) -1px -1px / 64px 64px,
+    linear-gradient(90deg, var(--line) 1px, transparent 1px) -1px -1px / 64px 64px;
+  opacity: 0.9;
+  transition: opacity var(--dur-3) var(--ease-expo);
+}
+.nf.is-watching .nf-veil {
+  opacity: 0.55;
+}
+
+/* ─── top strip ────────────────────────────────── */
+.nf-top {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 3;
+  height: var(--nf-top-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 var(--gutter);
+  border-bottom: 1px solid var(--line-2);
+  background: rgba(5, 5, 5, 0.72);
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-2);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.nf-top b {
+  color: var(--fg);
+  font-weight: 500;
+}
+.nf-top-l,
+.nf-top-r {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.nf-top-route {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nf-top-r > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── stage ────────────────────────────────────── */
+.nf-stage {
+  position: absolute;
+  inset: var(--nf-top-h) 0 var(--nf-foot-h) 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.nf-cross {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+  transition: background var(--dur-3) var(--ease);
+}
+.nf-cross-h {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--line-3) 18%, var(--line-3) 82%, transparent);
+}
+.nf-cross-v {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--line-3) 18%, var(--line-3) 82%, transparent);
+}
+.nf.is-watching .nf-cross-h {
+  background: linear-gradient(90deg, transparent, var(--hot-a40) 30%, var(--hot-a40) 70%, transparent);
+}
+.nf.is-watching .nf-cross-v {
+  background: linear-gradient(180deg, transparent, var(--hot-a40) 30%, var(--hot-a40) 70%, transparent);
+}
+
+.nf-code {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  font-size: var(--nf-fs);
+  line-height: 0.74;
+  letter-spacing: -0.06em;
+  color: var(--fg);
+  transition: color var(--dur-3) var(--ease-expo);
+  user-select: none;
+}
+.nf-code > span[aria-hidden] {
+  display: block;
+}
+.nf-zero {
+  color: transparent;
+  -webkit-text-stroke: max(1px, 0.004em) var(--fg-1);
+  margin: 0 0.02em;
+  transition: -webkit-text-stroke-color var(--dur-3) var(--ease-expo);
+}
+.nf.is-watching .nf-code {
+  color: rgba(236, 235, 230, 0.07);
+}
+.nf.is-watching .nf-zero {
+  -webkit-text-stroke-color: var(--fg-3);
+}
+
+/* reticle — framed on the zero, where the creature's eyes sit */
+.nf-reticle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  width: calc(var(--nf-fs) * 0.34);
+  height: calc(var(--nf-fs) * 0.34);
+  transform: translate(-50%, -50%);
+  transition:
+    width var(--dur-3) var(--ease-expo),
+    height var(--dur-3) var(--ease-expo);
+}
+.nf.is-watching .nf-reticle {
+  width: calc(var(--nf-fs) * 0.24);
+  height: calc(var(--nf-fs) * 0.24);
+}
+.nf-rc {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 0 solid var(--fg-2);
+  transition: border-color var(--dur-2) var(--ease);
+}
+.nf-rc-tl {
+  top: 0;
+  left: 0;
+  border-width: 1px 0 0 1px;
+}
+.nf-rc-tr {
+  top: 0;
+  right: 0;
+  border-width: 1px 1px 0 0;
+}
+.nf-rc-bl {
+  bottom: 0;
+  left: 0;
+  border-width: 0 0 1px 1px;
+}
+.nf-rc-br {
+  bottom: 0;
+  right: 0;
+  border-width: 0 1px 1px 0;
+}
+.nf.is-watching .nf-rc {
+  border-color: var(--hot);
+}
+
+.nf-eyes {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 12px);
+  padding: 3px 8px;
+  background: var(--hot);
+  color: var(--ink);
+  font-size: var(--t-2xs);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  clip-path: inset(0 100% 0 0);
+  transition: clip-path var(--dur-2) var(--ease-in);
+}
+.nf.is-watching .nf-eyes {
+  clip-path: inset(0 0 0 0);
+  transition: clip-path var(--dur-3) var(--ease-expo) 120ms;
+  animation: nf-eyes-blink 3.6s steps(1) both;
+}
+@keyframes nf-eyes-blink {
+  0%, 100% { background: var(--hot); }
+  52% { background: var(--fg); }
+  56% { background: var(--hot); }
+}
+
+/* depth ruler */
+.nf-depth {
+  position: absolute;
+  left: var(--gutter);
+  top: 50%;
+  height: calc(var(--nf-fs) * 0.9);
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: var(--t-3xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.nf-depth-k {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  white-space: nowrap;
+}
+.nf-depth-scale {
+  position: relative;
+  flex: 1;
+  width: 10px;
+  border-left: 1px solid var(--line-3);
+  background: repeating-linear-gradient(180deg, var(--line-3) 0 1px, transparent 1px 10%) left top / 5px 100% no-repeat;
+}
+.nf-depth-t {
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transform: translateY(-50%);
+  line-height: 1;
+}
+.nf-depth-t::before {
+  content: '';
+  width: 9px;
+  height: 1px;
+  background: var(--fg-3);
+}
+.nf-depth-mark {
+  position: absolute;
+  left: -1px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transform: translateY(-50%);
+  color: var(--hot);
+  white-space: nowrap;
+  line-height: 1;
+  padding-left: 0;
+}
+.nf-depth-mark::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 7px solid var(--hot);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+}
+
+.nf-coord {
+  position: absolute;
+  right: var(--gutter);
+  top: 50%;
+  transform: translateY(-50%) rotate(180deg);
+  writing-mode: vertical-rl;
+  font-size: var(--t-3xs);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+
+/* ─── foot band ────────────────────────────────── */
+.nf-foot {
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) 232px;
+  gap: 1px;
+  background: var(--line-2);
+  border-top: 1px solid var(--line-2);
+}
+.nf-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 18px var(--gutter) 20px;
+  background: rgba(5, 5, 5, 0.9);
+}
+.nf-cell + .nf-cell {
+  padding-left: 20px;
+}
+.nf-cell > .label {
+  color: var(--fg-2);
+}
+
+.nf-line {
+  font-family: var(--f-sans);
+  font-size: clamp(24px, 2.3vw, 34px);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 1.02;
+  color: var(--fg);
+}
+.nf-sub {
+  max-width: 46ch;
+  font-size: var(--t-sm);
+  line-height: 1.55;
+  color: var(--fg-2);
+}
+.nf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.nf-actions .btn {
+  pointer-events: auto;
+}
+.nf-k {
+  color: inherit;
+  opacity: 0.55;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+.nf-req {
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line-2);
+}
+.nf-req b {
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--fg);
+  color: var(--ink);
+  padding: 0 4px;
+}
+.nf-path {
+  color: var(--fg);
+  box-shadow: inset 0 -1px 0 var(--line-4);
+}
+.nf-kv .kv {
+  padding: 6px 0;
+}
+.nf-kv .kv:last-child {
+  border-bottom: 0;
+}
+.nf-kv dd {
+  min-width: 0;
+  color: var(--fg-1);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nf-kv dt {
+  flex: none;
+}
+.nf-last a {
+  color: var(--fg);
+  transition: color var(--dur-1) var(--ease);
+}
+.nf-last a:hover {
+  color: var(--hot);
+}
+
+.nf-keys {
+  justify-content: flex-start;
+}
+.nf-buf {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line-3);
+  border: 1px solid var(--line-3);
+}
+.nf-buf-c {
+  display: grid;
+  place-items: center;
+  height: 56px;
+  background: var(--bg-1);
+  font-size: 26px;
+  font-weight: 500;
+  text-transform: uppercase;
+  color: var(--fg-4);
+  transition:
+    background var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+.nf-buf-c.on {
+  color: var(--fg);
+  background: var(--bg-3);
+}
+.nf.is-watching .nf-buf-c {
+  background: var(--hot);
+  color: var(--ink);
+}
+.nf-hint {
+  font-size: var(--t-2xs);
+  letter-spacing: 0.06em;
+  color: var(--fg-3);
+}
+
+/* ─── medium: drop side instruments ────────────── */
+@media (max-width: 1180px) {
+  .nf-foot {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  }
+  .nf-keys {
+    display: none;
+  }
+}
+
+/* ─── narrow or short: flow layout ─────────────── */
+@media (max-width: 900px), (max-height: 600px) {
+  .nf {
+    --nf-stage-h: clamp(300px, 54vh, 480px);
+    --nf-fs: min(36vw, calc(var(--nf-stage-h) * 0.62));
+    height: auto;
+    min-height: var(--nf-view);
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+  }
+  .nf-bg {
+    inset: 0 0 auto 0;
+    /* centred on the stage: top strip above it, mirrored below */
+    height: calc(var(--nf-top-h) * 2 + var(--nf-stage-h));
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(180deg, #000 72%, transparent);
+    mask-image: linear-gradient(180deg, #000 72%, transparent);
+  }
+  .nf-top,
+  .nf-stage,
+  .nf-foot {
+    position: relative;
+    inset: auto;
+  }
+  .nf-stage {
+    height: var(--nf-stage-h);
+    flex: none;
+  }
+  .nf-foot {
+    flex: 1;
+  }
+  .nf-depth,
+  .nf-coord {
+    display: none;
+  }
+  .nf-bg .creature {
+    opacity: 0.5;
+  }
+}
+
+@media (max-width: 900px) {
+  .nf-foot {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .nf-say {
+    grid-column: 1 / -1;
+  }
+  .nf-keys {
+    display: flex;
+  }
+}
+
+@media (max-width: 640px) {
+  .nf {
+    --nf-top-h: 32px;
+    --nf-stage-h: clamp(240px, 42vh, 360px);
+    --nf-fs: min(38vw, calc(var(--nf-stage-h) * 0.62));
+  }
+  .nf-top-route {
+    display: none;
+  }
+  .nf-top {
+    font-size: var(--t-3xs);
+  }
+  .nf-foot {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .nf-cell,
+  .nf-cell + .nf-cell {
+    padding: 16px var(--gutter) 18px;
+  }
+  .nf-line {
+    font-size: 28px;
+  }
+  .nf-actions .btn {
+    flex: 1 1 100%;
+    justify-content: space-between;
+  }
+  .nf-keys {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    column-gap: 16px;
+    row-gap: 8px;
+  }
+  .nf-keys > .label {
+    grid-column: 1 / -1;
+  }
+  .nf-buf {
+    width: 156px;
+  }
+  .nf-buf-c {
+    height: 44px;
+    font-size: 20px;
+  }
+  .nf-eyes {
+    font-size: var(--t-3xs);
+  }
+}
+
+/* no WebGL: the stage keeps its grid; the creature's own fallback caption would collide with the digits */
+.nf-bg .creature-gl[data-nogl='1']::after {
+  display: none;
+}
+
+/* touch-only devices have no keyboard to taste — drop the keybuf cell */
+@media (hover: none) and (pointer: coarse) {
+  .nf-keys {
+    display: none;
+  }
+  .nf-read {
+    grid-column: 1 / -1;
+  }
+}

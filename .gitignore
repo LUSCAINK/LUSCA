@@ -1,0 +1,35 @@
+*.local
+.claude/
+.env
+.env.*
+dist
+dist-static
+node_modules
+
+# runtime data (dataset, checkpoints, ledger, salts, auth secret) — never commit
+server/data/*
+!server/data/.gitignore
+!server/data/.gitkeep
+*.ckpt
+*.ckpt.bak
+*.salt
+auth.secret
+issuance.log*
+
+# keys and wallets — never commit
+keys/
+**/keys/*.json
+*keypair*.json
+*-payout.json
+treasury*.json
+id.json
+*.pem
+*.key
+
+# build output and logs
+dist/
+dist-static/
+*.log
+coverage/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/LUSCAINK/LUSCA/security/policy
+    about: Report privately to lusca@collider.capital (see SECURITY.md). Do not open a public issue.
+  - name: Site owners - keep LuscaBot off your pages or remove content
+    url: https://lusca.ink/docs/ethics
+    about: Email lusca@collider.capital, or opt out in robots.txt as described on this page.
+  - name: Questions about running a neuron
+    url: https://lusca.ink/docs
+    about: The manual covers neurons, INK, audits and payouts.

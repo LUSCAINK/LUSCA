@@ -1,0 +1,125 @@
+/* state dots / pills */
+.sdot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: none;
+  background: var(--fg-4);
+}
+.sdot-hot {
+  background: var(--hot);
+  box-shadow: 0 0 10px var(--hot-a40);
+}
+.sdot-fg {
+  background: var(--fg);
+}
+.sdot-err {
+  background: var(--err);
+}
+.sdot-mid {
+  background: var(--fg-2);
+  animation: led-pulse 0.6s steps(2) infinite;
+}
+.sdot-dim {
+  background: var(--fg-4);
+  outline: 1px solid var(--line-3);
+  outline-offset: -1px;
+}
+
+.spill {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  font-family: var(--f-mono);
+  font-size: var(--t-3xs);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  border: 1px solid var(--line-3);
+  color: var(--fg-2);
+}
+.spill-hot {
+  border-color: var(--hot);
+  color: var(--hot);
+}
+.spill-fg {
+  background: var(--fg);
+  border-color: var(--fg);
+  color: var(--ink);
+}
+.spill-err {
+  border-color: var(--err);
+  color: var(--err);
+}
+.spill-mid {
+  color: var(--fg-1);
+}
+
+/* stat tile */
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+.stat-v {
+  font-family: var(--f-mono);
+  font-size: var(--t-xl);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.stat-suf {
+  font-size: 0.6em;
+  color: var(--fg-2);
+  margin-left: 2px;
+}
+.stat-hot .stat-v {
+  color: var(--hot);
+}
+.stat-sub {
+  font-size: var(--t-3xs);
+  color: var(--fg-3);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* segmented meter */
+.meter {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  height: 14px;
+}
+.mseg {
+  background: var(--bg-4);
+  position: relative;
+}
+.mseg.on {
+  background: var(--hot);
+}
+.mseg.low {
+  background: var(--fg-3);
+}
+.mseg.th::after {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: -4px;
+  bottom: -4px;
+  width: 1px;
+  background: var(--fg);
+}
+
+mark.hl {
+  background: var(--hot-a20);
+  color: var(--fg);
+  box-shadow: inset 0 -1px 0 var(--hot);
+  padding: 0 1px;
+}

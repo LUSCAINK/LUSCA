@@ -1,0 +1,593 @@
+/* Treasury & payouts — instrument-panel cards, brutalist tables, mono tabular data. */
+
+.tre {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* ─── status strip ───────────────────────────────── */
+.tre-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--line-3);
+  background: var(--bg-1);
+}
+.tre-v-live {
+  box-shadow: inset 3px 0 0 var(--hot);
+}
+.tre-v-unreachable {
+  box-shadow: inset 3px 0 0 var(--err);
+}
+.tre-led-err {
+  background: var(--err);
+}
+.tre-strip-t {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  color: var(--fg-1);
+}
+.tre-strip-t b {
+  font-weight: 500;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg);
+}
+.tre-v-live .tre-strip-t b {
+  color: var(--hot);
+}
+.tre-warn {
+  color: var(--warn);
+}
+.tre-ago {
+  font-family: var(--f-mono);
+  font-size: var(--t-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+.tre-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── live cards ─────────────────────────────────── */
+.tre-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.tre-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.tre-card-hot {
+  border-color: var(--hot);
+  background: linear-gradient(180deg, var(--hot-a10), transparent 55%), var(--bg-1);
+}
+.tre-off {
+  grid-column: span 2;
+}
+.tre-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 18px;
+}
+.tre-big {
+  margin-top: 10px;
+  font-size: clamp(30px, 2.9vw, 46px);
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.tre-big.hot {
+  color: var(--hot);
+}
+.tre-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+  margin: 6px 0 14px;
+  font-family: var(--f-mono);
+  font-size: var(--t-3xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.tre-stale {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.tre-kvs {
+  margin-top: auto;
+}
+.tre-kvs .kv > :last-child {
+  color: var(--fg);
+  text-align: right;
+}
+.tre-dim {
+  color: var(--fg-2);
+}
+.tre-off-h {
+  font-family: var(--f-mono);
+  font-size: var(--t-md);
+  font-weight: 500;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg);
+}
+.tre-off-p {
+  max-width: 62ch;
+  margin-top: 8px;
+  font-size: var(--t-sm);
+  line-height: 1.65;
+  color: var(--fg-2);
+}
+
+/* address row: short key · copy · explorer */
+.tre-addr {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line-2);
+}
+.tre-addr-r {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+}
+.tre-key {
+  font-size: var(--t-sm);
+  color: var(--fg);
+  cursor: help;
+}
+.tre-copy {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--line-3);
+  font-family: var(--f-mono);
+  font-size: var(--t-3xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-1);
+  transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+}
+.tre-copy:hover {
+  border-color: var(--fg-2);
+  color: var(--fg);
+}
+.tre-copy.ok {
+  border-color: var(--hot);
+  color: var(--hot);
+}
+.tre-copy.fail {
+  border-color: var(--err);
+  color: var(--err);
+}
+.tre-ext {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--t-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-1);
+  border-bottom: 1px solid var(--line-4);
+  white-space: nowrap;
+}
+.tre-ext:hover {
+  color: var(--hot);
+  border-color: var(--hot);
+}
+.tre-ext span {
+  color: var(--fg-3);
+}
+.tre-ext:hover span {
+  color: var(--hot);
+}
+.tre-tx {
+  font-size: var(--t-xs);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.tre-full {
+  width: 100%;
+  height: 36px;
+  margin-top: 10px;
+  padding: 0 10px;
+  border: 1px solid var(--line-3);
+  background: var(--bg-2);
+  font-size: var(--t-xs);
+  color: var(--fg);
+}
+
+/* ─── tables ─────────────────────────────────────── */
+.tre-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+}
+.tre-table th,
+.tre-table td {
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  color: var(--fg-1);
+  font-weight: 400;
+}
+.tre-table thead th {
+  padding: 8px 14px;
+  font-size: var(--t-3xs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  background: var(--bg-2);
+  border-bottom-color: var(--line-2);
+}
+.tre-table tbody th {
+  color: var(--fg);
+}
+.tre-table .r {
+  text-align: right;
+}
+.tre-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.tre-st {
+  font-size: var(--t-3xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.tre-st-ok {
+  color: var(--fg);
+}
+.tre-st-hot {
+  color: var(--hot);
+}
+.tre-st-dim {
+  color: var(--fg-2);
+}
+.tre-st-err {
+  color: var(--err);
+}
+.tre-txs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+.tre-more {
+  font-family: var(--f-mono);
+  font-size: var(--t-3xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  border-bottom: 1px dashed var(--line-4);
+}
+.tre-more:hover {
+  color: var(--fg);
+}
+.tre-empty {
+  padding: 16px 14px;
+  font-size: var(--t-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+
+/* rules: key / value + note */
+.tre-grid2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.tre-rt {
+  width: 100%;
+  border-collapse: collapse;
+}
+.tre-rt th,
+.tre-rt td {
+  padding: 12px 14px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+.tre-rt tr:last-child > * {
+  border-bottom: 0;
+}
+.tre-rt th {
+  width: 34%;
+  font-family: var(--f-mono);
+  font-size: var(--t-2xs);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.tre-rv {
+  display: block;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  line-height: 1.55;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.tre-rd {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--t-xs);
+  line-height: 1.55;
+  color: var(--fg-2);
+}
+
+/* ─── check a wallet ─────────────────────────────── */
+.tre-wallet {
+  min-width: 0;
+}
+.tre-form-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.tre-input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line-3);
+  background: var(--bg);
+  font-size: var(--t-sm);
+  color: var(--fg);
+}
+.tre-input::placeholder {
+  color: var(--fg-3);
+}
+.tre-input:focus-visible {
+  outline: none;
+  border-color: var(--hot);
+}
+.tre-input[aria-invalid='true'] {
+  border-color: var(--err);
+}
+.tre-go {
+  height: 40px;
+}
+.tre-err {
+  margin-top: 8px;
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  color: var(--err);
+}
+.tre-help {
+  margin-top: 8px;
+  font-size: var(--t-xs);
+  line-height: 1.55;
+  color: var(--fg-2);
+}
+.tre-wr {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-2);
+  min-width: 0;
+}
+.tre-wr-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.tre-wr-status {
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  color: var(--fg-1);
+}
+.tre-wr-note {
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  color: var(--fg-2);
+}
+.tre-wr-note a {
+  color: var(--fg);
+  text-decoration: underline;
+  text-decoration-color: var(--line-4);
+  text-underline-offset: 3px;
+}
+.tre-wr-note a:hover {
+  color: var(--hot);
+}
+.tre-wstats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line-2);
+  border: 1px solid var(--line-2);
+}
+.tre-wstats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  background: var(--bg);
+}
+.tre-wstats dd.num {
+  font-size: var(--t-lg);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.tre-wstats dd.hot {
+  color: var(--hot);
+}
+.tre-wstats-n {
+  font-family: var(--f-mono);
+  font-size: var(--t-3xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.tre-wt {
+  border: 1px solid var(--line-2);
+}
+.tre-wr .tre-empty {
+  padding: 0;
+}
+
+/* ─── responsive ─────────────────────────────────── */
+@media (max-width: 1100px) {
+  .tre-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .tre-grid > :first-child,
+  .tre-off {
+    grid-column: 1 / -1;
+  }
+  .tre-grid2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .tre-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tre-strip {
+    flex-wrap: wrap;
+  }
+  .tre-strip .tre-ago {
+    flex-basis: 100%;
+    padding-left: 18px;
+  }
+  .tre-big {
+    font-size: 34px;
+  }
+  .tre-copy,
+  .tre-ext,
+  .tre-more {
+    min-height: 40px;
+  }
+  .tre-copy {
+    padding: 0 12px;
+  }
+  .tre-ext {
+    border-bottom: 0;
+    text-decoration: underline;
+    text-decoration-color: var(--line-4);
+    text-underline-offset: 3px;
+  }
+
+  /* tables become stacked label / value rows — no horizontal scroll */
+  .tre-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .tre-table,
+  .tre-table tbody,
+  .tre-table tr {
+    display: block;
+    width: 100%;
+  }
+  .tre-table tr {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line-2);
+  }
+  .tre-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+  .tre-table tbody th,
+  .tre-table tbody td {
+    display: grid;
+    grid-template-columns: 108px minmax(0, 1fr);
+    align-items: baseline;
+    gap: 10px;
+    padding: 2px 0;
+    border: 0;
+    white-space: normal;
+    text-align: left;
+  }
+  .tre-table tbody .r {
+    text-align: left;
+  }
+  .tre-table [data-l]::before {
+    content: attr(data-l);
+    font-size: var(--t-3xs);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-3);
+  }
+  .tre-rt th,
+  .tre-rt td {
+    display: block;
+    width: auto;
+    padding: 0 14px;
+    border: 0;
+  }
+  .tre-rt th {
+    padding-top: 12px;
+  }
+  .tre-rt td {
+    padding-top: 4px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .tre-rt tr {
+    display: block;
+  }
+  .tre-rt tr:last-child td {
+    border-bottom: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .tre-body {
+    padding: 14px;
+  }
+  .tre-wstats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tre-form-row {
+    flex-direction: column;
+  }
+  /* in a column, flex-basis 0 would override the height and collapse the field */
+  .tre-form-row .tre-input {
+    flex: 0 0 auto;
+    height: 44px;
+  }
+  .tre-go {
+    width: 100%;
+  }
+}

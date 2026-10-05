@@ -1,0 +1,78 @@
+{
+  "name": "lusca",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Open crypto-text corpus, the SEPIA-0 language model trained on it, and the volunteer GPU network (WebGPU and desktop neurons) that computes its audited training gradients.",
+  "keywords": [
+    "webgpu",
+    "wgsl",
+    "distributed-training",
+    "volunteer-computing",
+    "language-model",
+    "llm-training",
+    "open-data",
+    "dataset",
+    "web-corpus",
+    "solana",
+    "three",
+    "react",
+    "vite",
+    "typescript"
+  ],
+  "license": "MIT",
+  "homepage": "https://lusca.ink",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LUSCAINK/LUSCA.git"
+  },
+  "bugs": {
+    "url": "https://github.com/LUSCAINK/LUSCA/issues",
+    "email": "lusca@collider.capital"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c \"#ff4d00,#ecebe6\" \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:web": "vite",
+    "dev:server": "tsx watch --clear-screen=false server/index.ts",
+    "server": "tsx server/index.ts",
+    "build": "tsc -b && vite build && node scripts/build-neuron.mjs",
+    "build:neuron": "node scripts/build-neuron.mjs",
+    "start": "vite build && node scripts/build-neuron.mjs && tsx server/index.ts",
+    "typecheck": "tsc -b && tsc -p tsconfig.server.json",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "test": "tsx server/neurons/_test.ts && tsx server/auth/_test.ts && tsx server/payouts/_test.ts && tsx shared/sepia/_test.ts && tsx server/trainer/_smoke.ts --gpu"
+  },
+  "dependencies": {
+    "@fontsource-variable/archivo": "^5.3.0",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@solana/web3.js": "^1.99.0",
+    "gpt-tokenizer": "^4.0.0",
+    "node-html-parser": "^9.0.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.4",
+    "robots-parser": "^3.0.1",
+    "three": "^0.186.1",
+    "ws": "^8.22.0",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@types/three": "^0.186.0",
+    "@types/ws": "^8.18.2",
+    "@vitejs/plugin-react": "^6.1.1",
+    "@webgpu/types": "^0.1.74",
+    "concurrently": "^10.0.5",
+    "oxlint": "^1.81.0",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

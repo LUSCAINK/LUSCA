@@ -1,0 +1,93 @@
+# Render Blueprint for LUSCA: one web service (API + WebSocket + built frontend in one Node process).
+# Persistent disk keeps the dataset, SEPIA checkpoint and INK ledger across deploys and restarts.
+# Create the service FROM THIS BLUEPRINT so the disk and every env var below actually apply.
+services:
+  - type: web
+    name: lusca
+    runtime: node
+    plan: standard            # 1 CPU / 2 GB
+    region: oregon
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: node --import tsx server/index.ts
+    healthCheckPath: /api/health
+    # SIGTERM → the server checkpoints and saves the ledger; it force-exits after
+    # LUSCA_SHUTDOWN_TIMEOUT_S (25 s), so give it 30 s before Render kills it.
+    maxShutdownDelaySeconds: 30
+    disk:
+      name: lusca-data
+      mountPath: /var/data
+      sizeGB: 2
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      # One proxy hop (Render's edge) so per-IP limits see the real client address.
+      # Render's internal proxies are in the private ranges trusted by default
+      # (LUSCA_TRUSTED_PROXIES unset = loopback + private). After a deploy, read the
+      # "[proxy] first forwarded request" log line: if the client resolved to a
+      # Cloudflare address, set this to 2.
+      - key: LUSCA_TRUST_PROXY
+        value: "1"
+      - key: LUSCA_DATA
+        value: /var/data/lusca
+      # Refuse to boot if LUSCA_DATA is not on the mounted disk (a service created
+      # without the disk would otherwise write the ledger to ephemeral storage).
+      - key: LUSCA_REQUIRE_DISK
+        value: "1"
+      - key: LUSCA_AGENTS
+        value: "24"
+      - key: LUSCA_CORPUS_CHARS
+        value: "24000000"
+      - key: LUSCA_MEMORY_PAGES
+        value: "20000"
+      - key: LUSCA_TRAIN_DUTY
+        value: "0.6"
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=1200
+      # keep the 2 GB disk from filling: rotate dataset.jsonl at 350 MB, keep the 3 newest archives
+      - key: LUSCA_DATASET_MAX_MB
+        value: "350"
+      - key: LUSCA_DATASET_KEEP
+        value: "3"
+      # Egress cap for GPU job payloads across all neurons (code default 2 MB/s).
+      - key: LUSCA_ISSUE_MB_PER_SEC
+        value: "1"
+      # Takedown / abuse contact (e-mail or URL). Shown in LuscaBot's user-agent, sent as
+      # From: when it is an e-mail, and published on /privacy and /terms. Render asks for
+      # it when the Blueprint is created. Set it to a monitored address: when empty, LuscaBot
+      # sends no From: header, /privacy and /terms list no contact, and boot logs a warning.
+      - key: LUSCA_BOT_CONTACT
+        sync: false
+      # Wallet sign-in: host named in the signed message; must match the public URL.
+      - key: LUSCA_PUBLIC_HOST
+        value: lusca.ink
+      # Page requests on *.onrender.com get a 301 to this host (API/WS/health never redirect).
+      - key: LUSCA_CANONICAL_HOST
+        value: lusca.ink
+      # Render's edge is Cloudflare: trust its ranges so the visitor IP (not the edge) is used.
+      - key: LUSCA_TRUSTED_PROXIES
+        value: loopback,private,cloudflare
+      # HMAC key for 30-day wallet session tokens. Secret: enter in the dashboard (unset =
+      # generated once into LUSCA_DATA/auth.secret on the disk).
+      - key: LUSCA_AUTH_SECRET
+        sync: false
+      # SOL payouts (server/payouts): off | dryrun | live. Stay off until the treasury is funded.
+      - key: LUSCA_PAYOUTS
+        value: "off"
+      - key: LUSCA_SOLANA_RPC
+        value: https://api.mainnet-beta.solana.com
+      - key: LUSCA_PAYOUT_EVERY_H
+        value: "12"
+      - key: LUSCA_PAYOUT_SHARE
+        value: "0.5"
+      - key: LUSCA_PAYOUT_RESERVE_SOL
+        value: "0.05"
+      - key: LUSCA_PAYOUT_MAX_SOL
+        value: "5"
+      - key: LUSCA_PAYOUT_MAX_WALLET_SOL
+        value: "1"
+      - key: LUSCA_PAYOUT_MIN_SOL
+        value: "0.001"
+      # Treasury secret key (base58 or JSON byte array). Secret: enter in the dashboard only,
+      # never commit it. Required for LUSCA_PAYOUTS=live.
+      - key: LUSCA_TREASURY_SECRET
+        sync: false

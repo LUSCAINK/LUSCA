@@ -1,0 +1,506 @@
+/* ─── /privacy · /terms — legal documents ─────────────
+   strip · display head + doc switch · fact strip · change notice ·
+   sticky index | numbered sections (prose measure ~70ch). */
+
+.legal {
+  --lg-toc-w: 248px;
+  min-height: calc(100dvh - var(--bar-h) - var(--status-h));
+  background: var(--bg);
+}
+
+/* ─── strip ─────────────────────────────────────── */
+.lg-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 36px;
+  padding: 0 var(--gutter);
+  border-bottom: 1px solid var(--line-2);
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+.lg-strip-l {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.lg-strip-t {
+  color: var(--fg);
+}
+.lg-strip-r {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ─── head ──────────────────────────────────────── */
+.lg-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 24px;
+  padding: 64px var(--gutter) 36px;
+  border-bottom: 1px solid var(--line-2);
+}
+.lg-head-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.lg-title {
+  margin-top: 18px;
+  font-size: clamp(56px, 11vw, 168px);
+  color: var(--fg);
+}
+.lg-kicker {
+  margin-top: 20px;
+  font-size: var(--t-sm);
+  letter-spacing: 0.02em;
+  color: var(--fg-1);
+}
+
+.lg-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--line-3);
+  background: var(--bg);
+}
+.lg-switch-i {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 18px;
+  font-size: var(--t-xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-2);
+  transition:
+    color var(--dur-1) var(--ease),
+    background var(--dur-1) var(--ease);
+}
+.lg-switch-i + .lg-switch-i {
+  border-left: 1px solid var(--line-3);
+}
+.lg-switch-i:hover {
+  color: var(--fg);
+  background: var(--bg-3);
+}
+.lg-switch-i.on {
+  background: var(--fg);
+  color: var(--ink);
+}
+.lg-switch-n {
+  font-size: var(--t-3xs);
+  opacity: 0.6;
+}
+
+/* ─── fact strip ────────────────────────────────── */
+.lg-facts {
+  display: grid;
+  /* one row of n cells (n set inline), so no empty grey cell is left over */
+  grid-template-columns: repeat(var(--lg-n, 4), minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line-2);
+  border-bottom: 1px solid var(--line-2);
+}
+.lg-fact {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between; /* values share a baseline when a label wraps */
+  gap: 10px;
+  padding: 16px var(--gutter) 18px;
+  background: var(--bg);
+  min-width: 0;
+}
+.lg-fact-v {
+  font-size: var(--t-xl);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--fg);
+}
+
+/* ─── change notice ──────────────────────────────── */
+.lg-draft {
+  padding: 16px var(--gutter);
+  border-bottom: 1px solid var(--line-2);
+  border-left: 2px solid var(--hot);
+}
+.lg-draft p {
+  max-width: 96ch;
+  font-size: var(--t-md);
+  line-height: 1.55;
+  color: var(--fg-1);
+}
+.lg-draft b {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* ─── body: index | sections ────────────────────── */
+.lg-body {
+  display: grid;
+  grid-template-columns: var(--lg-toc-w) minmax(0, 1fr);
+  align-items: start;
+}
+
+.lg-toc {
+  position: sticky;
+  top: var(--bar-h);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px 16px 28px var(--gutter);
+  border-right: 1px solid var(--line-2);
+  min-height: calc(100dvh - var(--bar-h) - var(--status-h));
+}
+.lg-toc-list {
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.lg-toc-a {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  min-height: 36px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--fg-2);
+  transition: color var(--dur-1) var(--ease);
+}
+.lg-toc-a:hover {
+  color: var(--fg);
+}
+.lg-toc-n {
+  font-size: var(--t-2xs);
+  color: var(--fg-3);
+}
+.lg-toc-a:hover .lg-toc-n {
+  color: var(--hot);
+}
+
+.lg-col {
+  min-width: 0;
+  max-width: 940px;
+  padding: 0 var(--gutter) 72px 40px;
+}
+
+.lg-sec {
+  padding: 40px 0 36px;
+  border-bottom: 1px solid var(--line-2);
+  scroll-margin-top: calc(var(--bar-h) + 12px);
+}
+.lg-sec:focus {
+  outline: none;
+}
+.lg-sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.lg-sec-n {
+  flex: none;
+  font-size: var(--t-xs);
+  letter-spacing: 0.06em;
+  color: var(--hot);
+}
+.lg-sec-title {
+  font-family: var(--f-sans);
+  font-size: var(--t-xl);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+  color: var(--fg);
+}
+
+/* ─── prose ─────────────────────────────────────── */
+.lg-prose {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--fg-1);
+}
+.lg-prose p,
+.lg-prose ul {
+  max-width: 70ch;
+}
+.lg-prose ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.lg-prose li {
+  position: relative;
+  padding-left: 24px;
+}
+.lg-prose li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.8em;
+  width: 10px;
+  height: 1px;
+  background: var(--fg-3);
+}
+.lg-prose b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.lg-prose a {
+  color: var(--fg);
+  box-shadow: inset 0 -1px 0 var(--line-4);
+  transition:
+    color var(--dur-1) var(--ease),
+    box-shadow var(--dur-1) var(--ease);
+}
+.lg-prose a:hover {
+  color: var(--hot);
+  box-shadow: inset 0 -1px 0 var(--hot);
+}
+.lg-prose code {
+  font-family: var(--f-mono);
+  font-size: 0.85em;
+  padding: 1px 5px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.lg-code {
+  display: flex;
+  flex-direction: column;
+  max-width: 70ch;
+  margin: 0;
+  padding: 0 14px 12px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-1);
+  font-size: var(--t-sm);
+  line-height: 1.7;
+  color: var(--fg);
+  white-space: pre-wrap;
+}
+.lg-code-h {
+  margin: 0 -14px 10px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--line-2);
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+
+/* storage keys */
+.lg-keys {
+  max-width: 70ch;
+  border-top: 1px solid var(--line-2);
+}
+.lg-keys .kv {
+  padding: 9px 0;
+  align-items: center;
+}
+.lg-keys .kv > :first-child {
+  flex: none;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.lg-keys code {
+  font-size: var(--t-sm);
+}
+.lg-keys dd {
+  color: var(--fg-1);
+  text-align: right;
+}
+
+/* ─── collection table ──────────────────────────── */
+.lg-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-top: 1px solid var(--line-3);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.lg-table thead th {
+  padding: 10px 14px 10px 0;
+  border-bottom: 1px solid var(--line-2);
+  font-family: var(--f-mono);
+  font-size: var(--t-2xs);
+  font-weight: 500;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--fg-2);
+}
+.lg-table tbody th,
+.lg-table td {
+  padding: 12px 14px 12px 0;
+  border-bottom: 1px dashed var(--line-2);
+  vertical-align: top;
+  text-align: left;
+}
+.lg-table tbody th {
+  width: 20%;
+  font-weight: 500;
+  color: var(--fg);
+}
+.lg-table td {
+  color: var(--fg-1);
+}
+.lg-table td:nth-child(2) {
+  width: 22%;
+}
+
+/* ─── foot ──────────────────────────────────────── */
+.lg-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 28px;
+  padding: 28px 0 0;
+  font-size: var(--t-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.lg-foot-a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  color: var(--fg);
+  transition: color var(--dur-1) var(--ease);
+}
+.lg-foot-a:hover {
+  color: var(--hot);
+}
+.lg-foot-rev {
+  margin-left: auto;
+  font-size: var(--t-2xs);
+}
+
+/* ─── tablet: index above the text ──────────────── */
+@media (max-width: 960px) {
+  .lg-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lg-toc {
+    position: static;
+    min-height: 0;
+    padding: 20px var(--gutter) 4px;
+    border-right: 0;
+  }
+  .lg-toc-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 16px;
+  }
+  .lg-toc-a {
+    min-height: 40px;
+  }
+  .lg-col {
+    padding: 0 var(--gutter) 56px;
+  }
+  .lg-fact-v {
+    font-size: var(--t-lg);
+  }
+}
+
+/* ─── phone ─────────────────────────────────────── */
+@media (max-width: 720px) {
+  .lg-head {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 40px var(--gutter) 24px;
+  }
+  .lg-switch-i {
+    height: 44px;
+  }
+  .lg-strip-r {
+    display: none;
+  }
+  .lg-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .lg-fact:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+  .lg-fact-v {
+    font-size: var(--t-lg);
+  }
+  .lg-toc-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lg-sec {
+    padding: 32px 0 28px;
+  }
+  .lg-sec-title {
+    font-size: 19px;
+  }
+  .lg-prose {
+    font-size: 14px;
+  }
+
+  /* table → stacked records */
+  .lg-table,
+  .lg-table tbody,
+  .lg-table tr,
+  .lg-table tbody th,
+  .lg-table td {
+    display: block;
+    width: auto;
+  }
+  .lg-table td:nth-child(2) {
+    width: auto;
+  }
+  .lg-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .lg-table tr {
+    padding: 12px 0 14px;
+    border-bottom: 1px solid var(--line-2);
+  }
+  .lg-table tbody th,
+  .lg-table td {
+    padding: 0;
+    border: 0;
+  }
+  .lg-table tbody th {
+    font-size: 15px;
+  }
+  .lg-table td::before {
+    content: attr(data-k);
+    display: block;
+    margin-top: 8px;
+    font-family: var(--f-mono);
+    font-size: var(--t-3xs);
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    color: var(--fg-3);
+  }
+
+  .lg-keys .kv {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .lg-keys dd {
+    text-align: left;
+  }
+  .lg-foot-rev {
+    margin-left: 0;
+  }
+}

@@ -1,0 +1,646 @@
+.earn-page {
+  --pad: clamp(16px, 3vw, 40px);
+  --pk-g: var(--pad);
+}
+
+/* ─── hero ───────────────────────────────────────── */
+.ep-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 0 40px;
+  padding: clamp(28px, 3.6vw, 56px) var(--pad) clamp(24px, 3vw, 40px);
+  border-bottom: 1px solid var(--line-2);
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 80px 80px;
+  background-position: -1px -1px;
+}
+.ep-i {
+  grid-column: 1 / -1;
+  margin-bottom: 24px;
+}
+.ep-hl {
+  display: flex;
+  flex-direction: column;
+  align-self: end;
+  min-width: 0;
+}
+.ep-h {
+  font-size: clamp(52px, 7vw, 128px);
+  line-height: 0.82;
+}
+.ep-lede {
+  max-width: 44ch;
+  margin-top: clamp(20px, 2.4vw, 32px);
+  font-size: clamp(var(--t-md), 1.3vw, 19px);
+  line-height: 1.5;
+  color: var(--fg-1);
+}
+.ep-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+.ep-otp {
+  grid-column: 1 / -1;
+  margin-top: clamp(32px, 4vw, 56px);
+  padding-top: 16px;
+  border-top: 1px solid var(--line-2);
+}
+.ep-cmp {
+  align-self: end;
+}
+.ep-c {
+  border: 1px solid var(--line-3);
+  background: var(--bg);
+  padding: 20px;
+}
+.ep-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 18px 0;
+}
+.ep-bar {
+  display: grid;
+  grid-template-columns: 64px 1fr 70px;
+  align-items: center;
+  gap: 12px;
+}
+.ep-bar-l {
+  font-size: var(--t-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.ep-bar-t {
+  height: 22px;
+  background: var(--bg-3);
+  position: relative;
+}
+.ep-bar-t i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--fg-3);
+}
+.ep-bar.us .ep-bar-t i {
+  background: var(--hot);
+}
+.ep-bar-v {
+  font-size: var(--t-xl);
+  text-align: right;
+  color: var(--fg-1);
+}
+.ep-bar.us .ep-bar-v {
+  color: var(--hot);
+}
+.ep-bar.us .ep-bar-l {
+  color: var(--fg);
+}
+.ep-p {
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  color: var(--fg-2);
+}
+.ep-p b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.ep-p a {
+  color: var(--fg);
+  text-decoration: underline;
+  text-decoration-color: var(--line-4);
+  text-underline-offset: 3px;
+}
+.ep-p a:hover {
+  color: var(--hot);
+}
+
+/* ─── sections ───────────────────────────────────── */
+.ep-sec {
+  padding: clamp(48px, 6vw, 96px) var(--pad);
+  border-bottom: 1px solid var(--line-2);
+}
+.ep-sh {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 460px);
+  gap: 12px 40px;
+  align-items: end;
+  margin-bottom: 36px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line-2);
+}
+.ep-sh h2 {
+  font-size: clamp(30px, 4vw, 64px);
+  line-height: 0.88;
+}
+.ep-sh p {
+  font-size: var(--t-md);
+  line-height: 1.55;
+  color: var(--fg-1);
+}
+
+/* ─── flow ───────────────────────────────────────── */
+.ep-flow {
+  padding: 24px;
+}
+.flow {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.fl {
+  fill: none;
+  stroke: var(--fg-3);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 6;
+  animation: fl-dash 1.4s linear infinite;
+}
+.fl-out {
+  stroke: var(--fg-2);
+}
+.fl-main,
+.fl-live {
+  stroke: var(--hot);
+}
+/* proposed (not live) inflows: static, dimmer */
+.fl-plan {
+  stroke: var(--fg-3);
+  animation: none;
+}
+.fl-t-plan {
+  fill: var(--fg-2);
+}
+@keyframes fl-dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+.fl-node {
+  fill: var(--fg-1);
+}
+.fl-node-hot {
+  fill: var(--hot);
+}
+.fl-t {
+  font-family: var(--f-mono);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  fill: var(--fg-1);
+}
+.fl-hot {
+  fill: var(--hot);
+}
+.ep-legend {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1px;
+  margin-top: 20px;
+  background: var(--line-2);
+  border: 1px solid var(--line-2);
+}
+.ep-legend > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: var(--bg-1);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  color: var(--fg-2);
+}
+.ep-legend-k {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.ep-legend b {
+  font-family: var(--f-mono);
+  font-weight: 500;
+  font-size: var(--t-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+
+/* ─── rules ──────────────────────────────────────── */
+.rules {
+  display: grid;
+  gap: 1px;
+  background: var(--line-2);
+  border: 1px solid var(--line-2);
+}
+.rule {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1.1fr) minmax(0, 1.4fr) 150px;
+  gap: 24px;
+  align-items: center;
+  padding: 20px;
+  background: var(--bg);
+}
+.rule-live {
+  background: linear-gradient(90deg, var(--hot-a10), transparent 60%), var(--bg-1);
+  box-shadow: inset 3px 0 0 var(--hot);
+}
+.rule-k {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rule-k b {
+  font-size: var(--t-md);
+  font-weight: 600;
+  color: var(--fg);
+}
+.rule-k .mono {
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.rule-plan .rule-k b,
+.rule-plan .rule-d,
+.rule-plan .rule-f {
+  color: var(--fg-2);
+}
+.rule-d a {
+  color: var(--fg);
+  text-decoration: underline;
+  text-decoration-color: var(--line-4);
+  text-underline-offset: 3px;
+}
+.rule-d a:hover {
+  color: var(--hot);
+}
+.rule-s {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.rule-live-tag {
+  background: var(--hot);
+  border-color: var(--hot);
+  color: var(--ink);
+}
+.rule-go {
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-1);
+  border-bottom: 1px solid var(--line-4);
+}
+.rule-go:hover {
+  color: var(--hot);
+  border-color: var(--hot);
+}
+
+/* how rewards are paid — three ordered steps */
+.paid {
+  margin-top: 36px;
+}
+.paid-h {
+  margin-bottom: 14px;
+  color: var(--fg-1);
+}
+.paid-l {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  list-style: none;
+}
+.paid-l li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 2px solid var(--fg);
+}
+.paid-l li > .num {
+  font-size: var(--t-sm);
+  line-height: 1.65;
+}
+.paid-l p {
+  font-size: var(--t-sm);
+  line-height: 1.65;
+  color: var(--fg-2);
+}
+.paid-l b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.rule-f {
+  font-size: var(--t-sm);
+  color: var(--hot);
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  padding: 10px 12px;
+}
+.rule-d {
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  color: var(--fg-2);
+}
+
+/* ─── calculator ─────────────────────────────────── */
+.calc {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+}
+.calc-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 20px;
+}
+.sl {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sl-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.sl-v {
+  font-size: var(--t-md);
+  color: var(--fg);
+}
+.sl input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  background: transparent;
+  cursor: pointer;
+}
+.sl input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  background: linear-gradient(90deg, var(--hot) 0 var(--p), var(--bg-4) var(--p) 100%);
+}
+.sl input[type='range']::-moz-range-track {
+  height: 4px;
+  background: linear-gradient(90deg, var(--hot) 0 var(--p), var(--bg-4) var(--p) 100%);
+}
+.sl input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 18px;
+  margin-top: -7px;
+  background: var(--fg);
+  border: 0;
+}
+.sl input[type='range']::-moz-range-thumb {
+  width: 14px;
+  height: 18px;
+  background: var(--fg);
+  border: 0;
+  border-radius: 0;
+}
+.sl input[type='range']:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--hot);
+}
+.zone-pick {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border: 1px solid var(--line-3);
+}
+.zone-pick button {
+  height: 34px;
+  font-family: var(--f-mono);
+  font-size: var(--t-2xs);
+  letter-spacing: 0.08em;
+  color: var(--fg-2);
+  border-right: 1px solid var(--line-3);
+}
+.zone-pick button:last-child {
+  border-right: 0;
+}
+.zone-pick button:hover {
+  color: var(--fg);
+  background: var(--bg-3);
+}
+.zone-pick button.on {
+  background: var(--hot);
+  color: var(--ink);
+}
+.calc-out {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto;
+  align-content: start;
+  gap: 16px;
+}
+.co {
+  border: 1px solid var(--line-3);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.co-us {
+  border-color: var(--hot);
+  background: linear-gradient(180deg, var(--hot-a10), transparent 50%);
+}
+.co-h {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.co-big {
+  font-size: clamp(36px, 4vw, 64px);
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--fg);
+}
+.co-them .co-big {
+  color: var(--fg-1);
+}
+.co-sub {
+  font-size: var(--t-3xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  margin-bottom: 16px;
+}
+.co .kv > :last-child {
+  text-align: right;
+  color: var(--fg-1);
+}
+.co .kv .hot {
+  color: var(--hot) !important;
+}
+.calc-note {
+  grid-column: 1 / -1;
+  font-size: var(--t-3xs);
+  line-height: 1.7;
+  color: var(--fg-3);
+  letter-spacing: 0.02em;
+}
+
+/* ─── board ──────────────────────────────────────── */
+.board {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 16px;
+}
+.lb-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 64px 100px 70px 70px;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--t-2xs);
+  color: var(--fg-1);
+  align-items: center;
+}
+.lb-head {
+  color: var(--fg-3);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: var(--t-3xs);
+}
+.lb-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.lb-ink {
+  color: var(--hot);
+  text-align: right;
+}
+.lb-head > :last-child {
+  text-align: right;
+}
+.lb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 14px;
+}
+.inkfeed {
+  list-style: none;
+}
+.inkfeed li {
+  display: grid;
+  grid-template-columns: 40px 56px 1fr;
+  gap: 10px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--t-2xs);
+  color: var(--hot);
+}
+.inkfeed li.bad {
+  color: var(--err);
+}
+.if-r {
+  font-family: var(--f-mono);
+  color: var(--fg-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.if-empty {
+  display: block !important;
+  padding: 16px 14px !important;
+}
+/* an empty feed is a status, not an INK entry: label color, not hot */
+.inkfeed li.if-empty {
+  color: var(--fg-2);
+}
+
+.ep-fine {
+  padding: 32px var(--pad) 48px;
+}
+.ep-fine > div {
+  max-width: 820px;
+  font-size: var(--t-2xs);
+  line-height: 1.8;
+  color: var(--fg-3);
+}
+.ep-fine b {
+  color: var(--fg-1);
+  font-weight: 500;
+}
+
+/* ─── responsive ─────────────────────────────────── */
+@media (max-width: 1100px) {
+  .ep-hero {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+  .ep-i {
+    margin-bottom: 0;
+  }
+  .ep-otp {
+    margin-top: 0;
+  }
+  .ep-sh {
+    grid-template-columns: 1fr;
+  }
+  .ep-sh p {
+    max-width: 64ch;
+  }
+  .ep-legend {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .rule {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 16px;
+  }
+  .rule-s {
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+  }
+  .paid-l {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+  .calc {
+    grid-template-columns: 1fr;
+  }
+  .board {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .ep-flow {
+    padding: 10px;
+    overflow-x: auto;
+  }
+  .flow {
+    min-width: 640px;
+  }
+  .ep-legend {
+    grid-template-columns: 1fr;
+  }
+  .calc-out {
+    grid-template-columns: 1fr;
+  }
+  .lb-row {
+    grid-template-columns: 24px minmax(0, 1fr) 54px 60px;
+  }
+  .lb-row > :nth-child(4),
+  .lb-row > :nth-child(5) {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .ep-cta .btn {
+    flex: 1 1 100%;
+  }
+}

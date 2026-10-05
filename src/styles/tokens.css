@@ -1,0 +1,91 @@
+/* LUSCA design tokens — brutalist, minimal, high-tech.
+   One accent: international orange. Everything else is bone on black. */
+
+:root {
+  /* surfaces */
+  --bg: #050505;
+  --bg-1: #0a0a0a;
+  --bg-2: #0f0f0f;
+  --bg-3: #151515;
+  --bg-4: #1b1b1b;
+
+  /* hairlines */
+  --line: #1a1a1a;
+  --line-2: #242424;
+  --line-3: #313131;
+  --line-4: #474747;
+
+  /* text (bone) */
+  --fg: #ecebe6;
+  --fg-1: #b4b2ab;
+  --fg-2: #77756f;
+  --fg-3: #4a4945;
+  --fg-4: #2e2d2b;
+
+  /* accent — international orange */
+  --hot: #ff4d00;
+  --hot-1: #ff6a26;
+  --hot-2: #ff9a66;
+  --hot-a10: rgba(255, 77, 0, 0.10);
+  --hot-a20: rgba(255, 77, 0, 0.20);
+  --hot-a40: rgba(255, 77, 0, 0.40);
+
+  /* semantic */
+  --ok: #ecebe6;
+  --err: #ff2e3a;
+  --warn: #ffb000;
+
+  /* inverted "paper" sections */
+  --paper: #e8e6df;
+  --paper-1: #dcd9d0;
+  --ink: #0a0a0a;
+  --ink-2: #55534d;
+
+  /* type */
+  --f-display: 'Archivo Variable', 'Archivo', 'Arial Black', sans-serif;
+  --f-sans: 'Geist Variable', 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --f-mono: 'Geist Mono Variable', 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  --t-3xs: 9px;
+  --t-2xs: 10px;
+  --t-xs: 11px;
+  --t-sm: 12px;
+  --t-md: 14px;
+  --t-lg: 17px;
+  --t-xl: 22px;
+  --t-2xl: 32px;
+  --t-3xl: 48px;
+  --t-4xl: clamp(56px, 8vw, 128px);
+  --t-5xl: clamp(72px, 15vw, 280px);
+
+  --track-label: 0.12em;
+  --track-tight: -0.04em;
+
+  /* layout */
+  --bar-h: 48px;
+  --status-h: 28px;
+  --gutter: 16px;
+  --radius: 0px;
+
+  /* motion */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --dur-1: 120ms;
+  --dur-2: 240ms;
+  --dur-3: 480ms;
+
+  /* textures */
+  --hatch: repeating-linear-gradient(135deg, var(--line-2) 0 1px, transparent 1px 6px);
+  --hatch-hot: repeating-linear-gradient(135deg, var(--hot-a40) 0 1px, transparent 1px 5px);
+  --dots: radial-gradient(circle at 1px 1px, var(--line-3) 1px, transparent 1.2px);
+
+  color-scheme: dark;
+}
+
+@media (max-width: 720px) {
+  :root {
+    --gutter: 16px;
+    --bar-h: 52px;
+  }
+}

@@ -1,0 +1,91 @@
+/* ─── error boundary — "something broke — reload" ──────────
+   'page' fills the shell's content area; 'full' replaces the whole viewport
+   (used when the shell itself failed). Bundled with the entry chunk, so it
+   still renders when a lazy route's CSS could not be fetched. */
+
+.eb {
+  display: grid;
+  place-items: center;
+  padding: 32px var(--gutter);
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 64px 64px;
+  background-position: -1px -1px;
+}
+.eb-page {
+  min-height: calc(100dvh - var(--bar-h) - var(--status-h));
+}
+.eb-full {
+  min-height: 100dvh;
+}
+
+.eb-frame {
+  width: min(640px, 100%);
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+}
+
+.eb-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line-2);
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-2);
+  white-space: nowrap;
+  min-width: 0;
+}
+.eb-top-t {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.eb-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px 20px 22px;
+}
+.eb-title {
+  font-size: clamp(40px, 9vw, 72px);
+  color: var(--fg);
+}
+.eb-sub {
+  max-width: 52ch;
+  font-size: var(--t-md);
+  line-height: 1.55;
+  color: var(--fg-1);
+}
+.eb-msg {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line-2);
+  border-left: 2px solid var(--line-4);
+  background: var(--bg);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  color: var(--fg-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.eb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+@media (max-width: 520px) {
+  .eb-actions .btn {
+    flex: 1 1 100%;
+  }
+  .eb-body {
+    padding: 18px 16px;
+  }
+}

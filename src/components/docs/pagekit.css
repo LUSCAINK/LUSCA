@@ -1,0 +1,250 @@
+/* ─── page kit — kicker · on this page · terms · next step ─────────────
+   Shared by Agents, Model, Rewards and Docs. Hairlines, square, mono labels. */
+
+/* sections reached from an "on this page" link clear the fixed top bar */
+.pk-anchor {
+  scroll-margin-top: calc(var(--bar-h) + 16px);
+}
+
+/* [04] AGENTS */
+.pk-kick {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-size: var(--t-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-1);
+}
+.pk-kick-n {
+  white-space: nowrap;
+}
+.pk-kick-n .hot {
+  margin-right: 4px;
+}
+
+/* on this page */
+.pk-otp {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  min-width: 0;
+}
+.pk-otp-l {
+  color: var(--fg-3);
+}
+.pk-otp ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  min-width: 0;
+}
+.pk-otp a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line-3);
+  background: var(--bg);
+  font-family: var(--f-mono);
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-1);
+  white-space: nowrap;
+  transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+}
+.pk-otp a span {
+  color: var(--fg-3);
+  transition: color var(--dur-1) var(--ease);
+}
+.pk-otp a:hover {
+  color: var(--fg);
+  border-color: var(--fg-2);
+  background: var(--bg-2);
+}
+.pk-otp a:hover span {
+  color: var(--hot);
+}
+
+/* terms strip */
+.pk-terms {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  background: var(--bg-1);
+  border-top: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--line-2);
+  min-width: 0;
+}
+.pk-terms-h {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  border-right: 1px solid var(--line-2);
+}
+.pk-terms-all {
+  font-size: var(--t-2xs);
+  letter-spacing: 0.06em;
+  color: var(--fg-2);
+  text-decoration: underline;
+  text-decoration-color: var(--line-4);
+  text-underline-offset: 3px;
+}
+.pk-terms-all:hover {
+  color: var(--hot);
+  text-decoration-color: var(--hot);
+}
+.pk-terms-l {
+  display: grid;
+  grid-template-columns: repeat(var(--pk-n, 3), minmax(0, 1fr));
+  min-width: 0;
+}
+.pk-term {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border-right: 1px solid var(--line);
+  min-width: 0;
+}
+.pk-term:last-child {
+  border-right: 0;
+}
+.pk-term dt {
+  font-family: var(--f-mono);
+  font-size: var(--t-2xs);
+  font-weight: 600;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg);
+}
+.pk-term dt::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  vertical-align: 1px;
+  background: var(--hot);
+}
+.pk-term dd {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-1);
+}
+
+/* next step */
+.pk-next {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto;
+  gap: 24px clamp(24px, 4vw, 64px);
+  align-items: center;
+  padding: clamp(32px, 4vw, 56px) var(--pk-g, clamp(16px, 3vw, 40px));
+  background:
+    linear-gradient(90deg, var(--hot-a10), transparent 55%),
+    var(--bg-1);
+  border-top: 1px solid var(--hot);
+  border-bottom: 1px solid var(--line-2);
+  min-width: 0;
+}
+.pk-next-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.pk-next-copy .label {
+  color: var(--hot);
+}
+.pk-next-h {
+  font-size: clamp(32px, 3.2vw, 56px);
+  color: var(--fg);
+}
+.pk-next-p {
+  max-width: 46ch;
+  font-size: var(--t-md);
+  line-height: 1.6;
+  color: var(--fg-1);
+}
+.pk-next-steps {
+  list-style: none;
+  border-top: 1px solid var(--line-3);
+  min-width: 0;
+}
+.pk-next-steps li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-2);
+  font-size: var(--t-xs);
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  color: var(--fg-1);
+}
+.pk-next-act {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+@media (max-width: 1100px) {
+  .pk-terms {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pk-terms-h {
+    flex-direction: row;
+    align-items: center;
+    padding: 12px var(--pk-g, var(--gutter)) 0;
+    border-right: 0;
+  }
+  .pk-term {
+    padding: 10px 16px 14px;
+  }
+  .pk-term:first-child {
+    padding-left: var(--pk-g, var(--gutter));
+  }
+  .pk-next {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .pk-next-act {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 720px) {
+  .pk-terms-l {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pk-term,
+  .pk-term:first-child {
+    padding: 10px var(--pk-g, var(--gutter));
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .pk-term:last-child {
+    border-bottom: 0;
+    padding-bottom: 14px;
+  }
+  .pk-otp a {
+    height: 40px;
+    padding: 0 12px;
+  }
+  .pk-next {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 32px var(--pk-g, var(--gutter));
+  }
+  .pk-next-act .btn {
+    flex: 1 1 100%;
+  }
+}

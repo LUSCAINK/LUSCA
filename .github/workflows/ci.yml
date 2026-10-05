@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, lint, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck (client and server)
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # The trainer smoke test fetches a few Wikipedia articles and falls back to
+      # built-in text when the network is unavailable. No secrets are needed.
+      - name: Test
+        run: npm test
+
+      - name: Build (web app and desktop neuron)
+        run: npm run build
+
+      - name: Upload desktop neuron
+        uses: actions/upload-artifact@v4
+        with:
+          name: neuron-${{ github.sha }}
+          path: |
+            dist/neuron.mjs
+            dist/neuron.mjs.sha256
+          if-no-files-found: error
+          retention-days: 14
