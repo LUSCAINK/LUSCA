@@ -5,7 +5,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/LUSCAINK/LUSCA/actions/workflows/ci.yml"><img src="https://github.com/LUSCAINK/LUSCA/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-ecebe6?style=flat-square&labelColor=050505" alt="License: MIT"></a>
   <a href=".node-version"><img src="https://img.shields.io/badge/node-%E2%89%A5%2020%20neuron%20%C2%B7%2024%20server-ecebe6?style=flat-square&labelColor=050505&logo=nodedotjs&logoColor=white" alt="Node ≥ 20 (neuron), Node 24 (server)"></a>
   <a href="https://lusca.ink"><img src="https://img.shields.io/badge/live-lusca.ink-ff4d00?style=flat-square&labelColor=050505" alt="Live: lusca.ink"></a>
@@ -37,9 +36,11 @@ LUSCA is three systems coordinated by one Node.js server:
   hidden 384 · vocabulary 96 · **187,104 parameters**) that trains continuously on that dataset.
 - **Network.** Its training gradients are computed by **neurons**: browser tabs using WebGPU (no
   install), or a single-file desktop program on CPU. The server checks every gradient, recomputes
-  a share of them in full, applies the accepted ones with Adam and credits the work as **INK**.
-  Each payout period, the payout pool is split by confirmed INK and paid in SOL to verified
-  wallets.
+  a share of them in full, applies the accepted ones with Adam and meters the verified work as
+  work credits (called INK in the ledger and API).
+- **Payouts.** **$INK** is the project token. Trading fees on $INK fund the payout pool; every
+  payout period the pool is split by each wallet's confirmed work credits and **paid in SOL** to
+  verified wallets. Contributors are never paid in INK.
 
 Every number in the UI comes from the running server. When the server is unreachable the client
 shows "—" and reconnects; it never substitutes recorded or generated data.
@@ -450,8 +451,9 @@ LUSCA/
 ## Payouts
 
 > [!NOTE]
-> Payouts are **off** until the treasury is funded. Until then the UI shows "Payouts not started —
-> the payout pool has not been funded yet." INK is still earned and recorded.
+> The payout pool is funded by trading fees on the **$INK** token, routed to the treasury wallet.
+> Payouts run when `LUSCA_PAYOUTS=live` and a treasury key is configured; with payouts off, work
+> credits are still metered and recorded and the UI shows "Payouts not started".
 
 `server/payouts` closes a payout period every `LUSCA_PAYOUT_EVERY_H` hours (default 12, at 00:00 and
 12:00 UTC) and pays SOL from the treasury wallet to verified wallets, split by the INK each wallet
