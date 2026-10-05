@@ -452,16 +452,19 @@ async function signIn(server: string, kp: { seed: Uint8Array; address: string })
   if (!n || typeof n.message !== 'string' || typeof n.nonce !== 'string') throw new Error('unexpected reply from /api/auth/nonce')
   const lines = n.message.split('\n')
   const host = base.host.toLowerCase()
+  const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/
   const expected =
-    lines.length === 8 &&
+    lines.length === 10 &&
     lines[0] === `${host} wants you to sign in with your Solana account:` &&
     lines[1] === kp.address &&
     lines[2] === '' &&
-    lines[3] === 'Link this wallet to LUSCA to receive SOL payouts for verified GPU work.' &&
-    lines[4] === 'This is not a transaction and costs nothing.' &&
-    lines[5] === '' &&
-    lines[6] === `Nonce: ${n.nonce}` &&
-    /^Issued At: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/.test(lines[7])
+    lines[3] === 'Link this wallet to LUSCA to receive SOL payouts for verified GPU work. This is not a transaction and costs nothing.' &&
+    lines[4] === '' &&
+    /^URI: https?:\/\//.test(lines[5]) && lines[5].slice(5).replace(/^https?:\/\//, '').toLowerCase() === host &&
+    lines[6] === 'Version: 1' &&
+    lines[7] === `Nonce: ${n.nonce}` &&
+    lines[8].startsWith('Issued At: ') && ISO.test(lines[8].slice(11)) &&
+    lines[9].startsWith('Expiration Time: ') && ISO.test(lines[9].slice(17))
   if (!expected) {
     const named = /^(.*) wants you to sign in/.exec(lines[0] ?? '')?.[1]?.toLowerCase()
     if (named && named !== host && /^[a-z0-9.-]+(:\d{1,5})?$/.test(named)) {

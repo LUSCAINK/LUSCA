@@ -6,11 +6,13 @@ import { C, Callout, Code, H3, Spec, Src } from '../ui'
 const SIGN_IN_MESSAGE = `lusca.ink wants you to sign in with your Solana account:
 <your wallet address>
 
-Link this wallet to LUSCA to receive SOL payouts for verified GPU work.
-This is not a transaction and costs nothing.
+Link this wallet to LUSCA to receive SOL payouts for verified GPU work. This is not a transaction and costs nothing.
 
-Nonce: <32 hex characters, single use, valid 5 minutes>
-Issued At: <ISO 8601 time>`
+URI: https://lusca.ink
+Version: 1
+Nonce: <32 hex characters, single use>
+Issued At: <ISO 8601 time>
+Expiration Time: <issued + 5 minutes>`
 
 export function Economics() {
   const view = usePayoutRules()

@@ -74,16 +74,23 @@ export interface Auth {
 }
 
 /** The exact UTF-8 message a wallet signs. */
-export function signInMessage(host: string, wallet: string, nonce: string, issuedAtIso: string): string {
+export function signInMessage(host: string, wallet: string, nonce: string, issuedAtIso: string, expirationIso?: string): string {
+  // Sign-In With Solana (CAIP-122) layout: wallets such as Phantom parse messages that start with
+  // "<domain> wants you to sign in…" and refuse any that break the format (the statement must be a
+  // single line; URI and Version are required). Phantom also checks the domain against the page.
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host)
+  const exp = expirationIso ?? new Date(Date.parse(issuedAtIso) + NONCE_TTL_MS).toISOString()
   return [
     `${host} wants you to sign in with your Solana account:`,
     wallet,
     '',
-    'Link this wallet to LUSCA to receive SOL payouts for verified GPU work.',
-    'This is not a transaction and costs nothing.',
+    'Link this wallet to LUSCA to receive SOL payouts for verified GPU work. This is not a transaction and costs nothing.',
     '',
+    `URI: ${local ? 'http' : 'https'}://${host}`,
+    'Version: 1',
     `Nonce: ${nonce}`,
     `Issued At: ${issuedAtIso}`,
+    `Expiration Time: ${exp}`,
   ].join('\n')
 }
 

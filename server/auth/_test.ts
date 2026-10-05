@@ -109,8 +109,9 @@ ok(normalizeHost(undefined) === null, 'missing host')
   ok(
     m ===
       'lusca.onrender.com wants you to sign in with your Solana account:\nWALLET\n\n' +
-        'Link this wallet to LUSCA to receive SOL payouts for verified GPU work.\n' +
-        'This is not a transaction and costs nothing.\n\nNonce: abc\nIssued At: 2026-10-05T12:00:00.000Z',
+        'Link this wallet to LUSCA to receive SOL payouts for verified GPU work. This is not a transaction and costs nothing.\n\n' +
+        'URI: https://lusca.onrender.com\nVersion: 1\nNonce: abc\nIssued At: 2026-10-05T12:00:00.000Z\n' +
+        'Expiration Time: 2026-10-05T12:05:00.000Z',
     'exact sign-in message',
   )
 }
