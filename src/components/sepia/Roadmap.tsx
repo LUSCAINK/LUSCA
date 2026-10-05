@@ -86,7 +86,7 @@ export function Roadmap() {
         ))}
       </ol>
       <div className="rm-foot">
-        <p className="mono">No dates. Each stage starts when the previous stage's loss curve justifies it. INK is points for verified GPU work, not a stake in any model.</p>
+        <p className="mono">No dates. Each stage starts when the previous stage's loss curve justifies it. Credits are points for verified GPU work, not a stake in any model.</p>
       </div>
     </div>
   )

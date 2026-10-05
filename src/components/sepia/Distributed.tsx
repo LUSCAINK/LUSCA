@@ -69,7 +69,7 @@ export function Distributed() {
       <p className="sp-dist-note">
         A connected GPU receives the current weights and a batch the server picks from the corpus, computes the gradient of the loss and returns it.
         The server checks every result against a gradient it computes on a random sub-batch, fully recomputes a share of jobs from the same base
-        weights, and applies accepted gradients with its Adam optimizer. INK for a training job stays pending until the next full audit of that
+        weights, and applies accepted gradients with its Adam optimizer. Credits for a training job stay pending until the next full audit of that
         identity passes. The server keeps training on its own CPU when no GPU work arrives.
       </p>
     </div>

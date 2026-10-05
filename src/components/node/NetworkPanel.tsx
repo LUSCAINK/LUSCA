@@ -37,7 +37,7 @@ export function NetworkPanel() {
 
   return (
     <section id="network" className="nd-sec" aria-labelledby="net-h">
-      <SecHead id="net-h" kicker="network" title="Who’s connected" sub="Every GPU connected to LUSCA right now, ranked by INK earned." />
+      <SecHead id="net-h" kicker="network" title="Who’s connected" sub="Every GPU connected to LUSCA right now, ranked by credits earned." />
       <div className="net-sum">
         <div className="ns">
           <div className="label">gpus online</div>
@@ -52,7 +52,7 @@ export function NetworkPanel() {
           <div className="ns-v num">{live ? `${fmtInt(stats.jobsVerified)} / ${fmtInt(stats.jobsDone)}` : '—'}</div>
         </div>
         <div className="ns">
-          <div className="label">ink issued</div>
+          <div className="label">credits issued</div>
           <div className={`ns-v num ${live ? 'hot' : ''}`}>{live ? fmtInk(stats.inkIssued) : '—'}</div>
         </div>
       </div>
@@ -86,7 +86,7 @@ export function NetworkPanel() {
                     verified
                   </th>
                   <th scope="col" className="r">
-                    ink
+                    credits
                   </th>
                 </tr>
               </thead>
@@ -137,9 +137,9 @@ export function NetworkPanel() {
             <span>
               <span className="hot">B</span>&nbsp;&nbsp;<b>Latest jobs</b>
             </span>
-            <span className="nd-meta">{live ? 'INK credited · newest first' : DASH}</span>
+            <span className="nd-meta">{live ? 'credits awarded · newest first' : DASH}</span>
           </div>
-          <ol className="ink-feed mono" aria-label="Latest jobs and the INK they paid">
+          <ol className="ink-feed mono" aria-label="Latest jobs and the credits they earned">
             {feed.length === 0 ? (
               <li className="ink-empty dimmer">{live ? 'waiting for the first verified job on the network.' : DASH}</li>
             ) : (

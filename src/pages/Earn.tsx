@@ -16,7 +16,7 @@ import './earn.css'
 // Proposed treasury split — a design, not live. Live payouts follow the server's payout rules
 // (GET /api/payouts → rules), shown in the Treasury & payouts section.
 const SPLIT = [
-  { k: 'contributors', pct: 55, d: 'paid each payout period, split by INK' },
+  { k: 'contributors', pct: 55, d: 'paid in SOL each payout period, split by credits' },
   { k: 'compute', pct: 20, d: 'trains SEPIA-1+, pays the coordinator' },
   { k: 'buyback & burn', pct: 15, d: 'market buys of the owner’s token, burned on-chain' },
   { k: 'ops', pct: 10, d: 'infra, audits, legal' },
@@ -114,7 +114,7 @@ function Calculator() {
     const spiderDaily = (fees * SPIDER.share) / Math.max(1, slots)
     const spiderLifetime = SPIDER.costUsd * SPIDER.cap
     const spiderDays = spiderDaily > 0 ? spiderLifetime / spiderDaily : Infinity
-    // lusca: 55% of (fees + other revenue), split by verified INK. INK/sec ∝ your throughput × zone bonus;
+    // lusca: 55% of (fees + other revenue), split by verified credits. credits/sec ∝ your throughput × zone bonus;
     // the network is assumed to average a BATHY-class neuron (~2.7 TFLOPS effective, bonus 1.3).
     const TYP_GFLOPS = [200, 900, 2700, 6500, 14000]
     const avg = TYP_GFLOPS[2] * ZONES[2].bonus
@@ -145,7 +145,7 @@ function Calculator() {
             <span className="sl-top">
               <span className="label">your gpu tier</span>
               <span className="sl-v num">
-                {ZONES[zone].zone} · ×{ZONES[zone].bonus.toFixed(2)} ink
+                {ZONES[zone].zone} · ×{ZONES[zone].bonus.toFixed(2)} credits
               </span>
             </span>
             <div className="zone-pick" role="radiogroup" aria-label="GPU tier">
@@ -207,7 +207,7 @@ function Calculator() {
           </div>
         </div>
         <p className="calc-note mono">
-          model, not a promise. the lusca side is the proposed mainnet design: it assumes a typical GPU for your tier in a network averaging BATHY-tier neurons (INK ∝ throughput × tier bonus). spider figures use the live rules from public api and on-chain data on 4 oct 2026 (40% of creator fees, split among eligible uncapped slots, 100 slots, earning stops at 2×, ~$239 burn). those rules may have changed since.
+          model, not a promise. the lusca side is the proposed mainnet design: it assumes a typical GPU for your tier in a network averaging BATHY-tier neurons (credits ∝ throughput × tier bonus). spider figures use the live rules from public api and on-chain data on 4 oct 2026 (40% of creator fees, split among eligible uncapped slots, 100 slots, earning stops at 2×, ~$239 burn). those rules may have changed since.
         </p>
       </div>
     </div>
@@ -241,12 +241,12 @@ export default function Earn() {
         <Kicker n="03" name="Rewards" className="ep-i" />
         <div className="ep-hl">
           <h1 className="display ep-h">
-            INK and
+            Credits and
             <br />
             SOL payouts
           </h1>
           <p className="ep-lede">
-            INK — points for verified GPU work. Each payout period, the payout pool is split by INK and paid in SOL to verified wallets.
+            Verified GPU work earns credits — your share of each SOL payout. Each payout period, the payout pool is split by credits and paid in SOL to verified wallets.
           </p>
           <div className="ep-cta">
             <Link to="/node" className="btn primary lg">
@@ -304,7 +304,7 @@ export default function Earn() {
           <h2 id="ep-how-h" className="display">
             How you earn
           </h2>
-          <p>One way to earn is live today: run a GPU. Two more are planned. INK is credited only for work the LUSCA server has verified.</p>
+          <p>One way to earn is live today: run a GPU. Two more are planned. Credits are given only for work the LUSCA server has verified.</p>
         </div>
         <div className="rules">
           <div className="rule rule-live">
@@ -312,10 +312,10 @@ export default function Earn() {
               <b>Run a GPU</b>
               <span className="mono">neuron</span>
             </span>
-            <span className="rule-f mono">INK = verified GFLOP × 10 × (1 + 0.15 × tier)</span>
+            <span className="rule-f mono">credits = verified GFLOP × 10 × (1 + 0.15 × tier)</span>
             <span className="rule-d">
               Your GPU computes SEPIA training gradients on batches the server picks, and checks fetched pages for near-duplicates. The server checks
-              every result and recomputes a share of training jobs in full; training INK is pending until that audit passes and is forfeited if it
+              every result and recomputes a share of training jobs in full; training credits are pending until that audit passes and are forfeited if it
               fails. A mismatch earns zero, and 3 consecutive failed jobs disconnect the GPU for a cooldown. Tier runs from 0 (EPI) to 4 (HADAL).
             </span>
             <span className="rule-s">
@@ -330,10 +330,10 @@ export default function Earn() {
               <b>Suggest a site</b>
               <span className="mono">scout</span>
             </span>
-            <span className="rule-f mono">INK = Σ taste score × log₁₀(tokens) per kept page from your site</span>
+            <span className="rule-f mono">credits = Σ taste score × log₁₀(tokens) per kept page from your site</span>
             <span className="rule-d">
-              Point the agents at a crypto site they have not found. If its pages pass the taste score and are kept, you earn INK. Agents you add on the{' '}
-              <Link to="/agents">Agents</Link> page do not earn INK.
+              Point the agents at a crypto site they have not found. If its pages pass the taste score and are kept, you earn credits. Agents you add on the{' '}
+              <Link to="/agents">Agents</Link> page do not earn credits.
             </span>
             <span className="rule-s">
               <span className="tag">planned</span>
@@ -344,9 +344,9 @@ export default function Earn() {
               <b>Flag bad pages</b>
               <span className="mono">reader</span>
             </span>
-            <span className="rule-f mono">INK = confirmed flags × severity</span>
+            <span className="rule-f mono">credits = confirmed flags × severity</span>
             <span className="rule-d">
-              Flag junk sources, license problems or wrong taste scores. Flags confirmed by independent reviewers will earn INK; wrong flags will cost
+              Flag junk sources, license problems or wrong taste scores. Flags confirmed by independent reviewers will earn credits; wrong flags will cost
               reputation.
             </span>
             <span className="rule-s">
@@ -361,7 +361,7 @@ export default function Earn() {
             <li>
               <span className="num hot">1</span>
               <p>
-                <b>Do verified work.</b> Every job that passes the server’s checks adds INK; training INK counts once an audit confirms it. Earning needs no wallet, no slot purchase and no sign-up; you stop earning
+                <b>Do verified work.</b> Every job that passes the server’s checks adds credits; training credits count once an audit confirms them. Earning needs no wallet, no slot purchase and no sign-up; you stop earning
                 when you stop contributing.
               </p>
             </li>
@@ -375,7 +375,7 @@ export default function Earn() {
             <li>
               <span className="num hot">3</span>
               <p>
-                <b>Split by INK each payout period.</b> {everyHours ? `Every ${everyHours} h (UTC), the` : 'Each period, the'} payout pool is split by the INK
+                <b>Split by credits each payout period.</b> {everyHours ? `Every ${everyHours} h (UTC), the` : 'Each period, the'} payout pool is split by the credits
                 each verified wallet earned in that period and paid in SOL. Ten wallets on one GPU earn what one wallet would.
               </p>
             </li>
@@ -439,8 +439,8 @@ export default function Earn() {
           </h2>
           <p>
             {live
-              ? `Live from the coordinator. ${fmtInt(stats.jobsVerified)} jobs verified · ${fmtCompact(stats.inkIssued)} INK issued so far.`
-              : `${CONN_TEXT[conn]} — jobs verified · — INK issued so far.`}
+              ? `Live from the coordinator. ${fmtInt(stats.jobsVerified)} jobs verified · ${fmtCompact(stats.inkIssued)} credits issued so far.`
+              : `${CONN_TEXT[conn]} — jobs verified · — credits issued so far.`}
           </p>
         </div>
         <div className="board">
@@ -449,7 +449,7 @@ export default function Earn() {
               <span>
                 <span className="hot">L</span>&nbsp;&nbsp;<b>Leaderboard</b>
               </span>
-              <span>by INK</span>
+              <span>by credits</span>
             </div>
             <div className="lb">
               <div className="lb-row lb-head mono">
@@ -458,7 +458,7 @@ export default function Earn() {
                 <span>tier</span>
                 <span>gflops</span>
                 <span>verified</span>
-                <span>ink</span>
+                <span>credits</span>
               </div>
               {live &&
                 neurons.slice(0, 12).map((n, i) => (
@@ -489,7 +489,7 @@ export default function Earn() {
           <div className="panel">
             <div className="panel-head">
               <span>
-                <span className="hot">I</span>&nbsp;&nbsp;<b>INK earned</b>
+                <span className="hot">I</span>&nbsp;&nbsp;<b>Credits earned</b>
               </span>
               <span>newest first</span>
             </div>
@@ -523,8 +523,9 @@ export default function Earn() {
 
       <section className="ep-fine" aria-label="Fine print">
         <div className="mono">
-          <b>Fine print.</b> INK — points for verified GPU work. Each payout period, the payout pool is split by INK and paid in SOL to verified wallets. INK is
-          not a token. Payout amounts depend on the treasury balance and on the INK earned by all verified wallets in the period; no amount is promised or
+          <b>Fine print.</b> Credits are points for verified GPU work: your share of the payout pool. Payouts are made in SOL. Each payout period, the payout
+          pool is split by credits and paid in SOL to verified wallets. Credits are not a token. Payout amounts depend on the treasury balance and on the
+          credits earned by all verified wallets in the period; no amount is promised or
           guaranteed. The pool is funded by creator fees from the owner’s token, routed to the treasury wallet; LUSCA does not launch tokens. The treasury
           split and the additional revenue sources shown above are a proposal and are not live. Nothing here is financial advice.
         </div>

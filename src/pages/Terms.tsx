@@ -20,7 +20,7 @@ const SECTIONS: LegalSection[] = [
       <>
         <p>
           LUSCA is a data pipeline and compute network: agents fetch public crypto web pages into a corpus, a small language model (SEPIA) trains on
-          that corpus, and an optional network of browser GPUs (“neurons”) runs jobs the server can verify. Verified work earns INK.
+          that corpus, and an optional network of browser GPUs (“neurons”) runs jobs the server can verify. Verified work earns credits — your share of each SOL payout.
         </p>
         <p>By using LUSCA you agree to these terms. If you do not agree, do not use it.</p>
       </>
@@ -32,7 +32,7 @@ const SECTIONS: LegalSection[] = [
     body: (
       <ul>
         <li>
-          You must be <b>18 or older</b>, or the age of majority where you live if that is higher, to connect a wallet, run a neuron, earn INK or
+          You must be <b>18 or older</b>, or the age of majority where you live if that is higher, to connect a wallet, run a neuron, earn credits or
           receive payouts.
         </li>
         <li>Do not use LUSCA where the law that applies to you does not allow it.</li>
@@ -41,12 +41,12 @@ const SECTIONS: LegalSection[] = [
   },
   {
     id: 't-ink',
-    title: 'INK and payouts',
+    title: 'Credits and payouts',
     body: (
       <ul>
         <li>
-          <b>INK is points for verified GPU work.</b> Each payout period, the payout pool is split by INK and paid in SOL to verified wallets. INK
-          itself is not a token and cannot be bought, sold or transferred.
+          <b>Credits are points for verified GPU work.</b> Credits are your share of the payout pool. Payouts are made in SOL: each payout period, the
+          payout pool is split by credits and paid in SOL to verified wallets. Credits are not a token and cannot be bought, sold or transferred.
         </li>
         <li>
           The payout pool is funded from the treasury wallet, which receives the project owner’s token creator fees. The pool for a period is a
@@ -58,14 +58,14 @@ const SECTIONS: LegalSection[] = [
           made for that period.
         </li>
         <li>
-          To receive SOL you verify a wallet by signing one plain-text message. Earning INK does not require a wallet. When you verify, the INK this
-          device earned in the current payout period moves to your wallet once. INK earned in earlier periods without a verified wallet is not paid out.
+          To receive SOL you verify a wallet by signing one plain-text message. Earning credits does not require a wallet. When you verify, the credits this
+          device earned in the current payout period move to your wallet once. Credits earned in earlier periods without a verified wallet earn no payout.
         </li>
         <li>
           Payout parameters may change. Changes are announced on the <Link to="/earn">Rewards</Link> page before they apply.
         </li>
         <li>
-          INK earned through bugs, duplicate identities or invalid work may be removed, and payouts for it may be withheld.
+          Credits earned through bugs, duplicate identities or invalid work may be removed, and payouts for them may be withheld.
         </li>
       </ul>
     ),
@@ -103,14 +103,14 @@ const SECTIONS: LegalSection[] = [
       <>
         <p>Do not:</p>
         <ul>
-          <li>submit fake or copied job results, or run many identities to collect more INK;</li>
+          <li>submit fake or copied job results, or run many identities to collect more credits;</li>
           <li>attack, overload, scrape at volume or try to break into the service, or bypass its limits;</li>
           <li>
             use neuron labels, agent names or owner fields for links, spam, phishing, impersonation, or anything unlawful, hateful or sexual.
           </li>
         </ul>
         <p>
-          LUSCA may block IP addresses, wallets or devices, remove agents and names, and void INK, at its discretion and without notice.
+          LUSCA may block IP addresses, wallets or devices, remove agents and names, and void credits, at its discretion and without notice.
         </p>
       </>
     ),
@@ -154,7 +154,7 @@ const SECTIONS: LegalSection[] = [
     body: (
       <p>
         LUSCA is provided <b>“as is” and “as available”, without warranty of any kind</b>, express or implied, including fitness for a particular
-        purpose. It may be slow, wrong, interrupted, changed or shut down at any time, and data, including the INK ledger, may be lost.
+        purpose. It may be slow, wrong, interrupted, changed or shut down at any time, and data, including the credit ledger, may be lost.
       </p>
     ),
   },
@@ -163,7 +163,7 @@ const SECTIONS: LegalSection[] = [
     title: 'Limits on liability',
     body: (
       <p>
-        As far as the law allows, the people who run LUSCA are not liable for any loss or damage from using it, including lost INK, missed or delayed
+        As far as the law allows, the people who run LUSCA are not liable for any loss or damage from using it, including lost credits, missed or delayed
         payouts, hardware damage, electricity costs, lost data, or indirect or consequential losses. Where liability cannot be excluded, it is limited
         to the minimum the law allows.
       </p>
@@ -198,7 +198,7 @@ export default function Terms() {
     <LegalDoc
       doc="terms"
       title="Terms"
-      kicker="Rules for using LUSCA, earning INK and receiving payouts."
+      kicker="Rules for using LUSCA, earning credits and receiving SOL payouts."
       revised={REVISED}
       facts={FACTS}
       sections={SECTIONS}

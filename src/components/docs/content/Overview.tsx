@@ -7,9 +7,9 @@ import { C, Callout, H3, Table } from '../ui'
 const MAP: [string, string, string, string][] = [
   ['8 arms', 'sectors', 'Eight slices of the crypto web, each with its own seed pages, host rules and relevance prior.', 'shared/sectors.ts'],
   ['agents', 'fetch loops', 'Autonomous fetch loops assigned to an arm. Every page an agent fetches is relevance-scored before it enters the corpus.', 'server/ingest/pipeline.ts'],
-  ['mantle', 'coordinator + hub', 'The central process: frontier, politeness tables, neuron jobs, the INK ledger and the socket that fans events out.', 'server/index.ts · server/http.ts · server/neurons/'],
+  ['mantle', 'coordinator + hub', 'The central process: frontier, politeness tables, neuron jobs, the credit ledger and the socket that fans events out.', 'server/index.ts · server/http.ts · server/neurons/'],
   ['ink · sepia', 'SEPIA', 'The language model trained on what the arms bring back. Sepia is cephalopod ink.', 'server/trainer/'],
-  ['neurons', 'GPUs', 'Browser tabs (WebGPU) or command-line clients that do verifiable work for the data pipeline and receive INK.', 'src/lib/gpu/ · server/neurons/'],
+  ['neurons', 'GPUs', 'Browser tabs (WebGPU) or command-line clients that do verifiable work for the data pipeline and earn credits.', 'src/lib/gpu/ · server/neurons/'],
   ['depth', 'tiers (zones)', 'GPU classes from a 10-second matmul benchmark, named after ocean layers: EPI · MESO · BATHY · ABYSSO · HADAL.', 'ZONES in shared/protocol.ts'],
 ]
 
@@ -19,10 +19,10 @@ const STATUS: [string, Status, string][] = [
   ['Relevance scoring against a weighted lexicon, exact-hash and 64-bit SimHash dedupe', 'live', 'lexicon.ts · simhash.ts'],
   ['Append-only dataset with url + host provenance on every line', 'live', 'server/data/dataset.jsonl'],
   [`${MODEL.name}: a ${fmtInt(MODEL.params)}-parameter character MLP, trained continuously, checkpointed`, 'live', 'server/trainer · shared/sepia'],
-  ['GPU training jobs: neurons compute SEPIA-0 gradients on server-picked batches; the server checks every result, fully recomputes a share, applies accepted gradients with Adam; INK pending until audited', 'live', 'src/lib/gpu/train · server/trainer'],
-  ['WebGPU detection, GEMM benchmark, zone assignment, near-duplicate jobs, CPU spot-check, INK ledger', 'live', 'src/lib/gpu · server/neurons'],
-  ['Wallet verification by one signed plain-text message; INK credited to a wallet only with a valid session token', 'live', 'server/auth'],
-  ['SOL payouts every period: pool split by INK among verified wallets, capped, persisted before sending; off until the treasury is funded (LUSCA_PAYOUTS)', 'built', 'server/payouts'],
+  ['GPU training jobs: neurons compute SEPIA-0 gradients on server-picked batches; the server checks every result, fully recomputes a share, applies accepted gradients with Adam; credits pending until audited', 'live', 'src/lib/gpu/train · server/trainer'],
+  ['WebGPU detection, GEMM benchmark, zone assignment, near-duplicate jobs, CPU spot-check, credit ledger', 'live', 'src/lib/gpu · server/neurons'],
+  ['Wallet verification by one signed plain-text message; credits go to a wallet only with a valid session token', 'live', 'server/auth'],
+  ['SOL payouts every period: pool split by confirmed credits among verified wallets, capped, persisted before sending; off until the treasury is funded (LUSCA_PAYOUTS)', 'built', 'server/payouts'],
   ['No server reachable: the client says so, shows “—” for every number and reconnects with backoff', 'live', 'src/lib/live.ts'],
   ['License-aware dataset export: exclude non-commercial hosts from commercial licenses', 'next', 'not built'],
   ['SEPIA-1: GPT-style decoder (~124M params) trained by BATHY+ neurons', 'next', 'not started'],
@@ -41,8 +41,8 @@ export function Overview() {
       <p>
         Users can attach a GPU from a browser tab or a desktop program. It trains SEPIA: the server sends the current weights and a batch of text, the
         GPU computes the gradient, and the server checks it, recomputes a share of jobs in full and applies accepted gradients with Adam. It also runs
-        near-duplicate search over hashed word vectors for the data pipeline. Checked work earns <b>INK</b>: points for verified GPU work; training INK is
-        pending until an audit confirms it. Each payout period, the payout pool is split by INK and paid in SOL to verified
+        near-duplicate search over hashed word vectors for the data pipeline. Checked work earns <b>credits</b>: your share of the payout pool; training credits are
+        pending until an audit confirms them. Each payout period, the pool is split by confirmed credits and paid in SOL to verified
         wallets. Every fetch, score, rejection,
         training step and verdict is broadcast as it happens. The Live page animates nothing that did not happen.
       </p>
@@ -117,7 +117,7 @@ export function Overview() {
           crypto-flavoured babble. That is the honest output of a model this size.
         </li>
         <li>
-          <b>Not a token.</b> INK is a number in <C>ledger.json</C> on the operator’s server. It is not transferable, not a security and carries no guaranteed
+          <b>Credits are not a token.</b> They are a number in <C>ledger.json</C> on the operator’s server, separate from the $INK token. They are not transferable, not a security and carry no guaranteed
           amount. See <Link to="/docs/economics">10 · economics</Link>.
         </li>
         <li>

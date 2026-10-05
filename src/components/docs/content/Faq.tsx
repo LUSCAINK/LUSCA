@@ -9,7 +9,7 @@ const FAQ: [string, ReactNode][] = [
     'How do I start earning?',
     <>
       Open <Link to="/node">Start earning</Link> in a browser with WebGPU and follow the steps. LUSCA detects your GPU, runs a 10-second benchmark that
-      sets your tier, then sends it jobs. Every job the server checks and accepts earns INK. No install, no account and no wallet are needed to earn INK; a wallet is only needed to
+      sets your tier, then sends it jobs. Every job the server checks and accepts earns credits. No install, no account and no wallet are needed to earn credits; a wallet is only needed to
       receive SOL payouts.
     </>,
   ],
@@ -60,7 +60,7 @@ const FAQ: [string, ReactNode][] = [
     <>
       LUSCA asks for one thing: a signature over one plain-text sign-in message, which proves you control the address. It is not a transaction,
       costs nothing and moves no funds. LUSCA never asks for a transaction, a private key or a seed phrase. A wallet is only needed to receive SOL;
-      earning INK needs none. See <Link to="/docs/economics">10.3</Link>.
+      earning credits needs none. See <Link to="/docs/economics">10.3</Link>.
     </>,
   ],
   [
@@ -82,15 +82,15 @@ const FAQ: [string, ReactNode][] = [
   [
     'Can I cheat?',
     <>
-      Random, zero or partial answers fail the checks and three failures drop the neuron. Training INK stays pending until a full audit of your
-      gradients passes; a failed audit forfeits all pending INK. Several weaker points are open and listed plainly in{' '}
-      <Link to="/docs/neurons">08.8</Link>. Payouts go only to verified wallets and are split by INK, so extra wallets earn nothing extra.
+      Random, zero or partial answers fail the checks and three failures drop the neuron. Training credits stay pending until a full audit of your
+      gradients passes; a failed audit forfeits all pending credits. Several weaker points are open and listed plainly in{' '}
+      <Link to="/docs/neurons">08.8</Link>. Payouts go only to verified wallets and are split by confirmed credits, so extra wallets earn nothing extra.
     </>,
   ],
   [
-    'How is INK paid?',
+    'How are credits paid out?',
     <>
-      INK is points for verified GPU work. Each payout period, the payout pool is split by INK and paid in SOL to verified wallets. No amount is
+      Credits are your share of the payout pool, earned by verified GPU work. Payouts are made in SOL: each payout period, the pool is split by confirmed credits and paid to verified wallets. Credits are not $INK and are never paid out as a token. No amount is
       guaranteed. Rules, treasury and history: <Link to="/docs/economics">10</Link> and <Link to="/earn">Rewards</Link>.
     </>,
   ],
@@ -121,18 +121,18 @@ const FAQ: [string, ReactNode][] = [
 const PLAIN: [string, ReactNode][] = TERM_ORDER.map((k) => [TERMS[k].term, TERMS[k].def])
 
 const TECHNICAL: [string, ReactNode][] = [
-  ['zone', 'API field name for the tier (ZONES in shared/protocol.ts). Sets job size and the INK multiplier: +15% per tier.'],
-  ['INK rate', '1 INK per 100 MFLOP of checked work, +15% per tier, at least 0.01 per accepted job.'],
+  ['zone', 'API field name for the tier (ZONES in shared/protocol.ts). Sets job size and the credit multiplier: +15% per tier.'],
+  ['credit rate', '1 credit per 100 MFLOP of checked work, +15% per tier, at least 0.01 per accepted job.'],
   ['frontier', 'The queue of URLs to visit: one max-heap per host per arm, ordered by link priority, capped at 60,000.'],
   ['host prior', 'A fixed per-arm number (0.60–0.90) for seed hosts; 0.50 for admitted hosts. 25% of the taste score, 20% of link priority.'],
   ['mantle', 'The central process: hub, frontier, coordinator and ledger.'],
-  ['spot-check', 'Re-computing 4 random rows of a dedupe result on the CPU before crediting INK.'],
-  ['audit', 'The server recomputing a training gradient in full from the same weights and batch. Confirms pending INK, or forfeits it.'],
-  ['pending INK', 'INK from training jobs held until the next audit of that identity passes. It does not count toward payouts until then.'],
+  ['spot-check', 'Re-computing 4 random rows of a dedupe result on the CPU before awarding credits.'],
+  ['audit', 'The server recomputing a training gradient in full from the same weights and batch. Confirms pending credits, or forfeits them.'],
+  ['pending credits', 'Credits from training jobs held until the next audit of that identity passes. It does not count toward payouts until then.'],
   ['simhash', 'A 64-bit fingerprint of a page’s word 3-shingles. Within 3 bits = near-duplicate.'],
-  ['payout period', 'The interval (default 12 h, 00:00 and 12:00 UTC) after which the pool is split by period INK and paid in SOL.'],
+  ['payout period', 'The interval (default 12 h, 00:00 and 12:00 UTC) after which the pool is split by confirmed period credits and paid in SOL.'],
   ['verified wallet', 'A wallet that signed the plain-text sign-in message. Only verified wallets receive SOL.'],
-  ['treasury', 'The wallet that funds payouts, filled by the owner’s token creator fees. Address and balance are on the Rewards page.'],
+  ['treasury', 'The wallet that funds payouts, filled by creator fees from $INK trading (the owner’s token). Address and balance are on the Rewards page.'],
 ]
 
 export function Faq() {

@@ -136,7 +136,7 @@ function Hero() {
           LUSCA runs agents that fetch public crypto web pages, score them for relevance and keep the useful ones in an open corpus. A small language
           model trains on that corpus in public. <b>Connect your GPU</b> from the browser and it computes training gradients for that model on
           batches the server picks; the server checks every result, recomputes a share of them in full and applies the accepted ones. Checked work
-          earns <b className="hot">INK</b>. Each payout period, the payout pool is split by INK and paid in SOL to verified wallets.
+          earns <b className="hot">credits</b>. Credits are your share of the payout pool. Payouts are made in SOL: each payout period, the pool is split by credits and paid to verified wallets.
         </p>
         <div className="hero-cta">
           <Link to="/node" className="btn primary lg">
@@ -189,8 +189,8 @@ function HowItWorks() {
       n: '03',
       k: 'verify',
       t: 'Your GPU trains the model',
-      d: 'Your graphics card computes SEPIA training gradients on batches the server picks, and also checks new pages for near-duplicates. The server checks every result and recomputes a share in full; training INK is pending until an audit confirms it.',
-      live: live ? `${fmtInt(s.jobsVerified)} jobs verified · ${fmtCompact(s.inkIssued)} INK issued` : `${DASH} jobs verified · ${DASH} INK issued`,
+      d: 'Your graphics card computes SEPIA training gradients on batches the server picks, and also checks new pages for near-duplicates. The server checks every result and recomputes a share in full; training credits are pending until an audit confirms them.',
+      live: live ? `${fmtInt(s.jobsVerified)} jobs verified · ${fmtCompact(s.inkIssued)} credits issued` : `${DASH} jobs verified · ${DASH} credits issued`,
       to: '/node',
       cta: 'start earning',
     },
@@ -240,8 +240,8 @@ function HowItWorks() {
           <dd>your GPU's class, EPI to HADAL, set by a 10-second benchmark</dd>
         </div>
         <div>
-          <dt>INK</dt>
-          <dd>points for verified GPU work; each payout period, the payout pool is split by INK and paid in SOL to verified wallets</dd>
+          <dt>Credits</dt>
+          <dd>your share of the payout pool, earned by verified GPU work; each payout period, the pool is split by credits and paid in SOL to verified wallets</dd>
         </div>
       </dl>
     </section>
@@ -255,12 +255,12 @@ function StartEarning() {
     { t: 'Open Start earning', d: 'One page, in this browser. Nothing to download.' },
     { t: 'Detect your GPU', d: 'Your browser reports which graphics card you have.' },
     { t: 'Run the benchmark', d: '10 seconds of real math sets your tier.' },
-    { t: 'Press start', d: 'Your GPU takes jobs. Each verified job adds INK.' },
+    { t: 'Press start', d: 'Your GPU takes jobs. Each verified job adds credits.' },
   ]
   return (
     <section className="sec start" id="start">
       <SecHead i="02" kicker="start earning" title="Start in about a minute.">
-        No install and no account. Earning INK needs no wallet; connect and verify a wallet only to receive SOL payouts.
+        No install and no account. Earning credits needs no wallet; connect and verify a wallet only to receive SOL payouts.
       </SecHead>
       <div className="start-grid">
         <ol className="start-steps">
@@ -327,14 +327,14 @@ function Tiers() {
   return (
     <section className="sec zones" id="tiers">
       <SecHead i="03" kicker="gpu tiers" title="Find your tier.">
-        The benchmark measures how much math your GPU does per second. Deeper tiers get bigger jobs and a bigger INK bonus on every verified job.
+        The benchmark measures how much math your GPU does per second. Deeper tiers get bigger jobs and a bigger credit bonus on every verified job.
       </SecHead>
       <div className="strata">
         <div className="stratum st-head mono">
           <span>tier</span>
           <span>examples (your benchmark decides)</span>
           <span>needs</span>
-          <span className="st-w">ink bonus</span>
+          <span className="st-w">credit bonus</span>
         </div>
         {ZONES.map((z, i) => (
           <div key={z.zone} className={`stratum s${i}`}>
@@ -364,7 +364,7 @@ function WhyMore() {
     [
       'how rewards are split',
       'Equal shares for every uncapped slot that reads 25 new pages in a 12-hour round. The project’s scheduler reads those pages, not the slot holder.',
-      'By INK earned from verified work in the payout period, so extra wallets earn nothing extra.',
+      'By credits earned from verified work in the payout period, so extra wallets earn nothing extra.',
     ],
     [
       'earning limit',
@@ -387,7 +387,7 @@ function WhyMore() {
   return (
     <section className="sec versus" id="why">
       <SecHead i="04" kicker="how it differs" title="Rewards follow verified work.">
-        Buy-a-slot projects sell a share of trading fees while their own servers do the work. LUSCA credits the work you do yourself: INK for verified
+        Buy-a-slot projects sell a share of trading fees while their own servers do the work. LUSCA rewards the work you do yourself: credits for verified
         GPU jobs, split into SOL payouts each period.
       </SecHead>
       <div className="vs-table" role="table">
@@ -624,7 +624,7 @@ function WhyOctopus() {
             </div>
             <div>
               <span className="mono">1</span>
-              <span>server that coordinates and keeps the INK ledger</span>
+              <span>server that coordinates and keeps the credit ledger</span>
             </div>
             <div>
               <span className="mono">1</span>
@@ -647,15 +647,15 @@ function PayoutLine() {
 const FAQ: [string, ReactNode][] = [
   ['Is it free?', 'Yes. LUSCA sells nothing: no slot, no subscription, no token sale. You pay only for your own electricity.'],
   [
-    'What is INK worth?',
+    'What are credits worth?',
     <>
-      {INK_LINE} No amount is guaranteed: the pool depends on the treasury balance, which is funded by creator fees from the owner’s token. Status on
+      {INK_LINE} No amount is guaranteed: the pool depends on the treasury balance, which is funded by $INK trading fees. Status on
       this server: <PayoutLine /> <Link to="/earn">Treasury and payouts →</Link>
     </>,
   ],
   [
     'Do I need a wallet?',
-    'Not to earn INK. A wallet is needed only to receive SOL: you sign one plain-text message to prove you own it. It is not a transaction and costs nothing. LUSCA never asks for a transaction, a private key or a seed phrase.',
+    'Not to earn credits. A wallet is needed only to receive SOL: you sign one plain-text message to prove you own it. It is not a transaction and costs nothing. LUSCA never asks for a transaction, a private key or a seed phrase.',
   ],
   ['Will it slow down my computer?', 'It uses your GPU only while the Start earning tab is open and visible, and pauses as soon as you switch away. You can stop it any time.'],
   [

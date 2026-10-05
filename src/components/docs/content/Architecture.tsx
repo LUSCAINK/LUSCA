@@ -31,7 +31,7 @@ export function Architecture() {
         </li>
         <li>
           <b>E ⇄ N.</b> The coordinator builds cosine-similarity jobs from those vectors, sends each to one neuron, re-computes random rows on the CPU,
-          credits INK and reports verified duplicates back to the ingest pipeline.
+          awards credits and reports verified duplicates back to the ingest pipeline.
         </li>
         <li>
           <b>A, T, E → H → K.</b> Every event is serialized once and written to every connected socket. Clients reconstruct the whole system from the{' '}
@@ -70,7 +70,7 @@ export function Architecture() {
           <tr>
             <td className="mono strong">coordinator</td>
             <td className="mono small">createCoordinator()</td>
-            <td>neuron registry, job issue and verification, INK ledger</td>
+            <td>neuron registry, job issue and verification, credit ledger</td>
             <td className="mono small">neurons ink job neuron.ok error</td>
           </tr>
           <tr>

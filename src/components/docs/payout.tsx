@@ -1,4 +1,4 @@
-// INK and payout wording, shared by the landing page, the manual and the legal pages.
+// Credit and payout wording, shared by the landing page, the manual and the legal pages.
 // The rules are read from the running server (GET /api/payouts → rules); until it
 // answers, the documented server defaults (env LUSCA_PAYOUT_*) are shown and labelled
 // as defaults. Nothing here estimates an amount.
@@ -7,8 +7,8 @@ import { Link } from 'react-router-dom'
 import type { PayoutMode, PayoutRules, PayoutsOverview } from '@shared/payouts'
 import { refreshPayouts, usePayouts, usePayoutStore } from '@/lib/payouts'
 
-/** One sentence, used verbatim wherever INK is defined. */
-export const INK_LINE = 'INK — points for verified GPU work. Each payout period, the payout pool is split by INK and paid in SOL to verified wallets.'
+/** One sentence, used verbatim wherever credits are defined. */
+export const INK_LINE = 'Credits are your share of the payout pool, earned by verified GPU work. Each payout period, the pool is split by confirmed credits and paid in SOL to verified wallets.'
 
 /** Server defaults (server/payouts, env LUSCA_PAYOUT_*). Shown only until /api/payouts answers. */
 export const DEFAULT_PAYOUT_RULES: PayoutRules = {
@@ -90,13 +90,13 @@ export function PayoutRulesList({ view, compact = false }: { view: RulesView; co
           <b>Pool:</b> min({solAmt(r.maxSol)}, {pct(r.share)} × (treasury balance − {solAmt(r.reserveSol)} reserve − estimated fees)).
         </li>
         <li>
-          <b>Split:</b> by INK earned in that period among verified wallets.
+          <b>Split:</b> by confirmed credits earned in that period among verified wallets.
         </li>
         <li>
           <b>Cap:</b> at most {solAmt(r.maxWalletSol)} per wallet per period; the excess carries to the next period.
         </li>
         <li>
-          <b>Dust floor:</b> below {solAmt(r.minSol)}, the wallet’s INK carries over to the next period.
+          <b>Dust floor:</b> below {solAmt(r.minSol)}, the wallet’s credits carry over to the next period.
         </li>
         <li>
           <b>Paid</b> in SOL from the treasury wallet, only to wallets proven by a signed message.

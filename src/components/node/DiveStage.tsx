@@ -85,8 +85,8 @@ function Throughput({ history, bench }: { history: NeuronHistoryPoint[]; bench: 
 function logTone(line: string): string {
   if (/fail|error|rejected|lost|crash|refused|timed out/i.test(line)) return 'lg-err'
   if (/near-duplicate/i.test(line)) return 'lg-hot'
-  if (/verified \+|\+\d.*INK/.test(line)) return 'lg-ok'
-  if (/^(neuron|registered|coordinator|benchmark|detected|paused|resumed|tab |waiting|can't reach|lusca server|ink now goes|linked|sepia|self-test|switching)/i.test(line)) return 'lg-sys'
+  if (/verified \+|\+\d.*(?:INK|credits)/.test(line)) return 'lg-ok'
+  if (/^(neuron|registered|coordinator|benchmark|detected|paused|resumed|tab |waiting|can't reach|lusca server|ink now goes|credits now go|linked|sepia|self-test|switching)/i.test(line)) return 'lg-sys'
   return ''
 }
 
@@ -138,7 +138,7 @@ export function DiveStage({ state }: { state: StageState }) {
       id="dive"
       n="4"
       title="Verified jobs"
-      kicker="The work your GPU does, and how each result is checked before INK is paid."
+      kicker="The work your GPU does, and how each result is checked before it earns credits."
       state={state}
       lockedNote="waiting for step 2 · the benchmark"
     >
@@ -194,8 +194,8 @@ export function DiveStage({ state }: { state: StageState }) {
               </div>
               <p>
                 {live
-                  ? 'Jobs come from the LUSCA server, which re-checks every result before it writes INK to the ledger.'
-                  : `${srv === 'connecting' ? 'Connecting to the LUSCA server…' : UNREACHABLE_TEXT} Jobs come only from the server, so none run and no INK is counted until it answers.`}
+                  ? 'Jobs come from the LUSCA server, which re-checks every result before it writes credits to the ledger.'
+                  : `${srv === 'connecting' ? 'Connecting to the LUSCA server…' : UNREACHABLE_TEXT} Jobs come only from the server, so none run and no credits are counted until it answers.`}
               </p>
             </div>
           </div>

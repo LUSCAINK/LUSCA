@@ -98,7 +98,7 @@ export function NextStep({
         </li>
         <li>
           <span className="num hot">3</span>
-          <span>Start jobs — every checked job earns INK</span>
+          <span>Start jobs — every checked job earns credits</span>
         </li>
       </ol>
       <div className="pk-next-act">

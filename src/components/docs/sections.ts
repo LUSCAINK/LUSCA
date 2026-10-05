@@ -15,9 +15,9 @@ export const DOC_SECTIONS: DocSectionMeta[] = [
   { n: '05', slug: 'taste', title: 'Taste score', kicker: 'how relevance is scored, exactly as implemented' },
   { n: '06', slug: 'dedupe', title: 'Duplicates', kicker: 'exact hash · 64-bit simhash · gpu vector pass' },
   { n: '07', slug: 'sepia', title: 'SEPIA', kicker: 'the model the agents feed · honest about its size' },
-  { n: '08', slug: 'neurons', title: 'Neurons & checking', kicker: 'webgpu → benchmark → tier → training & dedupe jobs → audit → ink' },
+  { n: '08', slug: 'neurons', title: 'Neurons & checking', kicker: 'webgpu → benchmark → tier → training & dedupe jobs → audit → credits' },
   { n: '09', slug: 'protocol', title: 'Protocol', kicker: 'websocket messages and rest routes' },
-  { n: '10', slug: 'economics', title: 'INK & SOL payouts', kicker: 'ink · payout rules · wallet verification · treasury' },
+  { n: '10', slug: 'economics', title: 'Credits & SOL payouts', kicker: 'credits · payout rules · wallet verification · treasury' },
   { n: '11', slug: 'faq', title: 'Glossary & FAQ', kicker: 'every term in plain words · short answers' },
 ]
 

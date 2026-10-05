@@ -8,8 +8,8 @@ export const TERMS: Record<TermKey, { term: string; def: string }> = {
   taste: { term: 'Taste score', def: 'How relevant a page is to crypto, from 0 to 1. Pages under 0.35 are dropped.' },
   sepia: { term: 'SEPIA', def: 'An open character-level language model, trained live on the kept pages.' },
   neuron: { term: 'Neuron', def: 'A GPU or CPU connected to LUSCA, through a browser tab or the command-line client (scripts/neuron.ts).' },
-  tier: { term: 'Tier', def: 'Your GPU’s class (EPI, MESO, BATHY, ABYSSO, HADAL), set by a 10-second benchmark. Deeper tier = bigger jobs + a bigger INK bonus.' },
-  ink: { term: 'INK', def: 'Points for verified GPU work. Each payout period, the payout pool is split by INK and paid in SOL to verified wallets.' },
+  tier: { term: 'Tier', def: 'Your GPU’s class (EPI, MESO, BATHY, ABYSSO, HADAL), set by a 10-second benchmark. Deeper tier = bigger jobs + a bigger credit bonus.' },
+  ink: { term: 'Credits', def: 'Your share of the payout pool, earned by verified GPU work. Each payout period, the pool is split by confirmed credits and paid in SOL to verified wallets. Credits are not tokens.' },
 }
 
 export const TERM_ORDER: TermKey[] = ['agent', 'arm', 'taste', 'sepia', 'neuron', 'tier', 'ink']

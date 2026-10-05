@@ -1,9 +1,10 @@
 // LUSCA payouts + wallet auth — the REST contract shared by the server (server/payouts/,
 // server/auth/) and the client (src/lib/payouts.ts, src/lib/wallet.ts).
 //
-// INK = points for verified GPU work. Each payout period, the payout pool (a share of the
-// treasury wallet's SOL balance) is split by the INK each verified wallet earned in that period
-// and sent in SOL. Nothing here is an estimate of future value: every number is read from the
+// Credits = points for verified GPU work (the JSON field is named `ink` for historical reasons;
+// credits are not the $INK token). Each payout period, the payout pool (a share of the
+// treasury wallet's SOL balance) is split by the credits each verified wallet earned in that
+// period and sent in SOL. Nothing here is an estimate of future value: every number is read from the
 // coordinator ledger or the Solana RPC.
 
 export type PayoutMode = 'off' | 'dryrun' | 'live'
@@ -28,9 +29,9 @@ export interface PeriodInfo {
   startsAt: number
   /** Next payout time (ms epoch). */
   endsAt: number
-  /** INK earned so far this period by verified wallets. */
+  /** Credits earned so far this period by verified wallets. */
   inkSoFar: number
-  /** Verified wallets with INK this period. */
+  /** Verified wallets with credits this period. */
   wallets: number
   /** Pool if the period closed now, after reserve, share and caps. */
   estPoolSol: number
@@ -44,7 +45,7 @@ export interface PayoutRecord {
   closedAt: number
   /** SOL sent (or planned, for dryrun). */
   poolSol: number
-  /** Total INK across the paid wallets. */
+  /** Total credits across the paid wallets. */
   ink: number
   wallets: number
   /** Confirmed transaction signatures. */
@@ -93,7 +94,7 @@ export interface WalletPayouts {
   verified: boolean
   /** Current-period standing; null when payouts are off. */
   period: { id: string; ink: number; sharePct: number; estSol: number } | null
-  /** Lifetime INK credited to this wallet. */
+  /** Lifetime credits earned by this wallet. */
   totalInk: number
   /** Lifetime SOL sent and confirmed. */
   paidSol: number
@@ -129,4 +130,4 @@ export interface AuthSession {
 // POST /api/auth/verify                 -> AuthSession       (body: AuthVerifyRequest)
 // WS   { t: 'payout'; overview: PayoutsOverview }  when a period closes or a payout tx confirms
 // WS   neuron.register gains `auth?: string` (AuthSession.token). Only a valid token links
-//      the neuron's INK to a wallet; a bare `wallet` field earns nothing toward payouts.
+//      the neuron's credits to a wallet; a bare `wallet` field earns nothing toward payouts.

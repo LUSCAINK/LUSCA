@@ -124,7 +124,7 @@ export function SpawnPanel({ sector, onSector, onSpawned }: { sector: number; on
     <div className="spn">
       <p className="spn-lede">
         Spawning adds a real agent to the arm you pick: it starts fetching real pages on that topic within seconds and feeds the same corpus. It is{' '}
-        <b>free and earns no INK</b> — INK is only for verified GPU work.
+        <b>free and earns no credits</b> — credits are only for verified GPU work.
       </p>
 
       {!live && (
@@ -207,7 +207,7 @@ export function SpawnPanel({ sector, onSector, onSpawned }: { sector: number; on
             <span className={`spn-owner-v num ${address ? '' : 'dim'}`}>{address ? shortAddr(address) : 'anon'}</span>
           </div>
           <p className="spn-hint">
-            The owner field is a public label only: your connected wallet address if there is one, otherwise “anon”. Spawned agents earn no INK; to earn,{' '}
+            The owner field is a public label only: your connected wallet address if there is one, otherwise “anon”. Spawned agents earn no credits; to earn,{' '}
             <Link to="/node">plug in a GPU</Link>. Spawning needs no wallet, no signature and no transaction.
           </p>
         </div>

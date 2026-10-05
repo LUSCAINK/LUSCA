@@ -1760,7 +1760,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       if (!peer.warnedAccount) {
         peer.warnedAccount = true
         const wait = Math.max(60_000, newAccounts.retryIn(accountNetKey(peer.ip), now))
-        safeSend(peer.conn, { t: 'error', msg: `the INK ledger is not accepting new accounts from this address right now — retry in ${Math.ceil(wait / 1000)} s` })
+        safeSend(peer.conn, { t: 'error', msg: `the credit ledger is not accepting new accounts from this address right now — retry in ${Math.ceil(wait / 1000)} s` })
       }
       schedule(peer, 60_000)
       return
@@ -2408,7 +2408,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
         const released = confirmEscrow(peer, who, p.id, now, seq)
         inkEvent(peer, p.id, ink, true, base, 'train', 'confirmed')
         const prior = round2(released - ink)
-        if (prior > 0) inkEvent(peer, p.id, prior, true, `escrow released by full audit: ${prior} INK from earlier gradient jobs`, 'train', 'confirmed')
+        if (prior > 0) inkEvent(peer, p.id, prior, true, `escrow released by full audit: ${prior} credits from earlier gradient jobs`, 'train', 'confirmed')
       } else {
         inkEvent(peer, p.id, ink, true, `${base} · held in escrow until the next full audit`, 'train', 'pending')
       }

@@ -24,7 +24,7 @@ const STEPS: [string, string, string][] = [
   [
     'register',
     'neuron.register',
-    'label, zone, gflops, kind, wallet and auth (optional; INK goes to the wallet only with a valid session token), adapter info including an anonymous persistent device id. The coordinator clamps gflops to 1–200,000, recomputes the zone itself and ignores the client’s claim, then answers neuron.ok.',
+    'label, zone, gflops, kind, wallet and auth (optional; credits go to the wallet only with a valid session token), adapter info including an anonymous persistent device id. The coordinator clamps gflops to 1–200,000, recomputes the zone itself and ignores the client’s claim, then answers neuron.ok.',
   ],
   [
     'train',
@@ -39,7 +39,7 @@ const STEPS: [string, string, string][] = [
   [
     'verify',
     'server/neurons/coordinator.ts · server/trainer',
-    'Training: cheap checks on every gradient, a full server recompute on a share of jobs, accepted gradients applied with Adam; INK is pending until an audit confirms it. Dedupe: shape check, then random rows recomputed on the CPU. Pass → INK. Fail → a strike.',
+    'Training: cheap checks on every gradient, a full server recompute on a share of jobs, accepted gradients applied with Adam; credits are pending until an audit confirms them. Dedupe: shape check, then random rows recomputed on the CPU. Pass → credits. Fail → a strike.',
   ],
 ]
 
@@ -76,7 +76,7 @@ export function Neurons() {
       <H3 id="neurons-zones" n="8.2">
         Zones and job sizes
       </H3>
-      <Table label="Depth zones, job sizes and INK per full job">
+      <Table label="Depth zones, job sizes and credits per full job">
         <thead>
           <tr>
             <th>zone</th>
@@ -84,11 +84,11 @@ export function Neurons() {
             <th>depth</th>
             <th className="r">min GFLOPS</th>
             <th>VRAM guidance</th>
-            <th className="r">ink bonus</th>
+            <th className="r">credit bonus</th>
             <th className="r">train batch</th>
             <th className="r">dedupe rows × cols</th>
             <th className="r">FLOPs / job</th>
-            <th className="r">INK / job</th>
+            <th className="r">credits / job</th>
           </tr>
         </thead>
         <tbody>
@@ -116,14 +116,14 @@ export function Neurons() {
       <p>
         A training job’s batch doubles per zone, from {fmtInt(TRAIN.batch.EPI)} pairs in EPI to {fmtInt(TRAIN.batch.HADAL)} in HADAL ({TRAIN.cpuBatch}{' '}
         on the CPU path); its FLOPs are <C>trainFlops(B) = 6 · B · (ctx · emb · hidden + hidden · vocab)</C> = {fmtInt(trainFlops(1))} · B, forward plus
-        backward. A BATHY training job is {fmtInt(trainFlops(TRAIN.batch.BATHY))} FLOPs → <b>{trainInk('BATHY').toFixed(2)} INK</b> once confirmed. The FLOPs and INK columns describe dedupe jobs. Every dedupe job is{' '}
+        backward. A BATHY training job is {fmtInt(trainFlops(TRAIN.batch.BATHY))} FLOPs → <b>{trainInk('BATHY').toFixed(2)} credits</b> once confirmed. The FLOPs and credits columns describe dedupe jobs. Every dedupe job is{' '}
         <C>{'rows × cols × 256'}</C>: rows double and columns double per zone, so FLOPs grow 4× per zone. Sizes shrink while the corpus is small (rows
         ≤ half the vectors in memory, columns ≤ all of them, minus the row pages). The largest dedupe job (HADAL) is 8.65 MB of float32 vectors, about
         11.5 MB as base64 on the wire. VRAM guidance is advice for the larger models on the roadmap; SEPIA-0 fits in any zone.
       </p>
       <Callout kind="note" title="what depth buys you">
-        Two things scale with depth, both enforced by the coordinator: the job size (4× FLOPs per zone) and the INK bonus per verified GFLOP
-        (<C>1 + 0.15 · zone</C>, the “ink bonus” column). Jobs start small and grow with every verified job. A benchmark deeper than MESO is paid
+        Two things scale with depth, both enforced by the coordinator: the job size (4× FLOPs per zone) and the credit bonus per verified GFLOP
+        (<C>1 + 0.15 · zone</C>, the “credit bonus” column). Jobs start small and grow with every verified job. A benchmark deeper than MESO is paid
         the MESO bonus until your neuron proves GPU-class speed: at least two large jobs (≥ 0.25 GFLOP) answered at ≥ 3 GFLOPS end to end, which a
         browser GPU clears easily and the JavaScript CPU path does not. So claiming a GPU you do not have does not pay.
       </Callout>
@@ -166,7 +166,7 @@ export function Neurons() {
           <tr>
             <th>verdict</th>
             <th>gradient</th>
-            <th>INK</th>
+            <th>credits</th>
           </tr>
         </thead>
         <tbody>
@@ -178,7 +178,7 @@ export function Neurons() {
           <tr>
             <td className="mono strong">audited</td>
             <td>passed a full recompute; applied</td>
-            <td>credited, and this identity’s pending INK becomes confirmed</td>
+            <td>credited, and this identity’s pending credits become confirmed</td>
           </tr>
           <tr>
             <td className="mono strong">stale</td>
@@ -193,13 +193,13 @@ export function Neurons() {
           <tr>
             <td className="mono strong">audit-failed</td>
             <td>failed the full recompute; discarded</td>
-            <td>0; all of this identity’s pending INK is forfeited and a strike is recorded</td>
+            <td>0; all of this identity’s pending credits are forfeited and a strike is recorded</td>
           </tr>
         </tbody>
       </Table>
-      <Callout kind="note" title="pending INK">
-        Training INK is held in escrow. It becomes confirmed when the identity’s next full audit passes and is forfeited if that audit fails. Only
-        confirmed INK counts toward a payout period and toward payable leaderboard totals; <C>ink</C> events carry <C>kind: 'train'</C> and{' '}
+      <Callout kind="note" title="pending credits">
+        Training credits are held in escrow. They become confirmed when the identity’s next full audit passes and are forfeited if that audit fails. Only
+        confirmed credits count toward a payout period and toward payable leaderboard totals; <C>ink</C> events carry <C>kind: 'train'</C> and{' '}
         <C>status: pending | confirmed | forfeited</C>.
       </Callout>
 
@@ -222,19 +222,19 @@ export function Neurons() {
       </p>
 
       <H3 id="neurons-ink" n="8.5">
-        INK
+        Credits
       </H3>
       <Formula
         label="inkFor() — server/neurons/coordinator.ts"
         rows={[
           ['flops', 'dedupe: 2 · rows · cols · 256 · train: trainFlops(B)', 'one multiply-add = 2 FLOPs'],
-          ['ink', 'max(0.01, round₂( flops / 10⁸ · (1 + 0.15 · zoneIndex) ))', 'EPI 0 · MESO 1 · BATHY 2 · ABYSSO 3 · HADAL 4'],
+          ['credits', 'max(0.01, round₂( flops / 10⁸ · (1 + 0.15 · zoneIndex) ))', 'EPI 0 · MESO 1 · BATHY 2 · ABYSSO 3 · HADAL 4'],
         ]}
       />
       <p>
-        One INK per 100 MFLOP of verified work, plus 15% per tier below EPI, for both job types; training INK is pending until an audit confirms it
+        One credit per 100 MFLOP of verified work, plus 15% per tier below EPI, for both job types; training credits are pending until an audit confirms them
         (8.3). A failed job earns 0. A BATHY dedupe job at full size: 2 · 64 · 2048 · 256 ={' '}
-        {fmtInt(zoneJob('BATHY').flops)} FLOPs → 0.671 · 1.30 = <b>{zoneJob('BATHY').ink.toFixed(2)} INK</b>. Balances are kept per verified wallet (valid session
+        {fmtInt(zoneJob('BATHY').flops)} FLOPs → 0.671 · 1.30 = <b>{zoneJob('BATHY').ink.toFixed(2)} credits</b>. Balances are kept per verified wallet (valid session
         token, <Link to="/docs/economics">10.3</Link>), otherwise per anonymous device id, otherwise per label.
       </p>
 
@@ -251,16 +251,16 @@ export function Neurons() {
         <tbody>
           <tr>
             <td>no result within {NEURON.jobTimeoutS} s</td>
-            <td>job failed, 0 INK</td>
+            <td>job failed, 0 credits</td>
           </tr>
           <tr>
             <td>malformed result</td>
-            <td>job failed, 0 INK</td>
+            <td>job failed, 0 credits</td>
           </tr>
           <tr>
             <td>spot-check mismatch</td>
             <td>
-              job failed, 0 INK, <C>ink</C> event with the failing row and Δ
+              job failed, 0 credits, <C>ink</C> event with the failing row and Δ
             </td>
           </tr>
           <tr>
@@ -280,7 +280,7 @@ export function Neurons() {
       <p>
         One job is outstanding per neuron, at least {NEURON.minJobGapMs} ms apart. While the corpus has fewer than 2 vectors the coordinator answers{' '}
         <C>corpus warming up</C> and keeps the request queued. In the browser, three failed GPU self-checks switch the neuron to its CPU backend, the loop
-        pauses while the tab is hidden, and without a server the neuron does no work and shows no INK.
+        pauses while the tab is hidden, and without a server the neuron does no work and shows no credits.
       </p>
 
       <H3 id="neurons-use" n="8.7">
@@ -329,7 +329,7 @@ export function Neurons() {
             </td>
             <td>
               The sub-batch is chosen after the result arrives, and every identity is fully audited on its first {TRAIN.firstAudits} jobs and then on about{' '}
-              {Math.round(TRAIN.auditP * 100)}% of them. A failed audit forfeits all pending INK, so the expected value of cutting corners is negative.
+              {Math.round(TRAIN.auditP * 100)}% of them. A failed audit forfeits all pending credits, so the expected value of cutting corners is negative.
             </td>
           </tr>
           <tr>
@@ -383,7 +383,7 @@ export function Neurons() {
             </td>
             <td>
               A wallet must prove control with a signed message before it is credited, but device ids are unverified and one person can run many
-              neurons or wallets. Payouts are split by INK, so extra identities earn nothing extra for the same work.
+              neurons or wallets. Payouts are split by confirmed credits, so extra identities earn nothing extra for the same work.
             </td>
           </tr>
           <tr>

@@ -122,7 +122,7 @@ function Hero() {
             <Link to="/node" className="dnew-c dnew-hot">
               <span className="dnew-n num">2</span>
               <span className="dnew-name">Start earning</span>
-              <span className="dnew-d">Plug your GPU in from a browser tab. No install, no account, no wallet needed to earn INK.</span>
+              <span className="dnew-d">Plug your GPU in from a browser tab. No install, no account, no wallet needed to earn credits.</span>
               <span className="dnew-go mono">open →</span>
             </Link>
           </li>
@@ -130,7 +130,7 @@ function Hero() {
             <Link to="/earn" className="dnew-c">
               <span className="dnew-n num">3</span>
               <span className="dnew-name">Rewards</span>
-              <span className="dnew-d">How INK is earned, the payout rules, the treasury and payout history.</span>
+              <span className="dnew-d">How credits are earned and paid out in SOL, the payout rules, the treasury and payout history.</span>
               <span className="dnew-go mono">open →</span>
             </Link>
           </li>

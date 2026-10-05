@@ -37,10 +37,12 @@ LUSCA is three systems coordinated by one Node.js server:
 - **Network.** Its training gradients are computed by **neurons**: browser tabs using WebGPU (no
   install), or a single-file desktop program on CPU. The server checks every gradient, recomputes
   a share of them in full, applies the accepted ones with Adam and meters the verified work as
-  work credits (called INK in the ledger and API).
+  work credits. The API and ledger field is named `ink` for historical reasons; the product
+  calls them credits.
 - **Payouts.** **$INK** is the project token. Trading fees on $INK fund the payout pool; every
   payout period the pool is split by each wallet's confirmed work credits and **paid in SOL** to
-  verified wallets. Contributors are never paid in INK.
+  verified wallets. Credits are not tokens: they are only each wallet's share of the payout pool,
+  and contributors are never paid in $INK.
 
 Every number in the UI comes from the running server. When the server is unreachable the client
 shows "—" and reconnects; it never substitutes recorded or generated data.
@@ -65,7 +67,7 @@ flowchart LR
     corpus[("Open corpus<br/>dataset.jsonl")]
     trainer["SEPIA-0 trainer · trainer/<br/>Adam · checkpoints · weight snapshots · audits"]
     coord["Coordinator · neurons/<br/>job issue · spot checks · escrow"]
-    ledger[("INK ledger<br/>confirmed INK")]
+    ledger[("Credit ledger<br/>confirmed credits")]
     payouts["Payout engine · payouts/<br/>12 h periods"]
   end
 
@@ -84,7 +86,7 @@ flowchart LR
   coord <-->|"JSON over /ws"| browser
   coord <-->|"JSON over /ws"| desktop
   coord -->|"escrow released by a passed audit"| ledger
-  ledger -->|"period INK"| payouts
+  ledger -->|"period credits"| payouts
   payouts -->|"signed transfers"| treasury
   treasury -->|"SOL"| wallets
 ```
@@ -102,7 +104,7 @@ sequenceDiagram
   participant N as Neuron
   participant C as Coordinator
   participant T as SEPIA trainer
-  participant L as INK ledger
+  participant L as Credit ledger
 
   N->>C: job.request · caps.train, weights version held
   C->>T: issue a gradient job, batch B by GPU tier
@@ -118,9 +120,9 @@ sequenceDiagram
   T->>T: Adam apply, unless the base is more than 64 versions old
   T-->>C: verdict
   alt no full audit
-    C->>C: INK pending, held in escrow
+    C->>C: credits pending, held in escrow
   else full audit passed
-    C->>L: escrow released as confirmed INK
+    C->>L: escrow released as confirmed credits
   else full audit failed
     C->>C: escrow forfeited, strike recorded
   end
@@ -142,10 +144,10 @@ sequenceDiagram
 6. **Apply.** Accepted gradients go through the server's Adam optimizer and advance the weights
    version. Results computed against weights more than `LUSCA_TRAIN_MAX_STALE` (default 64) versions
    old are not applied.
-7. **Escrow.** INK per job is `GFLOP × 10 × (1 + 0.15 × tier)` with `flops = trainFlops(B)`. It is
-   credited as *pending* and held in escrow per identity. The identity's next passed full audit
-   releases its escrow into *confirmed* INK; a failed audit forfeits all escrowed INK and counts as a
-   strike. Only confirmed INK counts toward payouts (see [Payouts](#payouts)).
+7. **Escrow.** Credits per job are `GFLOP × 10 × (1 + 0.15 × tier)` with `flops = trainFlops(B)`. They
+   are credited as *pending* and held in escrow per identity. The identity's next passed full audit
+   releases its escrow into *confirmed* credits; a failed audit forfeits all escrowed credits and
+   counts as a strike. Only confirmed credits count toward payouts (see [Payouts](#payouts)).
 
 The full protocol and the threat model are in the in-app manual, [`/docs/neurons`](https://lusca.ink/docs/neurons)
 and [`/docs/protocol`](https://lusca.ink/docs/protocol) (source: `src/components/docs/content/`).
@@ -159,9 +161,9 @@ and [`/docs/protocol`](https://lusca.ink/docs/protocol) (source: `src/components
 | Forced audits | the first 3 gradient results of every identity (device, wallet or IP) | `FORCE_AUDIT_JOBS` in `server/neurons/coordinator.ts` |
 | Sampled audits | each later result with probability `LUSCA_TRAIN_AUDIT_P` (0.2), within `LUSCA_TRAIN_AUDIT_CPU` (0.35) of one core | `server/trainer/worker.mjs` |
 | Audit tolerance | cosine ≥ `LUSCA_TRAIN_AUDIT_COS` (0.99) and relative L2 error ≤ `LUSCA_TRAIN_AUDIT_REL` (0.05) against the server recompute | `server/trainer/worker.mjs` |
-| Escrow | training INK is *pending* until the identity's next passed full audit releases it; a failed audit forfeits all of it | `server/neurons/coordinator.ts` |
+| Escrow | training credits are *pending* until the identity's next passed full audit releases it; a failed audit forfeits all of it | `server/neurons/coordinator.ts` |
 | Strikes | 3 consecutive failed jobs per identity, or 12 per remote IP across identities, disconnect the neuron with a cooldown of 30 s that doubles per repeat, up to 15 min | `server/neurons/coordinator.ts` |
-| Tier proof | a tier above MESO earns its INK bonus only after 2 large jobs average at least 3 GFLOPS end to end | `server/neurons/coordinator.ts` |
+| Tier proof | a tier above MESO earns its credit bonus only after 2 large jobs average at least 3 GFLOPS end to end | `server/neurons/coordinator.ts` |
 
 ## Quick start
 
@@ -269,7 +271,7 @@ node dist/neuron.mjs --server ws://127.0.0.1:8787/ws --jobs 3       # --jobs n: 
 is set); the bundled `neuron.mjs` defaults to `wss://lusca.ink/ws`, so pass `--server` (or set
 `LUSCA_WS`) to point it at a local server. `dist/neuron.mjs.sha256` holds the checksum of the build.
 
-INK is kept on the device account. To receive SOL, pass `--auth <token>` (a sign-in token copied
+Credits are kept on the device account. To receive SOL, pass `--auth <token>` (a sign-in token copied
 from the Node page after signing one plain-text message with your browser wallet) or
 `--keypair <file>` (a dedicated payout-only keypair, never a wallet that holds funds).
 
@@ -288,10 +290,10 @@ Nothing reads a `.env` file.
 | `HOST` | `127.0.0.1` | bind address (`0.0.0.0` to expose on your LAN) |
 | `LUSCA_AGENTS` | `24` | genesis agents (3 per arm), 1–64 |
 | `LUSCA_PACE` | `1` | visual pacing of agent steps (0 = full speed) |
-| `LUSCA_DATA` | `server/data` | dataset, model checkpoint, INK ledger, issuance log, denylist |
+| `LUSCA_DATA` | `server/data` | dataset, model checkpoint, credit ledger, issuance log, denylist |
 | `LUSCA_REQUIRE_DISK` | off | `1` = refuse to boot unless `LUSCA_DATA` is on a different filesystem than the app (the mounted persistent disk) |
 | `LUSCA_SHUTDOWN_TIMEOUT_S` | `25` | force exit after this many seconds of graceful shutdown (above the agents' 15 s drain) |
-| `LUSCA_LEDGER_RESET` | off | `1` = start a fresh INK ledger when `ledger.json` is unreadable |
+| `LUSCA_LEDGER_RESET` | off | `1` = start a fresh credit ledger when `ledger.json` is unreadable |
 | `LUSCA_CORS_ORIGINS` | empty | extra allowed origins, comma list |
 | `LUSCA_DATASET_MAX_MB` | `2048` | rotate `dataset.jsonl` into an archive past this size (0 = never) |
 | `LUSCA_DATASET_KEEP` | `0` | archives kept (0 = all) |
@@ -360,15 +362,15 @@ Nothing reads a `.env` file.
 </details>
 
 <details>
-<summary><b>GPU neurons and INK</b></summary>
+<summary><b>GPU neurons and credits</b></summary>
 
 | var | default | |
 |---|---|---|
 | `LUSCA_ISSUE_MB_PER_SEC` | `2` | job payload egress shared by all neurons, MB/s |
 | `LUSCA_JOB_FILL_WAIT_S` | `30` | hold a request until JOB_ROWS/2 new rows exist, at most this long (0 = never hold) |
-| `LUSCA_NEURONS_TOP` | `50` | neurons listed in broadcasts, the hello and `/api/neurons` (top N by INK) |
-| `LUSCA_MAX_ACCOUNTS` | `50000` | ledger account cap; near it, idle low-INK accounts are evicted |
-| `LUSCA_ACCOUNT_IDLE_DAYS` | `7` | idle days before an account under 1 INK may be evicted (only above 90 % of the cap) |
+| `LUSCA_NEURONS_TOP` | `50` | neurons listed in broadcasts, the hello and `/api/neurons` (top N by credits) |
+| `LUSCA_MAX_ACCOUNTS` | `50000` | ledger account cap; near it, idle low-credit accounts are evicted |
+| `LUSCA_ACCOUNT_IDLE_DAYS` | `7` | idle days before an account under 1 credit may be evicted (only above 90 % of the cap) |
 | `LUSCA_NEW_ACCOUNTS_PER_HOUR` | `30` | new ledger accounts per IPv4 address / IPv6 /56 per hour |
 | `LUSCA_MAX_PENDING_MB` | `64` | vector bytes held for outstanding jobs, all neurons |
 | `LUSCA_MAX_BIG_JOBS` | `8` | concurrent ABYSSO / HADAL sized jobs |
@@ -396,7 +398,7 @@ Nothing reads a `.env` file.
 | `LUSCA_PAYOUT_SHARE` | `0.5` | share of (treasury balance − reserve − est. fees) paid per period |
 | `LUSCA_PAYOUT_RESERVE_SOL` | `0.05` | never spent (≥ 0.002) |
 | `LUSCA_PAYOUT_MAX_SOL` | `5` | pool cap per period |
-| `LUSCA_PAYOUT_MAX_WALLET_SOL` | `1` | cap per wallet per period; INK above it carries over |
+| `LUSCA_PAYOUT_MAX_WALLET_SOL` | `1` | cap per wallet per period; credits above it carry over |
 | `LUSCA_PAYOUT_MIN_SOL` | `0.001` | amounts below this carry over (≥ 0.0009) |
 | `LUSCA_AUTH` | empty | desktop neuron only: session token sent as `auth` in `neuron.register` (same as `--auth`) |
 
@@ -436,7 +438,7 @@ LUSCA/
 │   ├── http.ts     the hub: REST /api/*, the /ws socket and static hosting of dist/
 │   ├── ingest/     data agents: robots.txt, host pacing, extraction, PII redaction, taste, simhash dedupe, denylist
 │   ├── trainer/    SEPIA-0 training worker: Adam, checkpoints, weight snapshots, spot checks, full audits
-│   ├── neurons/    coordinator: job issue, result checks, escrow, strikes, INK ledger, issuance log
+│   ├── neurons/    coordinator: job issue, result checks, escrow, strikes, credit ledger, issuance log
 │   ├── payouts/    payout periods, plans and SOL transfers from the treasury
 │   ├── auth/       wallet sign-in (nonce, ed25519 signature, session tokens)
 │   └── data/       runtime data (git-ignored): dataset, checkpoint, ledger, salts
@@ -456,25 +458,26 @@ LUSCA/
 > credits are still metered and recorded and the UI shows "Payouts not started".
 
 `server/payouts` closes a payout period every `LUSCA_PAYOUT_EVERY_H` hours (default 12, at 00:00 and
-12:00 UTC) and pays SOL from the treasury wallet to verified wallets, split by the INK each wallet
-earned in that period. `GET /api/payouts` returns the rules in force, the treasury balance, the
-current period and the history; `GET /api/payouts/wallet/:address` returns one wallet's INK and
+12:00 UTC) and pays SOL from the treasury wallet to verified wallets, split by the credits each wallet
+earned in that period. Credits are your share of the payout pool. Payouts are made in SOL.
+`GET /api/payouts` returns the rules in force, the treasury balance, the current period and the
+history; `GET /api/payouts/wallet/:address` returns one wallet's credits and
 payouts; the WebSocket pushes `{ t: 'payout', overview }` on every change.
 
 | rule | default |
 |---|---|
 | Pool per period | `min(LUSCA_PAYOUT_MAX_SOL, LUSCA_PAYOUT_SHARE × (balance − LUSCA_PAYOUT_RESERVE_SOL − est. fees))`: 50 % of the balance above a 0.05 SOL reserve, at most 5 SOL |
-| Split | by period INK among verified wallets |
-| Per-wallet cap | `LUSCA_PAYOUT_MAX_WALLET_SOL` (1 SOL) per period; INK above the cap carries over |
+| Split | by period credits among verified wallets |
+| Per-wallet cap | `LUSCA_PAYOUT_MAX_WALLET_SOL` (1 SOL) per period; credits above the cap carry over |
 | Minimum transfer | `LUSCA_PAYOUT_MIN_SOL` (0.001 SOL); smaller amounts carry over |
-| Counted INK | confirmed INK only; pending (escrowed) training INK is not paid until an audit releases it |
+| Counted credits | confirmed credits only; pending (escrowed) training credits are not paid until an audit releases them |
 
 - **Funding:** the owner's token creator fees are routed to the treasury wallet. No amount is
   guaranteed. When payouts are live and the treasury holds nothing above the reserve, the UI says
   so and the period pool is 0 SOL.
 - **Verification:** a wallet signs one plain-text message (`GET /api/auth/nonce` →
   `POST /api/auth/verify`), which returns a 30-day token. The browser and the desktop neuron send it
-  as `auth` in `neuron.register`; only INK earned under a valid token is credited to the wallet.
+  as `auth` in `neuron.register`; only credits earned under a valid token go to the wallet.
   Desktop: `--auth <token>` reuses a token from the Node page (preferred), or
   `npx tsx scripts/neuron.ts --keypair <file>` signs locally with a dedicated payout-only keypair
   (`solana-keygen new -o lusca-payout.json`), never a wallet that holds funds.
@@ -484,7 +487,7 @@ payouts; the WebSocket pushes `{ t: 'payout', overview }` on every change.
 | `LUSCA_PAYOUTS` | behaviour |
 |---|---|
 | `off` (default) | no periods close; the treasury balance is still shown when an address is set |
-| `dryrun` | periods close and the plan is published ("planned — no transfer"); nothing is signed or sent. Note: period INK resets at each dryrun close, as in `live` |
+| `dryrun` | periods close and the plan is published ("planned — no transfer"); nothing is signed or sent. Note: period credits reset at each dryrun close, as in `live` |
 | `live` | needs `LUSCA_TREASURY_SECRET`; transfers are sent and linked on Solscan |
 
 > [!CAUTION]
@@ -553,7 +556,7 @@ text is a separate step.
 
 `render.yaml` is a Render Blueprint: one web service runs the API, the WebSocket and the built
 frontend from a single Node process, with a 2 GB persistent disk for the dataset, the SEPIA
-checkpoint and the INK ledger.
+checkpoint and the credit ledger.
 
 | setting | value |
 |---|---|

@@ -10,7 +10,7 @@ export function ZonesTable() {
         id="zones-h"
         kicker="reference"
         title="GPU tiers"
-        sub="Set by your benchmark score. Deeper tier = bigger jobs + a bigger INK bonus. Named after ocean depths."
+        sub="Set by your benchmark score. Deeper tier = bigger jobs + a bigger credit bonus. Named after ocean depths."
       />
       <div className="zt-wrap" tabIndex={0} role="region" aria-label="GPU tiers table">
         <table className="zt">
@@ -28,7 +28,7 @@ export function ZonesTable() {
                 job size
               </th>
               <th scope="col" className="r">
-                ink bonus
+                credit bonus
               </th>
             </tr>
           </thead>
@@ -51,7 +51,7 @@ export function ZonesTable() {
           </tbody>
         </table>
       </div>
-      <p className="zt-foot mono">each tier down: 4× bigger jobs and +0.15 on the INK multiplier</p>
+      <p className="zt-foot mono">each tier down: 4× bigger jobs and +0.15 on the credit multiplier</p>
     </section>
   )
 }

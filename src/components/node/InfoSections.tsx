@@ -58,7 +58,7 @@ export function Requirements() {
       <div className="req-desk">
         <h3 className="req-desk-h display">Prefer the terminal? Run the desktop app</h3>
         <p className="req-desk-p">
-          Same jobs, same checks, same INK. It runs on your CPU from the LUSCA repo (Node 20+). Set a name, copy the command, paste it into a terminal.
+          Same jobs, same checks, same credits. It runs on your CPU from the LUSCA repo (Node 20+). Set a name, copy the command, paste it into a terminal.
         </p>
         <DesktopPanel />
       </div>
@@ -69,7 +69,7 @@ export function Requirements() {
 const QA: { q: string; a: ReactNode }[] = [
   {
     q: 'Does it touch my wallet?',
-    a: 'Earning INK needs no wallet. To receive SOL, you verify a wallet by signing one plain-text message that proves you own the address. It is not a transaction and costs nothing. LUSCA never asks for a transaction, a private key or a seed phrase.',
+    a: 'Earning credits needs no wallet. To receive SOL, you verify a wallet by signing one plain-text message that proves you own the address. It is not a transaction and costs nothing. LUSCA never asks for a transaction, a private key or a seed phrase.',
   },
   {
     q: 'When does it run?',
@@ -80,11 +80,11 @@ const QA: { q: string; a: ReactNode }[] = [
     a: 'Job results (row numbers, similarity scores and time taken), your tier and benchmark score, your GPU name and CPU thread count, a random device ID, and your wallet address and sign-in token if you verify a wallet. Detection and the benchmark run in this tab; nothing is sent until jobs start. No files, no browsing data.',
   },
   {
-    q: 'How is INK paid?',
+    q: 'How are credits paid out?',
     a: (
       <>
-        INK — points for verified GPU work. Each payout period, the payout pool is split by INK and paid in SOL to verified wallets. The amount depends on the
-        pool and on everyone’s INK that period; nothing is guaranteed. <Link to="/earn">See how rewards are paid →</Link>
+        Credits are your share of the payout pool. Payouts are made in SOL: each payout period, the pool is split by credits and paid to verified wallets. The amount depends on the
+        pool and on everyone’s credits that period; nothing is guaranteed. <Link to="/earn">See how rewards are paid →</Link>
       </>
     ),
   },

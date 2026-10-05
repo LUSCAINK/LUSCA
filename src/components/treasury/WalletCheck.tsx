@@ -51,7 +51,7 @@ function Result({ address, cluster }: { address: string; cluster?: PayoutCluster
             'This wallet is verified and has verified GPU work linked to it. It receives its share of each payout.'
           ) : signedHere ? (
             <>
-              This wallet is verified in this browser. No verified GPU work is linked to it yet: it gets a share of payouts once a device earns INK while it
+              This wallet is verified in this browser. No verified GPU work is linked to it yet: it gets a share of payouts once a device earns credits while it
               is verified. <Link to="/node">Start earning →</Link>
             </>
           ) : (
@@ -65,7 +65,7 @@ function Result({ address, cluster }: { address: string; cluster?: PayoutCluster
 
       <dl className="tre-wstats">
         <div>
-          <dt className="label">INK this period</dt>
+          <dt className="label">credits this period</dt>
           <dd className="num">{d ? (d.period ? fmtInk(d.period.ink) : 'payouts not started') : DASH}</dd>
         </div>
         <div>
@@ -88,7 +88,7 @@ function Result({ address, cluster }: { address: string; cluster?: PayoutCluster
           <dd className="num hot">{fmtSol(d?.paidSol)}</dd>
         </div>
         <div>
-          <dt className="label">INK, lifetime</dt>
+          <dt className="label">credits, lifetime</dt>
           <dd className="num">{fmtInk(d?.totalInk)}</dd>
         </div>
       </dl>
@@ -100,7 +100,7 @@ function Result({ address, cluster }: { address: string; cluster?: PayoutCluster
             <th scope="col">period</th>
             <th scope="col">closed (UTC)</th>
             <th scope="col" className="r">
-              INK
+              credits
             </th>
             <th scope="col" className="r">
               SOL
@@ -120,7 +120,7 @@ function Result({ address, cluster }: { address: string; cluster?: PayoutCluster
                 <td className="num" data-l="closed (UTC)">
                   {fmtUtc(r.closedAt).replace(' UTC', '')}
                 </td>
-                <td className="num r" data-l="INK">
+                <td className="num r" data-l="credits">
                   {fmtInk(r.ink)}
                 </td>
                 <td className="num r" data-l="SOL">
@@ -196,7 +196,7 @@ export function WalletCheck({ cluster }: { cluster?: PayoutCluster }) {
             </p>
           ) : (
             <p id={`${id}-h`} className="tre-help">
-              Shows the wallet’s INK this period, its estimated share, SOL paid and payout history. Nothing is signed and nothing is stored.
+              Shows the wallet’s credits this period, its estimated share, SOL paid and payout history. Credits are your share of the payout pool; payouts are made in SOL. Nothing is signed and nothing is stored.
             </p>
           )}
         </form>

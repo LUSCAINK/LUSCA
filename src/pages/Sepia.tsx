@@ -142,7 +142,7 @@ export default function Sepia() {
 
       <NextStep
         className="sp-next"
-        text="Connect your GPU and it computes SEPIA training gradients on batches the server picks. Audited results are applied to the model and earn INK. No install, no account."
+        text="Connect your GPU and it computes SEPIA training gradients on batches the server picks. Audited results are applied to the model and earn credits, your share of each SOL payout. No install, no account."
         secondary={{ to: '/earn', label: 'How rewards work' }}
       />
     </div>

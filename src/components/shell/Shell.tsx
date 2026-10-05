@@ -30,7 +30,7 @@ const VERIFY_HINT = 'Sign one plain-text message to receive SOL payouts. It is n
 
 /** Phones never inject a wallet into the system browser; the wallet app's own browser does. */
 const isMobileUA = () => typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
-const MOBILE_NO_WALLET = 'No Solana wallet in this browser. Open LUSCA in the Phantom app to verify a wallet. Earning INK on this device needs no wallet.'
+const MOBILE_NO_WALLET = 'No Solana wallet in this browser. Open LUSCA in the Phantom app to verify a wallet. Earning credits on this device needs no wallet.'
 
 /** Install / open-in-wallet links shown with the no-wallet error. */
 function NoWalletLinks({ className }: { className?: string }) {

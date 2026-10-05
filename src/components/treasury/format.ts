@@ -6,7 +6,7 @@ export const DASH = '—'
 
 const ok = (v: number | null | undefined): v is number => v != null && Number.isFinite(v)
 
-/** INK with two decimals, tabular. */
+/** Credits with two decimals, tabular. */
 export function fmtInk(v: number | null | undefined): string {
   return ok(v) ? v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : DASH
 }
@@ -127,8 +127,8 @@ export function ruleRows(r: PayoutRules | null): { k: string; v: string; d?: str
     },
     {
       k: 'split',
-      v: 'by INK earned in the period',
-      d: 'among verified wallets only',
+      v: 'by credits earned in the period',
+      d: 'among verified wallets only; credits set each wallet’s share; payouts are made in SOL',
     },
     {
       k: 'per-wallet cap',
@@ -138,7 +138,7 @@ export function ruleRows(r: PayoutRules | null): { k: string; v: string; d?: str
     {
       k: 'minimum payout',
       v: r ? fmtSolExact(r.minSol) : DASH,
-      d: r ? 'below it, the wallet’s INK carries over to the next period' : undefined,
+      d: r ? 'below it, the wallet’s credits carry over to the next period' : undefined,
     },
     {
       k: 'paid in',

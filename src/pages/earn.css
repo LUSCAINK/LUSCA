@@ -554,7 +554,7 @@
   display: block !important;
   padding: 16px 14px !important;
 }
-/* an empty feed is a status, not an INK entry: label color, not hot */
+/* an empty feed is a status, not a credit entry: label color, not hot */
 .inkfeed li.if-empty {
   color: var(--fg-2);
 }

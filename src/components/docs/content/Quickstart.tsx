@@ -98,7 +98,7 @@ npm run dev`}</Code>
             <td className="mono strong">LUSCA_DATA</td>
             <td className="mono">server/data</td>
             <td className="dim">path</td>
-            <td>Dataset, ingest counters, model checkpoint, INK ledger, payout periods.</td>
+            <td>Dataset, ingest counters, model checkpoint, credit ledger, payout periods.</td>
           </tr>
           <tr>
             <td className="mono">HOST</td>
@@ -149,7 +149,7 @@ npm run dev`}</Code>
           <tr>
             <td className="mono strong">ledger.json</td>
             <td className="mono small">coordinator</td>
-            <td>INK accounts (by verified wallet, device id or label), period INK and lifetime totals. Every 30 s, on shutdown and at each period close.</td>
+            <td>Credit accounts (by verified wallet, device id or label), period credits and lifetime totals. Every 30 s, on shutdown and at each period close.</td>
           </tr>
         </tbody>
       </Table>
@@ -174,8 +174,8 @@ node neuron.mjs --server ws://localhost:8787/ws --label name             # joins
       <p>
         A command-line neuron joins the same LUSCA server over the same socket as a browser neuron, with <C>kind: "desktop"</C>. It needs Node 20+ and
         nothing else. It computes SEPIA-0 training gradients on the CPU (batch 128) with the same code the server audits against (<C>shared/sepia</C>),
-        also takes dedupe jobs, is verified the same way and earns by the same formula. INK is kept on the machine’s device account; a wallet receives INK only through a
-        verified session (one signed message, <Link to="/docs/economics">10.3</Link>), so <C>--wallet</C> alone does not route INK to a wallet. To receive SOL, pass <C>--auth &lt;token&gt;</C> (a sign-in token from the
+        also takes dedupe jobs, is verified the same way and earns by the same formula. Credits are kept on the machine’s device account; a wallet receives credits only through a
+        verified session (one signed message, <Link to="/docs/economics">10.3</Link>), so <C>--wallet</C> alone does not route credits to a wallet. To receive SOL, pass <C>--auth &lt;token&gt;</C> (a sign-in token from the
         Node page, signed in your browser wallet) or <C>--keypair &lt;file&gt;</C> (a dedicated payout-only keypair, never a wallet that holds
         funds; it signs the sign-in message locally).
       </p>

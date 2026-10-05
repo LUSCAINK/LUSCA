@@ -249,14 +249,14 @@ export function ArmsView() {
             <span id="ag-spawn-h">
               <span className="hot">B</span>&nbsp;&nbsp;<b>Add an agent</b>
             </span>
-            <span className="hot">free · earns no INK</span>
+            <span className="hot">free · earns no credits</span>
           </div>
           <SpawnPanel sector={spawnSector} onSector={setSpawnSector} onSpawned={(a) => setFreshId(a.id)} />
         </aside>
       </div>
 
       <NextStep
-        text="Agents fetch the web; connected GPUs check their work. Plug yours in from this browser tab to earn INK — no install, no account, no wallet needed to start."
+        text="Agents fetch the web; connected GPUs check their work. Plug yours in from this browser tab to earn credits — no install, no account, no wallet needed to start."
         secondary={{ to: '/earn', label: 'How rewards work' }}
       />
     </div>

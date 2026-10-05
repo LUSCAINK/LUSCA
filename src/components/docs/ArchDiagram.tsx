@@ -61,7 +61,7 @@ export function ArchDiagram() {
             Data agents fetch from the web and exchange URLs with the frontier. Accepted pages are appended to dataset.jsonl and streamed to the
             trainer worker. The coordinator builds jobs from page vectors, sends them to neurons over the WebSocket, verifies results and reports
             duplicates back to the ingest pipeline. All modules emit events to the hub, which fans them out to clients. The payout engine closes each
-            payout period, splits the pool by INK and sends SOL to verified wallets.
+            payout period, splits the pool by confirmed credits and sends SOL to verified wallets.
           </desc>
           <defs>
             <marker id="docs-arr" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -206,7 +206,7 @@ export function ArchDiagram() {
             lines={[
               'job = newest rows × corpus block × 256 dims',
               'verify 4 random rows on CPU · |Δsim| < 2e-3',
-              'pass → INK = flops/1e8 · (1 + 0.15·zone)',
+              'pass → credits = flops/1e8 · (1 + 0.15·zone)',
               '3 consecutive failures → kicked',
               'ledger.json every 30 s',
             ]}
@@ -226,7 +226,7 @@ export function ArchDiagram() {
               server/payouts
             </text>
             <text x={680} y={520} className="ad-s">
-              period close · split by INK
+              period end · split by credits
             </text>
             <text x={680} y={535} className="ad-s">
               SOL → verified wallets

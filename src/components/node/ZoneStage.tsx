@@ -135,7 +135,7 @@ export function ZoneStage({ state }: { state: StageState }) {
       id="zone"
       n="3"
       title="Your tier"
-      kicker="Your benchmark score puts your GPU in one of five tiers. Deeper tier = bigger jobs + a bigger INK bonus."
+      kicker="Your benchmark score puts your GPU in one of five tiers. Deeper tier = bigger jobs + a bigger credit bonus."
       state={state}
       lockedNote="waiting for step 2 · the benchmark"
     >
@@ -163,7 +163,7 @@ export function ZoneStage({ state }: { state: StageState }) {
             <p className="zc-h">
               {info ? (
                 <>
-                  Your {name} scored {fmtG(g)} GFLOPS, which puts it in <b>{info.zone}</b>. You earn <b className="hot">×{info.bonus.toFixed(2)}</b> INK per
+                  Your {name} scored {fmtG(g)} GFLOPS, which puts it in <b>{info.zone}</b>. You earn <b className="hot">×{info.bonus.toFixed(2)}</b> credits per
                   verified job.
                 </>
               ) : (
@@ -180,7 +180,7 @@ export function ZoneStage({ state }: { state: StageState }) {
                 <dd>{bench ? `${fmtG(g)} GFLOPS` : '—'}</dd>
               </div>
               <div>
-                <dt>ink bonus</dt>
+                <dt>credit bonus</dt>
                 <dd className="zc-weight">{info ? `×${info.bonus.toFixed(2)}` : '—'}</dd>
               </div>
               <div>
@@ -204,7 +204,7 @@ export function ZoneStage({ state }: { state: StageState }) {
             </dl>
             <p className="zc-note">
               Your tier comes from the benchmark score only. Browsers can’t read GPU memory, so the memory column is a guide. Each tier down gets 4× bigger
-              jobs and +0.15 on the INK multiplier.
+              jobs and +0.15 on the credit multiplier.
             </p>
             {bench && (
               <div className="nd-actions">

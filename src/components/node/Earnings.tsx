@@ -105,7 +105,7 @@ function WalletLine({ cluster }: { cluster: PayoutCluster | undefined }) {
           </a>
           <span className="tag hot">Verified</span>
         </div>
-        <p className="ep-note">SOL payouts for this device’s INK go to this wallet.</p>
+        <p className="ep-note">SOL payouts for this device’s credits go to this wallet.</p>
       </div>
     )
   }
@@ -114,7 +114,7 @@ function WalletLine({ cluster }: { cluster: PayoutCluster | undefined }) {
       <button type="button" className="btn primary ep-verify" onClick={act} disabled={busy}>
         {busy ? 'check your wallet…' : w.status === 'connected' ? `verify ${shortAddr(w.address)} to receive SOL` : 'Verify wallet to receive SOL'}
       </button>
-      <p className="ep-note">INK is credited to this device. Verify a wallet to receive SOL payouts.</p>
+      <p className="ep-note">Credits accrue to this device. Verify a wallet to receive SOL payouts.</p>
       <p className="ep-note ep-fine">You sign one plain-text message. It is not a transaction and costs nothing.</p>
       {w.error && (
         <p className="ep-err" role="alert">
@@ -189,7 +189,7 @@ function PayoutBlock() {
             <dd className="ep-sub mono">estimate · if the period closed now</dd>
           </div>
           <div className="ep-row">
-            <dt className="label">your ink this period</dt>
+            <dt className="label">your credits this period</dt>
             <dd className="ep-v num">{share ? fmtInk(share.ink) : DASH}</dd>
             <dd className="ep-sub mono">{addr ? 'verified wallet' : 'verified wallets only'}</dd>
           </div>
@@ -219,7 +219,7 @@ function PayoutBlock() {
             </dd>
           </div>
           <div className="ep-row">
-            <dt className="label">your ink all-time</dt>
+            <dt className="label">your credits all-time</dt>
             <dd className="ep-v num">{wp ? fmtInk(wp.totalInk) : DASH}</dd>
             <dd className="ep-sub mono">{addr ? 'credited to this wallet' : 'verified wallets only'}</dd>
           </div>
@@ -283,12 +283,12 @@ function TrainingBlock({ live }: { live: boolean }) {
           <dd className="ep-sub mono">{live ? (stale > 0 ? `${fmtInt(stale)} verified, too old to apply` : 'merged into SEPIA by the server') : DASH}</dd>
         </div>
         <div className="ep-row">
-          <dt className="label">ink confirmed</dt>
+          <dt className="label">credits confirmed</dt>
           <dd className="ep-v num">{live ? fmtInk(ink) : DASH}</dd>
           <dd className="ep-sub mono">{live ? 'counts toward payouts' : DASH}</dd>
         </div>
         <div className="ep-row">
-          <dt className="label">ink pending audit</dt>
+          <dt className="label">credits pending audit</dt>
           <dd className="ep-v num">{live ? fmtInk(pending) : DASH}</dd>
           <dd className={`ep-sub mono ${forfeited > 0 ? 'et-err' : ''}`}>
             {live ? (forfeited > 0 ? `${fmtInk(forfeited)} forfeited by a failed audit` : 'held until the next full audit passes') : DASH}
@@ -297,7 +297,7 @@ function TrainingBlock({ live }: { live: boolean }) {
       </dl>
       <p className="ep-note ep-fine">
         Every gradient is checked against the server’s own computation on part of the batch, and some are fully recomputed (your first three, then a random
-        share). Training INK stays pending until your next full audit passes; a failed audit forfeits all pending INK. Only confirmed INK is paid.
+        share). Training credits stay pending until your next full audit passes; a failed audit forfeits all pending credits. Only confirmed credits count. Credits are your share of the payout pool. Payouts are made in SOL.
       </p>
     </div>
   )
@@ -355,10 +355,10 @@ export function EarningsPanel() {
       </div>
 
       <div className="earn-ink">
-        <div className="label">ink this session</div>
-        <div className="earn-ink-v num" aria-label={live ? `${fmtInk(ink)} INK this session` : 'INK unavailable'}>
+        <div className="label">credits this session</div>
+        <div className="earn-ink-v num" aria-label={live ? `${fmtInk(ink)} credits this session` : 'credits unavailable'}>
           {live ? fmtInk(ink) : DASH}
-          <span className="earn-ink-u">INK</span>
+          <span className="earn-ink-u">credits</span>
         </div>
         <div className="earn-ink-sub mono">{live ? `confirmed${pending > 0 ? ` · ${fmtInk(pending)} pending audit` : ''} · credited to ${creditedTo}` : srv === 'connecting' ? 'connecting to the LUSCA server…' : UNREACHABLE_TEXT}</div>
       </div>
@@ -394,13 +394,13 @@ export function EarningsPanel() {
         {phase === 'earning' && (
           <p className="earn-mode earn-mode-live">
             <span className="led on pulse" aria-hidden="true" />
-            Live. Your GPU computes SEPIA training gradients; the server checks every result before it credits INK.
+            Live. Your GPU computes SEPIA training gradients; the server checks every result before it awards credits.
           </p>
         )}
         {phase === 'waiting' && (
           <p className="earn-mode">
             <span className="led white pulse" aria-hidden="true" />
-            Waiting for the LUSCA server. No jobs run and no INK is counted until it answers; work resumes on its own.
+            Waiting for the LUSCA server. No jobs run and no credits are counted until it answers; work resumes on its own.
           </p>
         )}
         {phase === 'paused' && (
@@ -441,7 +441,7 @@ export function EarningsPanel() {
             <span className="et-tier">{zinfo ? zinfo.zone : DASH}</span>
             <TierBars zone={zinfo?.zone ?? null} />
           </dd>
-          <dd className="et-sub mono">{zinfo ? `×${zinfo.bonus.toFixed(2)} INK bonus` : 'set by the benchmark'}</dd>
+          <dd className="et-sub mono">{zinfo ? `×${zinfo.bonus.toFixed(2)} credit bonus` : 'set by the benchmark'}</dd>
         </div>
         <div className="et">
           <dt className="label">gpu</dt>
@@ -528,7 +528,7 @@ export function EarnStrip() {
         <span className="estrip-st mono">{phase === 'starting' ? `starting · ${step}/4` : PHASE_TEXT[phase]}</span>
         <span className="estrip-ink num">
           {live ? fmtInk(ink) : DASH}
-          <small>INK</small>
+          <small>credits</small>
         </span>
         <span className="estrip-kv mono">
           {fmtInt(verified)} verified{failed > 0 ? ` · ${fmtInt(failed)} failed` : ''}

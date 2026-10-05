@@ -12,12 +12,13 @@ Teenage Engineering manual, lidar scan. Not "crypto neon". Not glassmorphism. No
   "tastes" (relevance-scores) every page before swallowing it. Two-thirds of an octopus's
   neurons live in its arms — each arm thinks for itself. That is our agent story.
 - **SEPIA-0** — the model trained live on what the arms bring back (sepia = cephalopod ink).
-- **INK** — points earned for verified work. **Neurons** — GPUs plugged in by users.
+- **Credits** — points earned for verified work (your share of the SOL payout pool; never the
+  **$INK** token, which funds the pool through its trading fees). **Neurons** — GPUs plugged in by users.
 - **Zones** (GPU tiers by benchmark): EPI · MESO · BATHY · ABYSSO · HADAL (`ZONES` in
   `shared/protocol.ts`).
 - Voice: terse, lowercase-friendly, precise, a little dry. Numbers over adjectives. Never hype.
-  Never promise amounts. INK is points for verified GPU work; each payout period the payout pool
-  is split by INK and paid in SOL to verified wallets.
+  Never promise amounts. Credits are points for verified GPU work; each payout period the payout
+  pool is split by credits and paid in SOL to verified wallets. Never call the points INK.
 
 ## Tokens (`src/styles/tokens.css` — always use the variables)
 - Surfaces `--bg #050505`, `--bg-1..4`. Hairlines `--line..--line-4`. Text (bone) `--fg #ecebe6`,

@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Credits.** The units earned for verified GPU work are now called credits everywhere in the
+  product (formerly shown as INK). Credits are each wallet's share of the payout pool; payouts are
+  made in SOL. **$INK** only ever means the project token, whose trading fees fund the pool. API
+  and ledger field names (`ink`, `periodInk`, `inkIssued`, …) are unchanged.
+
 ## [0.1.0] - 2026-10-05
 
 First public release.
@@ -24,7 +31,7 @@ First public release.
   training gradients on batches the server selects. The server spot-checks every gradient, fully
   audits the first 3 jobs of each identity and about 20% of later jobs at random, and applies
   accepted gradients with Adam.
-- **INK escrow.** INK earned for training stays pending until an audit passes; a failed audit
+- **Credit escrow.** Credits earned for training stay pending until an audit passes; a failed audit
   forfeits it.
 - **Dedupe jobs.** Neurons also run deduplication jobs for the corpus.
 - **Desktop neuron.** A single-file CPU neuron for Node 20+ (`scripts/neuron.ts`, built to

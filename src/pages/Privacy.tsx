@@ -16,13 +16,13 @@ const COLLECT: { what: string; when: string; why: string; where: string }[] = [
     what: 'IP address',
     when: 'Every page load, API call and live connection.',
     why: 'Per-IP rate limits, connection caps and blocking abuse.',
-    where: 'Server memory only; not written to the INK ledger. The hosting provider may keep its own request logs.',
+    where: 'Server memory only; not written to the credit ledger. The hosting provider may keep its own request logs.',
   },
   {
     what: 'Device id',
     when: 'When you run a neuron.',
-    why: 'A random id generated in your browser, so INK can accrue without a wallet.',
-    where: 'Your browser (local storage) and the INK ledger.',
+    why: 'A random id generated in your browser, so credits can accrue without a wallet.',
+    where: 'Your browser (local storage) and the credit ledger.',
   },
   {
     what: 'GPU name and benchmark',
@@ -33,14 +33,14 @@ const COLLECT: { what: string; when: string; why: string; where: string }[] = [
   {
     what: 'Job results',
     when: 'While your neuron works.',
-    why: 'Spot-checked on the server to award INK; used to flag duplicate pages in the corpus.',
-    where: 'Per-account totals in the INK ledger; duplicate flags in the corpus.',
+    why: 'Spot-checked on the server to award credits; used to flag duplicate pages in the corpus.',
+    where: 'Per-account totals in the credit ledger; duplicate flags in the corpus.',
   },
   {
     what: 'Wallet address (optional)',
     when: 'Only if you connect a Solana wallet.',
-    why: 'To attribute INK to the wallet and to send SOL payouts to it.',
-    where: 'Your browser (local storage), the INK ledger and the payout records on the server.',
+    why: 'To attribute credits to the wallet and to send SOL payouts to it.',
+    where: 'Your browser (local storage), the credit ledger and the payout records on the server.',
   },
   {
     what: 'Verification signature (optional)',
@@ -71,7 +71,7 @@ const SECTIONS: LegalSection[] = [
         <li>There are no accounts and no cookies.</li>
         <li>Your IP address is used for rate limits and abuse protection.</li>
         <li>
-          If you run a neuron, the server receives a random device id, your GPU’s name and benchmark, and the results of the jobs you run. Earning INK
+          If you run a neuron, the server receives a random device id, your GPU’s name and benchmark, and the results of the jobs you run. Earning credits
           needs no wallet.
         </li>
         <li>
@@ -80,7 +80,8 @@ const SECTIONS: LegalSection[] = [
         </li>
         <li>LUSCA never asks for a transaction, a private key or a seed phrase.</li>
         <li>
-          INK is points for verified GPU work. Each payout period, the payout pool is split by INK and paid in SOL to verified wallets. See{' '}
+          Credits are points for verified GPU work: your share of the payout pool. Payouts are made in SOL. Each payout period, the payout pool is split
+          by credits and paid in SOL to verified wallets. See{' '}
           <Link to="/earn">Rewards</Link>.
         </li>
       </ul>
@@ -178,8 +179,8 @@ const SECTIONS: LegalSection[] = [
         </dl>
         <p>
           The wallet address, session token and device id are sent to the server only when you verify a wallet, run a neuron, view your
-          payouts, or add an agent (the agent's public owner field is your connected wallet address). INK earned under an
-          old device id stays with that id if you reset it.
+          payouts, or add an agent (the agent's public owner field is your connected wallet address). Credits earned under an
+          old device id stay with that id if you reset it.
         </p>
       </>
     ),
@@ -190,7 +191,7 @@ const SECTIONS: LegalSection[] = [
     body: (
       <ul>
         <li>
-          The leaderboard and the live view show each neuron’s label (by default its GPU name), zone, speed, jobs and INK, together with the wallet
+          The leaderboard and the live view show each neuron’s label (by default its GPU name), zone, speed, jobs and credits, together with the wallet
           address it earns under, usually shortened.
         </li>
         <li>
@@ -207,7 +208,7 @@ const SECTIONS: LegalSection[] = [
     body: (
       <ul>
         <li>Rate-limit state lives in memory and is gone when the server restarts.</li>
-        <li>The INK ledger, payout records and the corpus live on the server’s disk until they are removed.</li>
+        <li>The credit ledger, payout records and the corpus live on the server’s disk until they are removed.</li>
         <li>On-chain payout transactions cannot be removed by anyone.</li>
         <li>The host that runs LUSCA keeps its own logs under its own policy.</li>
       </ul>
@@ -242,7 +243,7 @@ const SECTIONS: LegalSection[] = [
     body: (
       <ul>
         <li>Use the site without connecting a wallet or running a neuron.</li>
-        <li>Earn INK without a wallet; connect and verify one only if you want SOL payouts.</li>
+        <li>Earn credits without a wallet; connect and verify one only if you want SOL payouts.</li>
         <li>Disconnect your wallet at any time from the wallet button or the menu. This clears the stored address and session token.</li>
         <li>Stop the neuron at any time. Closing the tab stops it too.</li>
         <li>Clear this site’s data in your browser to remove everything listed above.</li>

@@ -503,9 +503,9 @@ function usage(): string {
     '  --no-train dedupe jobs only (no SEPIA training)',
     '  --version  print the build id',
     '',
-    '  INK is earned without a wallet (kept on this device). Training INK is pending until the',
-    '  next full audit of this identity passes, then confirmed; only confirmed INK is paid. Each',
-    '  payout period the payout pool is split by INK and paid in SOL to verified wallets.',
+    '  Credits are earned without a wallet (kept on this device). Training credits are pending until the',
+    '  next full audit of this identity passes, then confirmed; only confirmed credits count. Each',
+    '  payout period the payout pool is split by credits and paid in SOL to verified wallets.',
     '  Source: https://github.com/LUSCAINK/LUSCA',
     '',
   ].join('\n')
@@ -609,7 +609,7 @@ async function main() {
       process.stderr.write(
         `  ${red('■')} wallet sign-in failed: ${failure}\n` +
           `  ${dim('         not starting: --keypair was given but no wallet is verified. Fix the sign-in and run again,')}\n` +
-          `  ${dim('         or run without --keypair to earn INK on this device account.')}\n`,
+          `  ${dim('         or run without --keypair to earn credits on this device account.')}\n`,
       )
       // Let the event loop drain instead of process.exit(): exiting while fetch's socket is still
       // closing trips a libuv assertion on Windows (exit status 127 instead of 2).
@@ -730,7 +730,7 @@ async function main() {
 
   const inkLine = () => {
     const p = pendingInk()
-    return `${hot(`${fmtInk(ink)} INK confirmed`)}${p > 0 ? ` · ${fmtInk(p)} pending` : ''}${forfeited > 0 ? ` · ${red(`${fmtInk(forfeited)} forfeited`)}` : ''}`
+    return `${hot(`${fmtInk(ink)} credits confirmed`)}${p > 0 ? ` · ${fmtInk(p)} pending` : ''}${forfeited > 0 ? ` · ${red(`${fmtInk(forfeited)} forfeited`)}` : ''}`
   }
 
   const summary = () =>
@@ -829,18 +829,18 @@ async function main() {
       const lost = ev.ink > 0 ? ev.ink : pendingInk()
       forfeited += lost
       escrow.clear()
-      bad(`${ev.reason} · ${fmtInk(lost)} pending INK forfeited`)
+      bad(`${ev.reason} · ${fmtInk(lost)} pending credits forfeited`)
     } else if (ev.verified && isTrain && status === 'confirmed' && released.has(ev.jobId)) {
       // The escrow-release line that follows a passed full audit (same job id): its amount is
       // authoritative; correct the local estimate moved into `ink` on the audit event.
       const guessed = released.get(ev.jobId) ?? 0
       released.set(ev.jobId, ev.ink)
       ink += ev.ink - guessed
-      good(`${bone('audit passed')} · ${hot(`${fmtInk(ev.ink)} pending INK confirmed`)} ${dim(`· ${ev.reason}`)} · ${inkLine()}`)
+      good(`${bone('audit passed')} · ${hot(`${fmtInk(ev.ink)} pending credits confirmed`)} ${dim(`· ${ev.reason}`)} · ${inkLine()}`)
     } else if (ev.verified && status === 'pending') {
       verified++
       escrow.set(ev.jobId, ev.ink)
-      good(`${bone('verified')} ${hot(`+${fmtInk(ev.ink)} INK`)} ${dim('pending')} ${dim(`· ${ev.reason}`)} · ${inkLine()} · ${verified}/${verified + failed}`)
+      good(`${bone('verified')} ${hot(`+${fmtInk(ev.ink)} credits`)} ${dim('pending')} ${dim(`· ${ev.reason}`)} · ${inkLine()} · ${verified}/${verified + failed}`)
       if (QUIET && verified % 25 === 0) line(dim('·'), summary(), true)
     } else if (ev.verified) {
       const was = escrow.get(ev.jobId)
@@ -848,7 +848,7 @@ async function main() {
         // An escrowed job confirmed on its own (already counted as verified).
         escrow.delete(ev.jobId)
         ink += ev.ink || was
-        good(`${bone('confirmed')} ${hot(`+${fmtInk(ev.ink || was)} INK`)} ${dim(`· ${ev.reason}`)} · ${inkLine()}`)
+        good(`${bone('confirmed')} ${hot(`+${fmtInk(ev.ink || was)} credits`)} ${dim(`· ${ev.reason}`)} · ${inkLine()}`)
       } else {
         verified++
         ink += ev.ink
@@ -863,7 +863,7 @@ async function main() {
           released.set(ev.jobId, moved)
           if (released.size > 200) released.delete(released.keys().next().value as string)
         }
-        good(`${bone(isTrain ? 'audited' : 'verified')} ${hot(`+${fmtInk(ev.ink)} INK`)} ${dim('confirmed')} ${dim(`· ${ev.reason}`)} · ${inkLine()} · ${verified}/${verified + failed}`)
+        good(`${bone(isTrain ? 'audited' : 'verified')} ${hot(`+${fmtInk(ev.ink)} credits`)} ${dim('confirmed')} ${dim(`· ${ev.reason}`)} · ${inkLine()} · ${verified}/${verified + failed}`)
         if (QUIET && verified % 25 === 0) line(dim('·'), summary(), true)
       }
     } else {
@@ -957,8 +957,8 @@ async function main() {
             }
             if (auth !== lastAuth) {
               lastAuth = auth
-              if (auth === 'verified') good(`INK linked to verified wallet ${bone(n.wallet ? shortAddr(n.wallet) : wallet ? shortAddr(wallet) : '')} · eligible for SOL payouts`)
-              else info(dim('INK stays on this device account — sign in with --keypair or --auth to receive SOL payouts'))
+              if (auth === 'verified') good(`Credits linked to verified wallet ${bone(n.wallet ? shortAddr(n.wallet) : wallet ? shortAddr(wallet) : '')} · eligible for SOL payouts`)
+              else info(dim('Credits stay on this device account — sign in with --keypair or --auth to receive SOL payouts'))
             }
             requestJob(0)
             return

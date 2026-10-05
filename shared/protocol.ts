@@ -141,7 +141,7 @@ export interface Stats {
   gflops: number;        // summed benchmarked GFLOPS of connected neurons
   jobsDone: number;
   jobsVerified: number;
-  inkIssued: number;     // total INK points issued
+  inkIssued: number;     // total credits issued
 }
 
 /** GPU neuron (a browser or desktop node contributing compute). */
@@ -224,9 +224,9 @@ export interface InkEvent {
   /** Job type ('sim' when absent). */
   kind?: 'sim' | 'train';
   /**
-   * 'confirmed' = in the ledger (dedupe jobs, and train INK after a passed full audit);
-   * 'pending' = train INK held in escrow until the identity's next passed full audit;
-   * 'forfeited' = escrow INK cancelled by a failed audit. Absent = 'confirmed'.
+   * 'confirmed' = in the ledger (dedupe jobs, and train credits after a passed full audit);
+   * 'pending' = train credits held in escrow until the identity's next passed full audit;
+   * 'forfeited' = escrowed credits cancelled by a failed audit. Absent = 'confirmed'.
    */
   status?: 'confirmed' | 'pending' | 'forfeited';
 }
@@ -262,14 +262,14 @@ export type ServerMsg =
   | { t: 'neurons'; neurons: NeuronInfo[] }
   | { t: 'job'; job: SimJob | TrainJob }            // sent only to the neuron it is assigned to (discriminate on job.kind)
   | { t: 'ink'; event: InkEvent }                   // broadcast
-  // reply to register; `auth`: 'verified' = INK goes to neuron.wallet, 'invalid' = the token was
-  // rejected (expired / tampered) and INK stays on the device account, 'none' = no token sent
+  // reply to register; `auth`: 'verified' = credits go to neuron.wallet, 'invalid' = the token was
+  // rejected (expired / tampered) and credits stay on the device account, 'none' = no token sent
   | { t: 'neuron.ok'; neuron: NeuronInfo; auth?: 'verified' | 'invalid' | 'none' }
   | { t: 'payout'; overview: PayoutsOverview }      // broadcast when a payout period closes or a payout tx confirms
   | { t: 'error'; msg: string };
 
 export type ClientMsg =
-  // `auth`: session token from POST /api/auth/verify. Only a valid token links INK to a wallet
+  // `auth`: session token from POST /api/auth/verify. Only a valid token links credits to a wallet
   // (NeuronInfo.wallet); a bare `wallet` field is ignored for payouts.
   | { t: 'neuron.register'; label: string; zone: Zone; gflops: number; kind: 'browser' | 'desktop'; wallet: string | null; adapter: Record<string, string>; auth?: string | null }
   // caps.train: the neuron can compute SEPIA gradients; caps.version: weights version it holds (null = none);
@@ -289,8 +289,8 @@ export type ClientMsg =
 
 /**
  * GPU depth zones. A zone sets (a) the job size the coordinator issues — 4× the FLOPs per
- * zone step — and (b) the INK bonus per verified GFLOP: 1 + 0.15 · zone index.
- * INK per job = GFLOP × 10 × bonus (server/neurons/coordinator.ts).
+ * zone step — and (b) the credit bonus per verified GFLOP: 1 + 0.15 · zone index.
+ * Credits per job = GFLOP × 10 × bonus (server/neurons/coordinator.ts).
  */
 export const ZONES: { zone: Zone; name: string; depth: string; minGflops: number; vram: string; bonus: number; job: string; jobScale: number }[] = [
   { zone: 'EPI',    name: 'Epipelagic',    depth: '0–200 m',        minGflops: 0,    vram: 'integrated / ≤6 GB', bonus: 1.0,  job: '16×512',   jobScale: 1 },

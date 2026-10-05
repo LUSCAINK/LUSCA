@@ -942,7 +942,7 @@ async function register(myGen: number, reauth = false): Promise<boolean> {
     const credited = refused || res.auth === 'none' ? null : res.auth === 'verified' ? (res.neuron.wallet ?? wallet) : wallet
     set({ neuronId: res.neuron.id, wallet: credited })
     if (refused) {
-      log('the server did not accept the wallet sign-in — INK goes to this device until the wallet is verified again')
+      log('the server did not accept the wallet sign-in — credits go to this device until the wallet is verified again')
       // regAuth stays the refused token, so the loop does not re-register with it again;
       // invalidate() clears the token, which makes the registration stale once more (→ device).
       useWallet.getState().invalidate('The LUSCA server did not accept this wallet sign-in. Verify the wallet again to receive SOL.')
@@ -951,14 +951,14 @@ async function register(myGen: number, reauth = false): Promise<boolean> {
     const to = credited ? `wallet ${short4(credited)} (verified)` : 'this device'
     log(
       reauth
-        ? `INK now goes to ${to}`
-        : `registered neuron ${shortId(res.neuron.id)} · ${neuronLabel()} · ${zone} · ${fmtG(gflops)} GFLOPS · INK goes to ${to}`,
+        ? `credits now go to ${to}`
+        : `registered neuron ${shortId(res.neuron.id)} · ${neuronLabel()} · ${zone} · ${fmtG(gflops)} GFLOPS · credits go to ${to}`,
     )
     return true
   }
   if (res.kind === 'error' && auth && AUTH_REFUSED_RE.test(res.msg)) {
     // The server refused the sign-in token itself: drop it and register as this device.
-    log(`the server did not accept the wallet sign-in (${trunc(res.msg, 100)}) — INK goes to this device until the wallet is verified again`)
+    log(`the server did not accept the wallet sign-in (${trunc(res.msg, 100)}) — credits go to this device until the wallet is verified again`)
     useWallet.getState().invalidate('The LUSCA server did not accept this wallet sign-in. Verify the wallet again to receive SOL.')
     return false
   }
@@ -1128,11 +1128,11 @@ async function runTrainJob(myGen: number, job: TrainJobWire) {
   const point = (ink: number, ok: boolean) => pushHistory({ ts: Date.now(), ms: res.ms, gflopsEff, ink, verified: ok, id: job.id })
   if (ev === 'expired') {
     point(0, false)
-    log(`${head} · result arrived after the job expired (no INK)`)
+    log(`${head} · result arrived after the job expired (no credits)`)
   } else if (ev) {
     point(ev.ink, ev.verified)
     const st = ev.status ? ` · ${ev.status === 'pending' ? 'pending audit' : ev.status}` : ''
-    log(ev.verified ? `${head} · +${ev.ink.toFixed(2)} INK${st}${ev.reason ? ` (${trunc(ev.reason, 60)})` : ''}` : `${head} · rejected${ev.reason ? ` (${trunc(ev.reason, 80)})` : ''}`)
+    log(ev.verified ? `${head} · +${ev.ink.toFixed(2)} credits${st}${ev.reason ? ` (${trunc(ev.reason, 60)})` : ''}` : `${head} · rejected${ev.reason ? ` (${trunc(ev.reason, 80)})` : ''}`)
   } else {
     point(0, false)
     if (alive(myGen)) log(`${head} · sent, awaiting verification`)
@@ -1241,10 +1241,10 @@ async function liveStep(myGen: number) {
   const head = `job ${shortId(job.id)} · ${shape} · ${fmtGflop(flops)} GFLOP · ${fmtMs(res.ms)} ms${res.backend === 'cpu' ? ' (cpu)' : ''}`
   if (ev === 'expired') {
     pushHistory({ ts: Date.now(), ms: res.ms, gflopsEff, ink: 0, verified: false, id: job.id })
-    log(`${head} · result arrived after the job expired (no INK)`)
+    log(`${head} · result arrived after the job expired (no credits)`)
   } else if (ev) {
     pushHistory({ ts: Date.now(), ms: res.ms, gflopsEff, ink: ev.ink, verified: ev.verified, id: job.id })
-    log(ev.verified ? `${head} · verified +${ev.ink.toFixed(2)} INK` : `${head} · rejected${ev.reason ? ` (${trunc(ev.reason, 60)})` : ''}`)
+    log(ev.verified ? `${head} · verified +${ev.ink.toFixed(2)} credits` : `${head} · rejected${ev.reason ? ` (${trunc(ev.reason, 60)})` : ''}`)
   } else {
     pushHistory({ ts: Date.now(), ms: res.ms, gflopsEff, ink: 0, verified: false, id: job.id })
     if (alive(myGen)) log(`${head} · sent, awaiting verification`)

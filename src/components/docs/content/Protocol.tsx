@@ -24,7 +24,7 @@ const SERVER: Row[] = [
 ]
 
 const CLIENT: [string, string, string][] = [
-  ['neuron.register', 'label · zone · gflops · kind · wallet · adapter · auth', 'join the pool (or update identity); auth = session token, the only way INK reaches a wallet'],
+  ['neuron.register', 'label · zone · gflops · kind · wallet · adapter · auth', 'join the pool (or update identity); auth = session token, the only way credits reach a wallet'],
   ['job.request', 'caps?: { train?: boolean, version?: number | null }', 'ask for one job; queued until a job is available. train: true = the neuron can take training jobs; version = the weights version it already holds (null = none)'],
   ['job.result', 'result: { id, best[], sim[] (cosine similarity), ms }', 'answer the outstanding dedupe job'],
   ['train.result', "result: { id, kind: 'train', grad (base64 encodeGrad), loss, ms }", 'answer the outstanding training job'],
@@ -45,7 +45,7 @@ const REST: [string, string, string, string][] = [
   ['GET', '/api/auth/nonce', 'wallet', '{ nonce, message, expiresAt } · single-use nonce, 5 min TTL'],
   ['POST', '/api/auth/verify', '{ wallet, nonce, signature }', '{ token, wallet, expiresAt } · ed25519 over the exact message · 30-day token'],
   ['GET', '/api/payouts', '—', 'PayoutsOverview { mode, treasury, period, history, rules } · cached 5 s'],
-  ['GET', '/api/payouts/wallet/:address', '—', 'WalletPayouts: periods paid with amounts and tx signatures, current-period INK and estimated share'],
+  ['GET', '/api/payouts/wallet/:address', '—', 'WalletPayouts: periods paid with amounts and tx signatures, current-period credits and estimated share'],
 ]
 
 export function Protocol() {
@@ -274,6 +274,11 @@ export function Protocol() {
     "ts": 1791115260052
   }
 }`}</Code>
+      <Callout kind="note" title="field names">
+        The units users earn are called credits. For compatibility the API keeps the older name: the <C>ink</C> message type and the{' '}
+        <C>ink</C>, <C>periodInk</C>, <C>inkIssued</C> and <C>totalInk</C> fields all carry credits. Credits are a wallet’s share of the payout
+        pool, not amounts of the $INK token; payouts are made in SOL.
+      </Callout>
       <p>
         Values in these examples are illustrative of the shape only; the reason strings and numbers come from the running server.
       </p>

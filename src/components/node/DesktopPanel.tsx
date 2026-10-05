@@ -173,14 +173,14 @@ export function DesktopPanel() {
                 </label>
                 <span className="dk-hint mono">
                   {useToken
-                    ? `INK from that machine goes to ${shortAddr(verified.wallet)} · the token is a credential, keep the command private`
+                    ? `credits from that machine go to ${shortAddr(verified.wallet)} · the token is a credential, keep the command private`
                     : 'add --auth followed by the token to the run line, or tick the box above · the token is a credential, keep it private'}
                 </span>
               </>
             ) : (
               <span className="dk-hint mono">
-                connect and verify your wallet on this page to get a desktop token (--auth). without it, INK is credited to that machine’s device
-                account and is not paid in SOL.
+                connect and verify your wallet on this page to get a desktop token (--auth). without it, credits stay on that machine’s device
+                account and are not paid in SOL.
               </span>
             )}
           </div>
@@ -274,8 +274,8 @@ export function DesktopPanel() {
           <li>
             <span className="dk-n mono">4</span>
             <span>
-              <b>Earns INK.</b> Training INK is pending until the next full audit of your neuron passes, then confirmed. A failed audit forfeits
-              the pending INK. Only confirmed INK counts toward SOL payouts.
+              <b>Earns credits.</b> Training credits are pending until the next full audit of your neuron passes, then confirmed. A failed audit forfeits
+              the pending credits. Only confirmed credits count toward SOL payouts. Credits are your share of the payout pool; payouts are made in SOL.
             </span>
           </li>
           <li>
@@ -308,7 +308,7 @@ export function DesktopPanel() {
           </div>
           <div>
             <dt>(neither)</dt>
-            <dd>INK is credited to that machine’s device account · no SOL payouts</dd>
+            <dd>credits stay on that machine’s device account · no SOL payouts</dd>
           </div>
           <div>
             <dt>--no-train</dt>

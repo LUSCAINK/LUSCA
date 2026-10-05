@@ -17,8 +17,8 @@ const STATE_TEXT: Record<StepState, string> = {
 const LINES = [
   'Your browser reports which graphics card it can use. This runs locally; nothing is sent until jobs start.',
   'A real math workload is timed on your GPU to measure its speed.',
-  'Your speed sets your tier. Deeper tier = bigger jobs + a bigger INK bonus.',
-  'Your GPU computes SEPIA training gradients on batches the server picks. The server checks each gradient, audits a share in full, applies them to the model and credits INK.',
+  'Your speed sets your tier. Deeper tier = bigger jobs + a bigger credit bonus.',
+  'Your GPU computes SEPIA training gradients on batches the server picks. The server checks each gradient, audits a share in full, applies them to the model and awards credits.',
 ]
 
 const IDS = ['detect', 'bench', 'zone', 'dive']
@@ -54,7 +54,7 @@ export function HowSteps() {
   const values = [
     det ? (det.supported ? deviceName(det, false) : 'no WebGPU · CPU path') : 'not checked yet',
     bench ? `${fmtG(bench.gflops)} GFLOPS${backend === 'cpu' || bench.backend === 'cpu' ? ' · cpu' : ''}` : status === 'benchmarking' ? `measuring · ${pct}%` : 'not measured yet',
-    zinfo ? `${zinfo.zone} · ×${zinfo.bonus.toFixed(2)} INK bonus` : 'not set yet',
+    zinfo ? `${zinfo.zone} · ×${zinfo.bonus.toFixed(2)} credit bonus` : 'not set yet',
     running ? `${status === 'paused' ? 'paused' : 'earning'} · ${fmtInt(verified)} verified` : jobs > 0 ? `stopped · ${fmtInt(verified)} verified` : 'not started yet',
   ]
 

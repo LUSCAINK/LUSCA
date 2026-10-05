@@ -40,8 +40,8 @@ const TOC: [string, string][] = [
 
 const TERMS: [string, string][] = [
   ['Neuron', 'a GPU connected to LUSCA (yours, through this browser tab or the desktop app).'],
-  ['Tier', 'your GPU’s class (EPI, MESO, BATHY, ABYSSO, HADAL), set by a 10-second benchmark. Deeper tier = bigger jobs + a bigger INK bonus.'],
-  ['INK', 'points for verified GPU work. Training INK is held as pending until an audit of your gradients passes. Each payout period, the payout pool is split by confirmed INK and paid in SOL to verified wallets.'],
+  ['Tier', 'your GPU’s class (EPI, MESO, BATHY, ABYSSO, HADAL), set by a 10-second benchmark. Deeper tier = bigger jobs + a bigger credit bonus.'],
+  ['Credits', 'your share of the payout pool, earned by verified GPU work. Training credits are held as pending until an audit of your gradients passes. Each payout period, the pool is split by confirmed credits and paid in SOL to verified wallets.'],
 ]
 
 function connText(conn: string): string {
@@ -95,12 +95,12 @@ export default function Node() {
               </div>
               <h1 className="display nd-h1">
                 <span>Connect a GPU.</span>
-                <span>Earn INK.</span>
+                <span>Earn SOL.</span>
               </h1>
               <p className="nd-lede-hero">
                 Your GPU trains SEPIA, the language model LUSCA builds from the pages it collects. It computes training gradients on batches the server picks;
-                the server checks each one and merges it into the model. Verified work earns INK, and each payout period the payout pool is split by confirmed
-                INK and paid in SOL to verified wallets.
+                the server checks each one and merges it into the model. Verified work earns credits — your share of each SOL payout. Each payout period the payout pool is split by confirmed
+                credits and paid in SOL to verified wallets.
               </p>
               <div className="nd-actions nd-cta">
                 <StartButton />
@@ -173,7 +173,7 @@ export default function Node() {
                 </span>
                 ready
               </p>
-              <p className="floor-h display">Connect a GPU. Earn INK.</p>
+              <p className="floor-h display">Connect a GPU. Earn SOL.</p>
             </div>
             <div className="nd-actions floor-cta">
               <StartButton />

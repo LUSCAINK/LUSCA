@@ -22,7 +22,7 @@ Stop with Ctrl+C. If ports 8787 or 5173 are taken, or you need to set environmen
 Windows, see [Run locally](README.md#run-locally) in the README: it lists the PowerShell and cmd
 forms of each command.
 
-Runtime data (dataset, SEPIA checkpoint, INK ledger, salts, auth secret) is written to
+Runtime data (dataset, SEPIA checkpoint, credit ledger, salts, auth secret) is written to
 `server/data/` or `LUSCA_DATA` and is git-ignored. Never commit it. Running the server starts the
 data agents, which fetch public web pages; keep `LUSCA_AGENTS` low for local work.
 
@@ -58,7 +58,7 @@ npx tsx scripts/neuron.ts --server ws://127.0.0.1:8787/ws --jobs 3   # exits aft
   so the browser and desktop paths must produce the same math.
 - `src/components/docs/facts.ts` transcribes every constant the in-app manual quotes. If you change a
   constant in the server, update it there in the same pull request.
-- `server/neurons/` decides what earns INK. Changes there need a test in `server/neurons/_test.ts`.
+- `server/neurons/` decides what earns credits. Changes there need a test in `server/neurons/_test.ts`.
 
 ## Code style
 

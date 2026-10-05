@@ -166,7 +166,7 @@ function PoolCard({ o, view }: { o: PayoutsOverview | null; view: View }) {
         <span className="tre-sub">{view === 'dryrun' ? 'calculated only — no transfer while in verification' : 'final amount is set when the period closes'}</span>
         <div className="tre-kvs">
           <div className="kv">
-            <span>INK this period</span>
+            <span>credits this period</span>
             <span className="num">{fmtInk(p?.inkSoFar)}</span>
           </div>
           <div className="kv">
@@ -186,7 +186,7 @@ function OffCard() {
       <div className="tre-body">
         <p className="tre-off-h">Payouts not started</p>
         <p className="tre-off-p">
-          The payout pool has not been funded yet. When payouts start, this panel shows the next payout time (UTC), the INK earned in the current period and
+          The payout pool has not been funded yet. When payouts start, this panel shows the next payout time (UTC), the credits earned in the current period and
           the estimated pool.
         </p>
       </div>
@@ -250,7 +250,7 @@ function History({ o }: { o: PayoutsOverview | null }) {
               pool
             </th>
             <th scope="col" className="r">
-              INK
+              credits
             </th>
             <th scope="col" className="r">
               wallets
@@ -273,7 +273,7 @@ function History({ o }: { o: PayoutsOverview | null }) {
                 <td className="num r" data-l="pool">
                   {fmtSol(r.poolSol)}
                 </td>
-                <td className="num r" data-l="INK">
+                <td className="num r" data-l="credits">
                   {fmtInk(r.ink)}
                 </td>
                 <td className="num r" data-l="wallets">

@@ -174,9 +174,9 @@ function describe(e: unknown, what: 'connect' | 'sign'): string {
   return msg.slice(0, 240) || (what === 'connect' ? 'The wallet did not connect.' : 'Verification failed.')
 }
 
-export const NO_WALLET_MSG = 'No Solana wallet found in this browser. Install Phantom to receive SOL payouts. Earning INK on this device needs no wallet.'
+export const NO_WALLET_MSG = 'No Solana wallet found in this browser. Install Phantom to receive SOL payouts. Earning credits on this device needs no wallet.'
 export const NO_SIGN_MSG =
-  'This wallet cannot sign messages, so it cannot be verified here. Use Phantom (or another wallet with message signing). INK keeps accruing to this device.'
+  'This wallet cannot sign messages, so it cannot be verified here. Use Phantom (or another wallet with message signing). Credits keep accruing to this device.'
 
 // ─── store ──────────────────────────────────────────────────────────────────
 
