@@ -231,6 +231,21 @@ export interface InkEvent {
   status?: 'confirmed' | 'pending' | 'forfeited';
 }
 
+/** The caller's own ledger account (credits; JSON fields keep the legacy `ink` names). */
+export interface AccountView {
+  kind: 'wallet' | 'device';
+  wallet: string | null;     // verified wallet for kind 'wallet', else null
+  ink: number;               // confirmed credits, all-time (rounded to 2 dp)
+  pendingInk: number;        // training credits in escrow awaiting a full audit (0 if none)
+  periodInk: number;         // confirmed credits in the current payout period (0 if none)
+  jobs: number;
+  verified: number;
+  failed: number;
+  flops: number;
+  firstSeen: number;
+  lastSeen: number;
+}
+
 export interface Hello {
   t: 'hello';
   /** Always 'live': every number comes from the running server. */
@@ -266,6 +281,10 @@ export type ServerMsg =
   // rejected (expired / tampered) and credits stay on the device account, 'none' = no token sent
   | { t: 'neuron.ok'; neuron: NeuronInfo; auth?: 'verified' | 'invalid' | 'none' }
   | { t: 'payout'; overview: PayoutsOverview }      // broadcast when a payout period closes or a payout tx confirms
+  // reply to account.watch (sent only to the watching connection), then again whenever the watched
+  // account or its escrow changes (coalesced, ≤ 1/s). scope null = no wallet token and no valid device
+  // id; account null = no ledger account yet (0 credits)
+  | { t: 'account'; scope: 'wallet' | 'device' | null; account: AccountView | null; at: number }
   | { t: 'error'; msg: string };
 
 export type ClientMsg =
@@ -278,6 +297,10 @@ export type ClientMsg =
   | { t: 'job.result'; result: SimResult }
   | { t: 'train.result'; result: TrainResult }
   | { t: 'neuron.leave' }
+  // Follow the caller's own ledger account (any connection, no register needed). Scope resolves like
+  // neuron.register: a valid session token (`auth`) → wallet:<w>, else `device` → device:<id>. One
+  // watch per connection; a new watch replaces the previous one.
+  | { t: 'account.watch'; device: string | null; auth?: string | null }
   | { t: 'ping' };
 
 // REST

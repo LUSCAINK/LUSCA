@@ -2,8 +2,10 @@
 // detect → benchmark → tier → start verified jobs. Also derives one plain
 // phase (not started / starting / earning / waiting / paused / stopped / error)
 // from the neuron store and the server connection so every panel says the same thing.
+// After a reload of a tab that was earning, resumeEarning() runs the same flow again
+// (called once at boot by src/lib/live.ts).
 import { create } from 'zustand'
-import { useNeuron } from '@/lib/gpu'
+import { autoResumeSet, markEarning, useNeuron } from '@/lib/gpu'
 import { useLive } from '@/lib/store'
 
 interface FlowState {
@@ -23,12 +25,16 @@ export async function startEarning(): Promise<void> {
   const n = useNeuron.getState()
   if (n.status === 'running' || n.status === 'paused') return
   useFlow.setState({ auto: true, step: 1 })
+  markEarning(true) // a reload during the steps starts them again
   try {
     if (!n.bench) {
       if (!n.detect) await n.runDetect()
       useFlow.setState({ step: 2 })
       const b = await useNeuron.getState().benchmark()
-      if (!b) return
+      if (!b) {
+        markEarning(false) // the error is on screen; a reload does not retry on its own
+        return
+      }
       // let the tier land on screen before jobs start
       useFlow.setState({ step: 3 })
       await wait(1400)
@@ -38,6 +44,30 @@ export async function startEarning(): Promise<void> {
   } finally {
     useFlow.setState({ auto: false, step: 0 })
   }
+}
+
+let resumeArmed = false
+
+/**
+ * The tab was earning when it was reloaded (AUTORESUME_KEY, src/lib/live.ts): run
+ * startEarning() again, once per page load, as soon as the server connection is live and the
+ * tab is visible (a hidden tab would benchmark throttled). A stop() in between clears the flag
+ * and cancels it; startEarning()'s own guards cover a manual start meanwhile.
+ */
+export function resumeEarning(): void {
+  if (resumeArmed || typeof document === 'undefined' || !autoResumeSet()) return
+  resumeArmed = true
+  let done = false
+  const check = () => {
+    if (done || useLive.getState().conn !== 'live' || document.hidden) return
+    done = true
+    offLive()
+    document.removeEventListener('visibilitychange', check)
+    if (autoResumeSet()) void startEarning()
+  }
+  const offLive = useLive.subscribe(check)
+  document.addEventListener('visibilitychange', check)
+  check()
 }
 
 export type Phase = 'idle' | 'starting' | 'earning' | 'waiting' | 'paused' | 'stopped' | 'error'

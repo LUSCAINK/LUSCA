@@ -166,6 +166,12 @@ const SECTIONS: LegalSection[] = [
           </div>
           <div className="kv">
             <dt>
+              <code>lusca.lastRun.v1</code>
+            </dt>
+            <dd>your last benchmark (tier, GFLOPS, GPU name) · shown again after a reload</dd>
+          </div>
+          <div className="kv">
+            <dt>
               <code>lusca.booted</code>
             </dt>
             <dd>session only · skips the intro animation</dd>
@@ -176,10 +182,22 @@ const SECTIONS: LegalSection[] = [
             </dt>
             <dd>session only · stops reload loops after an update</dd>
           </div>
+          <div className="kv">
+            <dt>
+              <code>lusca.autoresume</code>
+            </dt>
+            <dd>session only · resumes earning when a tab that was earning is reloaded · removed by pause or stop</dd>
+          </div>
+          <div className="kv">
+            <dt>
+              <code>lusca.activity.v1</code>
+            </dt>
+            <dd>session only · this tab’s job log and throughput chart, kept across a reload</dd>
+          </div>
         </dl>
         <p>
           The wallet address, session token and device id are sent to the server only when you verify a wallet, run a neuron, view your
-          payouts, or add an agent (the agent's public owner field is your connected wallet address). Credits earned under an
+          credits or payouts, or add an agent (the agent's public owner field is your connected wallet address). Credits earned under an
           old device id stay with that id if you reset it.
         </p>
       </>

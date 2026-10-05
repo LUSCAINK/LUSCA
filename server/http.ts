@@ -211,7 +211,7 @@ const NON_ESSENTIAL = new Set<ServerMsg['t']>(['trace', 'agent', 'discover', 're
  * bucket left, so they are the first to go; snapshots may overdraw. Unlisted types: 0.
  * 'ink' is always delivered (charged, never withheld): a browser neuron credits its INK
  * and paces its job loop on its own 'ink' event. Direct messages (hello, job, neuron.ok,
- * error) bypass the bucket.
+ * account, error) bypass the bucket.
  */
 const STREAM_RESERVE: Partial<Record<ServerMsg['t'], number>> = {
   trace: 0.5,
@@ -225,7 +225,7 @@ const STREAM_RESERVE: Partial<Record<ServerMsg['t'], number>> = {
 const STREAM_BURST_S = 2                   // bucket holds this many seconds of budget
 /** Snapshots replaced by the next one: skipped (not queued) for a backed-up client. */
 const SNAPSHOT = new Set<ServerMsg['t']>(['stats', 'neurons'])
-const DIRECT_ONLY = new Set<ServerMsg['t']>(['job', 'neuron.ok'])
+const DIRECT_ONLY = new Set<ServerMsg['t']>(['job', 'neuron.ok', 'account'])
 const AGENT_COALESCE_MS = 100             // 'agent' snapshots: latest per agent id within this window
 const SEND_BUDGET_PER_SEC = 60_000        // ws sends/s across clients before non-essential traffic is sampled out
 const HELLO_CACHE_MS = 1_000
@@ -860,6 +860,7 @@ export function createHub(opts: HubOptions): Hub {
         case 'job.result':
         case 'train.result':
         case 'neuron.leave':
+        case 'account.watch': // any page following its own ledger account (no register needed)
           if (modules) {
             const m = modules
             safe('coordinator.handle', () => m.coordinator.handle(client.conn, msg as ClientMsg), undefined)

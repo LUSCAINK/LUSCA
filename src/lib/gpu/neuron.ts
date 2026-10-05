@@ -38,6 +38,13 @@
  *   4. pause() / resume() / stop(). The loop also pauses while the tab is
  *      hidden (visibilitychange) and resumes when it is visible again.
  *
+ * Reloads: the counters here are this page session's (from the server's verdicts); the saved
+ * totals come from the server ledger (src/lib/account.ts). What survives a reload on the client:
+ *   - the last finished benchmark (tier, GPU, GFLOPS) in localStorage (recordLastRun),
+ *   - the job log and the throughput history of this tab in sessionStorage (throttled writes),
+ *   - the AUTORESUME_KEY flag while earning: set by start() / resume(), cleared by an explicit
+ *     pause() or stop(); a reloaded tab then resumes on its own (resumeEarning, node/flow.ts).
+ *
  * Guarantees: never two loops (generation counter + awaited hand-over), every
  * await is cancellable by stop(), all errors are caught and logged, and a GPU
  * that returns a wrong answer is never trusted: failed self-checks fall back to
@@ -48,7 +55,8 @@ import { ZONES, zoneFor } from '@shared/protocol'
 import type { ClientMsg, InkEvent, NeuronInfo, SimJob, Zone } from '@shared/protocol'
 import type { AuthSession } from '@shared/payouts'
 import { b64ToF32 } from '@shared/b64'
-import { send } from '@/lib/live'
+import { AUTORESUME_KEY, send } from '@/lib/live'
+import { neuronDeviceId, recordLastRun, storedDeviceId } from '@/lib/account'
 import { bus } from '@/lib/bus'
 import { useLive } from '@/lib/store'
 import { refreshWalletPayouts } from '@/lib/payouts'
@@ -174,9 +182,9 @@ export interface NeuronState {
    */
   ink: number
   lastJob: NeuronLastJob | null
-  /** Last 60 jobs, oldest → newest (chronological, for charts). */
+  /** Last 60 jobs, oldest → newest (chronological, for charts; restored after a reload of this tab). */
   history: NeuronHistoryPoint[]
-  /** Last 80 human-readable lines, newest first. */
+  /** Last 150 human-readable lines, newest first (restored after a reload of this tab). */
   log: string[]
   error: string | null
 
@@ -191,8 +199,8 @@ export interface NeuronState {
 
 // ─── tuning ───────────────────────────────────────────────────────────────
 
-const HISTORY_CAP = 60
-const LOG_CAP = 80
+const HISTORY_CAP = 60 // the throughput chart has 60 slots
+const LOG_CAP = 150
 const INK_WAIT_MS = 3000
 const JOB_WAIT_MS = 12000
 const REGISTER_WAIT_MS = 6000
@@ -201,31 +209,84 @@ const SERVER_WAIT_MS = 10000 // re-check interval while the LUSCA server is unre
 /** A registration refusal that is about the wallet sign-in token itself. */
 const AUTH_REFUSED_RE = /\b(auth|token|sign-?in|signature)\b/i
 
-const DEVICE_ID_KEY = 'lusca.deviceId'
-let deviceIdCache: string | null = null
 /**
- * Stable anonymous id for this browser (localStorage, falls back to a
- * per-session id). The coordinator keys the INK ledger by it when no wallet is
- * verified, so balances survive reloads. Matches /^[A-Za-z0-9_-]{6,64}$/.
+ * Stable anonymous id for this browser (one source of truth: src/lib/account.ts). The
+ * coordinator keys the INK ledger by it when no wallet is verified, so balances survive reloads.
  */
-export function neuronDeviceId(): string {
-  if (deviceIdCache) return deviceIdCache
-  let id: string | null = null
+export { neuronDeviceId }
+
+// ─── reload persistence ───────────────────────────────────────────────────
+
+/** This tab's job log + throughput history (sessionStorage: survives a reload, not a new tab). */
+const ACTIVITY_KEY = 'lusca.activity.v1'
+const ACTIVITY_SAVE_MS = 2000
+/** First line after a reload; the log above it is new, below it is from before. */
+const RELOAD_LINE = 'tab reloaded · the lines below are from before the reload'
+
+function readActivity(): { log: string[]; history: NeuronHistoryPoint[] } {
   try {
-    id = localStorage.getItem(DEVICE_ID_KEY)
-  } catch {
-    id = null
-  }
-  if (!id || !/^[A-Za-z0-9_-]{6,64}$/.test(id)) {
-    id = `web-${randomHex(16)}`
-    try {
-      localStorage.setItem(DEVICE_ID_KEY, id)
-    } catch {
-      /* storage unavailable: per-session id */
+    const raw = sessionStorage.getItem(ACTIVITY_KEY)
+    if (raw === null) return { log: [], history: [] }
+    const j = JSON.parse(raw) as { log?: unknown; history?: unknown } | null
+    const log = (Array.isArray(j?.log) ? j.log : []).filter((l): l is string => typeof l === 'string' && l.length <= 600).slice(0, LOG_CAP)
+    const history: NeuronHistoryPoint[] = []
+    for (const p of Array.isArray(j?.history) ? j.history : []) {
+      const o = p as Record<string, unknown> | null
+      if (!o || typeof o !== 'object' || typeof o.id !== 'string' || typeof o.verified !== 'boolean') continue
+      const ts = Number(o.ts)
+      const ms = Number(o.ms)
+      const ink = Number(o.ink)
+      if (!Number.isFinite(ts) || !Number.isFinite(ms) || !Number.isFinite(ink)) continue
+      // NaN (job without a FLOP count) is stored as null
+      const g = typeof o.gflopsEff === 'number' && Number.isFinite(o.gflopsEff) ? o.gflopsEff : NaN
+      history.push({ ts, ms, gflopsEff: g, ink, verified: o.verified, id: o.id })
     }
+    if (log.length && log[0] !== RELOAD_LINE) {
+      log.unshift(RELOAD_LINE)
+      if (log.length > LOG_CAP) log.length = LOG_CAP
+    }
+    return { log, history: history.slice(-HISTORY_CAP) }
+  } catch {
+    return { log: [], history: [] }
   }
-  deviceIdCache = id
-  return id
+}
+
+let activityTimer: ReturnType<typeof setTimeout> | null = null
+
+function saveActivity() {
+  if (activityTimer !== null) clearTimeout(activityTimer)
+  activityTimer = null
+  const s = useNeuron.getState()
+  try {
+    if (!s.log.length && !s.history.length) sessionStorage.removeItem(ACTIVITY_KEY)
+    else sessionStorage.setItem(ACTIVITY_KEY, JSON.stringify({ log: s.log, history: s.history }))
+  } catch {
+    /* storage unavailable or full: the feed lasts for this page only */
+  }
+}
+
+/** At most one write per ACTIVITY_SAVE_MS; pagehide flushes the rest. */
+function scheduleActivitySave() {
+  if (activityTimer === null) activityTimer = setTimeout(saveActivity, ACTIVITY_SAVE_MS)
+}
+
+/** Mark this tab as earning (true) or not (false), for a reload (AUTORESUME_KEY). */
+export function markEarning(on: boolean) {
+  try {
+    if (on) sessionStorage.setItem(AUTORESUME_KEY, '1')
+    else sessionStorage.removeItem(AUTORESUME_KEY)
+  } catch {
+    /* storage unavailable: no resume after a reload */
+  }
+}
+
+/** This tab was earning (started or resumed, not paused or stopped by hand). */
+export function autoResumeSet(): boolean {
+  try {
+    return sessionStorage.getItem(AUTORESUME_KEY) === '1'
+  } catch {
+    return false
+  }
 }
 
 // ─── formatting helpers ───────────────────────────────────────────────────
@@ -252,21 +313,14 @@ function shortId(id: string): string {
   const alnum = head.replace(/[^a-zA-Z0-9]/g, '')
   return (alnum || id).slice(-6)
 }
-function randomHex(n: number): string {
-  const bytes = new Uint8Array(Math.ceil(n / 2))
-  try {
-    crypto.getRandomValues(bytes)
-  } catch {
-    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256)
-  }
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('').slice(0, n)
-}
 function trunc(s: string, n: number): string {
   const t = s.replace(/\s+/g, ' ').trim()
   return t.length > n ? t.slice(0, n - 1) + '…' : t
 }
 
 // ─── store ────────────────────────────────────────────────────────────────
+
+const restored = typeof window === 'undefined' ? { log: [], history: [] } : readActivity()
 
 export const useNeuron = create<NeuronState>(() => ({
   status: 'idle',
@@ -294,8 +348,8 @@ export const useNeuron = create<NeuronState>(() => ({
   flops: 0,
   ink: 0,
   lastJob: null,
-  history: [],
-  log: [],
+  history: restored.history,
+  log: restored.log,
   error: null,
   runDetect: () => detect(),
   benchmark: () => benchmark(),
@@ -318,6 +372,19 @@ function pushHistory(p: NeuronHistoryPoint) {
   const h = get().history.concat(p)
   if (h.length > HISTORY_CAP) h.splice(0, h.length - HISTORY_CAP)
   set({ history: h })
+}
+
+// Keep this tab's feed across a reload (throttled; flushed when the page is hidden or unloads).
+useNeuron.subscribe((s, prev) => {
+  if (s.log !== prev.log || s.history !== prev.history) scheduleActivitySave()
+})
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => {
+    if (activityTimer !== null) saveActivity()
+  })
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && activityTimer !== null) saveActivity()
+  })
 }
 
 // ─── module state (non-reactive) ──────────────────────────────────────────
@@ -355,6 +422,9 @@ let trainStrikes = 0 // consecutive GPU gradient faults
 let trainTestedDevice: GPUDevice | null = null // device whose trainer self-test passed this session
 /** Training INK per job this session: escrow state as the coordinator reported it. */
 const trainLedger = new Map<string, { ink: number; status: 'confirmed' | 'pending' | 'forfeited' }>()
+/** Send order of this session's training results (the coordinator's escrow seq follows it). */
+const trainOrder = new Map<string, number>()
+let trainOrderSeq = 0
 
 let jobWaiter: ((job: AnyJob) => void) | null = null
 let lateJob: AnyJob | null = null
@@ -393,15 +463,8 @@ useWallet.subscribe((s, prev) => {
  * on neuron.register instead answer 404, which is ignored.
  */
 async function linkDevice(sess: AuthSession): Promise<void> {
-  let id: string | null = deviceIdCache
-  if (!id) {
-    try {
-      id = localStorage.getItem(DEVICE_ID_KEY)
-    } catch {
-      id = null
-    }
-  }
-  if (!id || !/^[A-Za-z0-9_-]{6,64}$/.test(id)) return // this browser never ran a neuron
+  const id = storedDeviceId()
+  if (!id) return // this browser never ran a neuron
   try {
     const res = await fetch('/api/auth/link-device', {
       method: 'POST',
@@ -684,6 +747,8 @@ export async function benchmark(): Promise<NeuronBench | null> {
         status: 'ready',
         benchProgress: { phase: 'done', pct: 100, gflops: bench.gflops, n: bench.n },
       })
+      // shown as "last benchmark" after a reload, until the next one replaces it
+      recordLastRun({ zone, gflops: bench.gflops, gpu: bench.backend === 'webgpu' && det.supported ? det.label : null, backend: bench.backend, at: Date.now() })
       kernel?.setThroughputHint(bench.gflops)
       const zoneName = ZONES.find((z) => z.zone === zone)?.name ?? zone
       log(
@@ -769,12 +834,19 @@ let simInkTotal = 0 // confirmed INK from dedupe jobs this session
  * id, aggregate amount) releasing the identity's earlier escrow; a failed audit sends a
  * 'forfeited' event with the forfeited total. Absent status = confirmed. Only the first event of
  * a job sets that job's own amount; later events (release / forfeit) only move escrow state.
+ * A passed audit releases only the escrow sent up to the audited job (jobs sent after it, e.g.
+ * while it was audited, stay pending on the server); a failed audit forfeits all of it.
  */
 function creditTrainInk(ev: InkEv, ink: number, first: boolean) {
   const st = ev.status
   if (first) trainLedger.set(ev.jobId, { ink: ev.verified ? ink : 0, status: ev.verified ? (st ?? 'confirmed') : 'forfeited' })
-  if ((st === 'confirmed' && ev.verified) || st === 'forfeited') {
+  if (st === 'forfeited') {
     for (const e of trainLedger.values()) if (e.status === 'pending') e.status = st
+  } else if (st === 'confirmed' && ev.verified) {
+    const upto = trainOrder.get(ev.jobId)
+    for (const [id, e] of trainLedger) {
+      if (e.status === 'pending' && (upto === undefined || (trainOrder.get(id) ?? 0) <= upto)) e.status = st
+    }
   }
   if (trainLedger.size > 2000) {
     const k = trainLedger.keys().next().value
@@ -1111,6 +1183,11 @@ async function runTrainJob(myGen: number, job: TrainJobWire) {
     log(`training job ${shortId(job.id)} computed but the socket closed before the result could be sent`)
     return
   }
+  trainOrder.set(job.id, ++trainOrderSeq)
+  if (trainOrder.size > 2000) {
+    const k = trainOrder.keys().next().value
+    if (k !== undefined) trainOrder.delete(k)
+  }
   errStreak = 0
   const flops = Number.isFinite(job.flops) && job.flops > 0 ? job.flops : 0
   const gflopsEff = flops > 0 ? flops / (Math.max(res.ms, 0.001) * 1e6) : NaN
@@ -1387,15 +1464,17 @@ export async function start(): Promise<void> {
         if (loopGen === myGen) loopGen = -1
       })
     loopPromise = p
+    markEarning(true) // a reload of this tab resumes earning
   } finally {
     starting = false
   }
 }
 
-/** Pause after the in-flight job completes. */
+/** Pause after the in-flight job completes (by hand: a reload stays paused). */
 export function pause() {
   if (!loopPromise || loopGen !== gen || userPaused) return
   userPaused = true
+  markEarning(false)
   syncRunStatus()
   log('paused')
 }
@@ -1403,6 +1482,7 @@ export function pause() {
 export function resume() {
   if (!loopPromise || loopGen !== gen || !userPaused) return
   userPaused = false
+  markEarning(true)
   syncRunStatus()
   wake()
   log(hiddenPaused ? 'resumed (will start when the tab is visible)' : 'resumed')
@@ -1411,6 +1491,7 @@ export function resume() {
 /** Stop the loop, tell the coordinator we are leaving, keep the benchmark. */
 export async function stop(): Promise<void> {
   gen++ // invalidates the running loop (and a start() that is still benchmarking)
+  markEarning(false) // a reload stays stopped
   const p = loopPromise
   if (!p) {
     cancelAllWaits()

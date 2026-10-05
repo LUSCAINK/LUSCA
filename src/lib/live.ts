@@ -12,6 +12,10 @@
 // re-registers on it). Reconnect delays carry ±VITE_LUSCA_RECONNECT_JITTER
 // (default 0.5 = ±50 %) random jitter so a server restart is not met by every
 // tab at the same instant.
+//
+// Reload: a tab that was earning when it was reloaded (sessionStorage AUTORESUME_KEY)
+// loads the neuron at boot and resumes once the server answers (resumeEarning in
+// src/components/node/flow.ts), whichever page it reloads on.
 import type { ClientMsg, ServerMsg } from '@shared/protocol'
 import type { PayoutsOverview } from '@shared/payouts'
 import { bus } from './bus'
@@ -172,6 +176,30 @@ function onVisibility() {
   }
 }
 
+// ─── resume after a reload ──────────────────────────────────
+/**
+ * sessionStorage flag: this tab is earning. Set when earning starts or is resumed, cleared by
+ * an explicit pause or stop (not by the automatic pause while the tab is hidden).
+ */
+export const AUTORESUME_KEY = 'lusca.autoresume'
+
+function resumeAfterReload() {
+  let on = false
+  try {
+    on = sessionStorage.getItem(AUTORESUME_KEY) === '1'
+  } catch {
+    on = false
+  }
+  if (!on) return
+  // loaded only when needed: the neuron's GPU code stays out of the main bundle
+  import('@/components/node/flow').then(
+    (m) => m.resumeEarning(),
+    () => {
+      /* chunk failed to load: the Start button still works */
+    },
+  )
+}
+
 export function startLive() {
   if (started) return
   started = true
@@ -180,6 +208,7 @@ export function startLive() {
     onVisibility() // opened in a background tab: start the clock now
   }
   connect()
+  resumeAfterReload()
 }
 
 export function send(msg: ClientMsg): boolean {

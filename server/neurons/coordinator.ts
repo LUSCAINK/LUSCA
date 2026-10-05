@@ -49,6 +49,14 @@
 // payout engine (server/payouts) reads the verified wallets' period INK through `payouts`
 // (PayoutLedger) and closes a period atomically: snapshot → persisted plan → reset with
 // carry-over → synchronous ledger save.
+//
+// Account watches: any connection (a page that just opened, registered or not) may send
+// account.watch to follow its own ledger account. The scope resolves like neuron.register (valid
+// session token → wallet:<w>, else device id → device:<id>) and is answered at once with an
+// 'account' message. Every ledger / escrow mutation touches the account key; touched keys that
+// someone watches are pushed again after ACCOUNT_FLUSH_MS, at most one push per connection per
+// ACCOUNT_PUSH_MIN_MS (a trailing push reads the account when it fires, so the last value always
+// arrives). Only watched keys are computed; escrowed INK per account comes from an index.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -56,7 +64,7 @@ import { isIP } from 'node:net'
 import { performance } from 'node:perf_hooks'
 import { randomInt } from 'node:crypto'
 import { ZONES, zoneFor } from '../../shared/protocol.ts'
-import type { ClientMsg, InkEvent, NeuronInfo, ServerMsg, SimJob, TrainJob, Zone } from '../../shared/protocol.ts'
+import type { AccountView, ClientMsg, InkEvent, NeuronInfo, ServerMsg, SimJob, TrainJob, Zone } from '../../shared/protocol.ts'
 import { VEC_DIM, bestMatchesCPU } from '../../shared/vectorize.ts'
 import { f32ToB64 } from '../../shared/b64.ts'
 import type { CoordinatorApi, CoordinatorOptions, NeuronConn, PayoutLedger, PeriodSnapshotRow } from '../contracts.ts'
@@ -147,6 +155,14 @@ const ROW_POOL = 4_096              // newest pages tracked for coverage
 const MAX_SEND_BACKLOG = 1024 * 1024 // don't issue while the neuron's socket is this far behind
 const COL_CACHE_SIZE = 4
 const MB = 1024 * 1024
+/** Push touched watched accounts this long after the first change (changes in between coalesce). */
+export const ACCOUNT_FLUSH_MS = 250
+/** At most one 'account' push per connection per this interval (trailing push guaranteed). */
+export const ACCOUNT_PUSH_MIN_MS = 1_000
+const WATCH_BURST = 6               // account.watch requests per connection: burst…
+const WATCH_REFILL_MS = 2_000       // …then one per 2 s (a held request is applied when a token refills)
+/** Client-supplied device ids (adapter.deviceId on register, `device` on account.watch). */
+const DEVICE_ID_RE = /^[A-Za-z0-9_-]{6,64}$/
 
 // ─── deploy-time limits (env, overridable per instance) ─────────────────────
 
@@ -840,6 +856,23 @@ interface RowState {
   lease: string | null
 }
 
+/** One connection following its own ledger account (account.watch). */
+interface AccountWatch {
+  conn: NeuronConn
+  scope: 'wallet' | 'device' | null
+  /** Ledger key watched (null scope: none). */
+  key: string | null
+  lastSentAt: number
+  /** Trailing push, due at lastSentAt + ACCOUNT_PUSH_MIN_MS (reads the account when it fires). */
+  timer: NodeJS.Timeout | null
+  /** account.watch token bucket. */
+  tokens: number
+  tokensAt: number
+  /** Newest request held by the bucket, applied by `queueTimer`. */
+  queued: { device: string | null; auth: unknown } | null
+  queueTimer: NodeJS.Timeout | null
+}
+
 export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOptions): LuscaCoordinator {
   const { crawler, emit } = opts
   const dataDir = path.resolve(opts.dataDir ?? process.env.LUSCA_DATA ?? path.join('server', 'data'))
@@ -877,6 +910,14 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
   let accounts = new Map<string, LedgerAccount>()
   let payoutState: PayoutLedgerState = { lastClosedId: null, lastClosedEndsAt: null }
   let escrow = new Map<string, EscrowRecord>() // strike identity -> gradient jobs + escrowed INK
+  // ledger account key -> strike identities whose escrow record may hold items for it (a superset:
+  // every insert is indexed, removals are dropped eagerly on confirm / forfeit and lazily on read)
+  const escrowIdx = new Map<string, Set<string>>()
+  // account watches: connection id -> watch, ledger key -> watches, keys touched since the last push
+  const watches = new Map<string, AccountWatch>()
+  const watchedKeys = new Map<string, Set<AccountWatch>>()
+  const dirtyKeys = new Set<string>()
+  let watchFlushTimer: NodeJS.Timeout | null = null
   let ledgerDirty = false
   let loadFailed = false // ledger.json exists but could not be loaded: never overwrite it
   let saving: Promise<void> | null = null
@@ -929,6 +970,8 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     accounts = l.accounts
     payoutState = l.payouts
     escrow = l.escrow
+    escrowIdx.clear()
+    for (const [sk, rec] of escrow) for (const [k, it] of Object.entries(rec.items)) indexEscrow(it.acct ?? k, sk)
     log('info', `ledger loaded${from === ledgerPath ? '' : ` from ${path.basename(from)}`}: ${accounts.size} accounts, ${round2(totals.inkIssued)} INK issued lifetime`)
   }
 
@@ -1048,6 +1091,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     for (let i = 0; i < n; i++) {
       const v = victims[i]
       accounts.delete(v.key)
+      touch(v.key)
       ink += v.ink
       issuance.write({ ts: now, ev: 'evict', acct: hid('acct', v.key), kind: v.kind, ink: round2(v.ink), lastSeen: v.lastSeen })
     }
@@ -1256,6 +1300,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     const sub = new Map((subtract ?? []).map((r) => [r.wallet, r.ink]))
     for (const a of accounts.values()) {
       if (!a.periodInk) continue
+      touch(a.key)
       if (subtract && a.kind === 'wallet' && a.wallet && sub.has(a.wallet)) {
         // Recovery: only the INK of the persisted plan is consumed; anything newer stays.
         const left = Math.max(0, a.periodInk - (sub.get(a.wallet) ?? 0))
@@ -1266,7 +1311,10 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     for (const [wallet, ink] of Object.entries(carry)) {
       if (!(ink > 0)) continue
       const a = accounts.get(`wallet:${wallet}`)
-      if (a) a.periodInk = round6((a.periodInk ?? 0) + ink)
+      if (a) {
+        a.periodInk = round6((a.periodInk ?? 0) + ink)
+        touch(a.key)
+      }
     }
     payoutState = { lastClosedId: periodId, lastClosedEndsAt: endsAt }
     ledgerDirty = true
@@ -1299,6 +1347,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       }
       a.periodInk = round6((a.periodInk ?? 0) + ink)
       ledgerDirty = true
+      touch(a.key)
       saveNowSync(`carry ${wallet.slice(0, 4)}…`)
     },
     lastClosed() {
@@ -1349,6 +1398,8 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     w.ink += amount
     w.periodInk = round6((w.periodInk ?? 0) + amount)
     w.lastSeen = now
+    touch(dev.key)
+    touch(wkey)
     issuance.write({ ts: now, ev: 'link', from: hid('acct', dev.key), acct: hid('acct', wkey), ink: amount })
     return amount
   }
@@ -1839,6 +1890,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       acc.jobs++
       acc.lastSeen = built.issuedAt
       markDirty()
+      touch(acc.key)
     }
 
     const job: SimJob = {
@@ -1889,7 +1941,10 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     totals.jobsDone++
     totals.jobsFailed++
     const acc = accounts.get(peer.account)
-    if (acc) acc.failed++
+    if (acc) {
+      acc.failed++
+      touch(acc.key)
+    }
     markDirty()
     inkEvent(peer, p.id, 0, false, reason, p.kind ?? 'sim')
 
@@ -1975,6 +2030,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       if (acc.kind === 'device') acc.earnNet = hid('net', accountNetKey(peer.ip))
       acc.flops += p.flops
       acc.lastSeen = now
+      touch(acc.key)
     }
     // Append-only audit trail (salted hashes only; written asynchronously, never read back).
     issuance.write({
@@ -2085,6 +2141,42 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       escrow.set(strikeKey, rec)
     }
     return rec
+  }
+
+  function indexEscrow(acct: string, strikeKey: string) {
+    let s = escrowIdx.get(acct)
+    if (!s) escrowIdx.set(acct, (s = new Set()))
+    s.add(strikeKey)
+  }
+
+  /** Drop `strikeKey` from the account's escrow index once its record holds no item of that account. */
+  function unindexEscrow(acct: string, strikeKey: string, rec: EscrowRecord | undefined) {
+    const s = escrowIdx.get(acct)
+    if (!s) return
+    if (rec) for (const [k, it] of Object.entries(rec.items)) if ((it.acct ?? k) === acct) return
+    s.delete(strikeKey)
+    if (!s.size) escrowIdx.delete(acct)
+  }
+
+  /** Escrowed gradient-job INK of one ledger account (not in its `ink` / `periodInk` yet). */
+  function pendingInkOf(acct: string): number {
+    const s = escrowIdx.get(acct)
+    if (!s) return 0
+    let total = 0
+    for (const sk of [...s]) {
+      const rec = escrow.get(sk)
+      let held = false
+      if (rec) {
+        for (const [k, it] of Object.entries(rec.items)) {
+          if ((it.acct ?? k) !== acct) continue
+          total += it.ink
+          held = true
+        }
+      }
+      if (!held) s.delete(sk)
+    }
+    if (!s.size) escrowIdx.delete(acct)
+    return total
   }
 
   /** Bound the escrow map: drop the oldest records that hold no INK. */
@@ -2213,6 +2305,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       acc.jobs++
       acc.lastSeen = now
       markDirty()
+      touch(acc.key)
     }
     // Egress: the real payload bytes on the wire (weights only when the neuron lacks the version).
     issueBytes.take((job.weights?.length ?? 0) + job.x.length + job.y.length)
@@ -2286,6 +2379,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     if (!rec) return 0
     let total = 0
     let jobs = 0
+    const released = new Set<string>()
     for (const [key, it] of Object.entries(rec.items)) {
       if ((it.seq ?? 0) > uptoSeq) continue
       const acct = it.acct ?? key
@@ -2293,7 +2387,12 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       total += it.ink
       jobs += it.jobs
       delete rec.items[key]
+      released.add(acct)
       issuance.write({ ts: now, ev: 'confirm', jobId, acct: hid('acct', acct), kind: it.kind, dev: hid('ident', who.strikeKey), ink: round6(it.ink), jobs: it.jobs, flops: it.flops, credited: acc !== null })
+    }
+    for (const acct of released) {
+      unindexEscrow(acct, who.strikeKey, rec)
+      touch(acct)
     }
     rec.lastAt = now
     totals.inkPending = Math.max(0, totals.inkPending - total)
@@ -2309,10 +2408,16 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     const rec = escrow.get(who.strikeKey)
     const total = escrowTotal(rec)
     if (!rec || !(total > 0)) return 0
+    const forfeited = new Set<string>()
     for (const [key, it] of Object.entries(rec.items)) {
+      forfeited.add(it.acct ?? key)
       issuance.write({ ts: now, ev: 'forfeit', jobId, acct: hid('acct', it.acct ?? key), kind: it.kind, dev: hid('ident', who.strikeKey), ink: round6(it.ink), jobs: it.jobs })
     }
     rec.items = {}
+    for (const acct of forfeited) {
+      unindexEscrow(acct, who.strikeKey, rec)
+      touch(acct)
+    }
     rec.lastAt = now
     totals.inkPending = Math.max(0, totals.inkPending - total)
     totals.inkForfeited += total
@@ -2394,8 +2499,10 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       totals.inkPending += ink
       const rec = escrowOf(who.strikeKey)
       rec.items[`${who.account}|${seq}`] = { kind: who.accountKind, wallet: who.wallet, label: who.label, ink, flops, jobs: 1, acct: who.account, seq }
+      indexEscrow(who.account, who.strikeKey)
       compactEscrow(rec)
       rec.lastAt = now
+      touch(who.account)
       issuance.write({
         ts: now, ev: 'escrow', jobId: p.id, acct: hid('acct', who.account), kind: who.accountKind, dev: hid('ident', who.strikeKey),
         ip: hid('ip', who.ip), net: hid('net', accountNetKey(who.ip)), zone: zoneAt(p.zoneIdx), size: zoneAt(p.sizeIdx),
@@ -2470,6 +2577,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     if (acc) {
       acc.lastSeen = Date.now()
       markDirty()
+      touch(acc.key)
     }
     neuronsChanged()
     return true
@@ -2499,7 +2607,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     const claimedIdx = zoneIndex(zoneFor(claimed)) // never trust the client's zone
     const kind: NeuronInfo['kind'] = msg.kind === 'desktop' ? 'desktop' : 'browser'
     const rawDevice = adapter?.deviceId ?? adapter?.device
-    const device = typeof rawDevice === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(rawDevice) ? rawDevice : null
+    const device = typeof rawDevice === 'string' && DEVICE_ID_RE.test(rawDevice) ? rawDevice : null
 
     // Strikes / cooldowns / measurements: device → verified wallet → remote ip.
     const strikeKey = device ? `device:${device}` : wallet ? `wallet:${wallet}` : `ip:${ip}`
@@ -2549,6 +2657,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
         acc.lastSeen = now
         if (wallet) acc.walletVerified = true
         markDirty()
+        touch(acc.key)
       }
       if (moved > 0) log('info', `linked this period's device INK to ${wallet!.slice(0, 4)}…${wallet!.slice(-4)}: ${round2(moved)} INK`)
       safeSend(conn, { t: 'neuron.ok', neuron: { ...existing.info, ink: round2(existing.info.ink) }, auth: authState })
@@ -2574,6 +2683,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       acc.lastSeen = now
       if (wallet) acc.walletVerified = true
       markDirty()
+      touch(acc.key)
     }
 
     const info: NeuronInfo = {
@@ -2628,6 +2738,180 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     neuronsChanged()
   }
 
+  // ── account watches ──
+
+  /** What a watcher sees of one ledger account (no label / link / network fields), null when there is none. */
+  function accountView(key: string): AccountView | null {
+    const a = accounts.get(key)
+    if (!a || (a.kind !== 'wallet' && a.kind !== 'device')) return null
+    return {
+      kind: a.kind,
+      wallet: a.kind === 'wallet' ? a.wallet : null,
+      ink: round2(a.ink),
+      pendingInk: round2(pendingInkOf(key)),
+      periodInk: round6(a.periodInk ?? 0),
+      jobs: a.jobs,
+      verified: a.verified,
+      failed: a.failed,
+      flops: a.flops,
+      firstSeen: a.firstSeen,
+      lastSeen: a.lastSeen,
+    }
+  }
+
+  /** An account (or its escrow) changed: queue a push for the connections watching it. O(1) when nobody does. */
+  function touch(key: string | null | undefined) {
+    if (!key || !watchedKeys.has(key)) return
+    dirtyKeys.add(key)
+    if (watchFlushTimer || stopped) return
+    watchFlushTimer = setTimeout(flushWatches, ACCOUNT_FLUSH_MS)
+    watchFlushTimer.unref?.()
+  }
+
+  function sendAccount(w: AccountWatch, account: AccountView | null, now: number) {
+    w.lastSentAt = now
+    safeSend(w.conn, { t: 'account', scope: w.scope, account, at: now })
+  }
+
+  /** Each touched key is read once; a watcher pushed less than ACCOUNT_PUSH_MIN_MS ago gets a trailing push instead. */
+  function flushWatches() {
+    watchFlushTimer = null
+    try {
+      if (stopped) return
+      const now = Date.now()
+      const keys = [...dirtyKeys]
+      dirtyKeys.clear()
+      for (const key of keys) {
+        const set = watchedKeys.get(key)
+        if (!set) continue
+        let view: AccountView | null | undefined
+        for (const w of set) {
+          if (w.timer) continue // a trailing push is already due; it reads the account when it fires
+          const wait = w.lastSentAt + ACCOUNT_PUSH_MIN_MS - now
+          if (wait > 0) {
+            trailingPush(w, wait)
+            continue
+          }
+          if (view === undefined) view = accountView(key)
+          sendAccount(w, view, now)
+        }
+      }
+    } catch (e) {
+      log('error', `account push: ${(e as Error)?.message ?? e}`)
+    }
+  }
+
+  function trailingPush(w: AccountWatch, ms: number) {
+    w.timer = setTimeout(() => {
+      w.timer = null
+      try {
+        if (stopped || watches.get(w.conn.id) !== w || !w.key) return
+        sendAccount(w, accountView(w.key), Date.now())
+      } catch (e) {
+        log('error', `account push: ${(e as Error)?.message ?? e}`)
+      }
+    }, Math.max(0, ms))
+    w.timer.unref?.()
+  }
+
+  function unlinkWatch(w: AccountWatch) {
+    if (!w.key) return
+    const set = watchedKeys.get(w.key)
+    if (set) {
+      set.delete(w)
+      if (!set.size) {
+        watchedKeys.delete(w.key)
+        dirtyKeys.delete(w.key)
+      }
+    }
+    w.key = null
+  }
+
+  /** Resolve a watch request like neuron.register resolves the ledger key, then answer it right away. */
+  function applyWatch(w: AccountWatch, now: number) {
+    const req = w.queued
+    w.queued = null
+    if (!req) return
+    const claims = req.auth !== undefined && req.auth !== null && req.auth !== '' ? (opts.auth?.checkToken(req.auth) ?? null) : null
+    let scope: AccountWatch['scope'] = null
+    let key: string | null = null
+    if (claims?.wallet) {
+      scope = 'wallet'
+      key = `wallet:${claims.wallet}`
+    } else if (req.device !== null && DEVICE_ID_RE.test(req.device)) {
+      scope = 'device'
+      key = `device:${req.device}`
+    }
+    if (w.key !== key) {
+      unlinkWatch(w)
+      if (key) {
+        let set = watchedKeys.get(key)
+        if (!set) watchedKeys.set(key, (set = new Set()))
+        set.add(w)
+        w.key = key
+      }
+    }
+    w.scope = scope
+    if (w.timer) {
+      clearTimeout(w.timer) // this reply is fresher than the push that was due
+      w.timer = null
+    }
+    sendAccount(w, key ? accountView(key) : null, now)
+  }
+
+  function refillWatchTokens(w: AccountWatch, now: number) {
+    w.tokens = Math.min(WATCH_BURST, w.tokens + (now - w.tokensAt) / WATCH_REFILL_MS)
+    w.tokensAt = now
+  }
+
+  /**
+   * account.watch: any connection, registered or not. Malformed requests are ignored. Past the
+   * per-connection burst the newest request is held and applied when the bucket refills.
+   */
+  function watch(conn: NeuronConn, msg: unknown) {
+    const m = msg as { device?: unknown; auth?: unknown }
+    const device = m.device === undefined || m.device === null ? null : m.device
+    const auth = m.auth
+    if (device !== null && typeof device !== 'string') return
+    if (auth !== undefined && auth !== null && typeof auth !== 'string') return
+    const now = Date.now()
+    const cur: AccountWatch = watches.get(conn.id) ?? { conn, scope: null, key: null, lastSentAt: 0, timer: null, tokens: WATCH_BURST, tokensAt: now, queued: null, queueTimer: null }
+    watches.set(conn.id, cur)
+    cur.queued = { device, auth }
+    if (cur.queueTimer) return // already held: the newest request wins when the bucket refills
+    refillWatchTokens(cur, now)
+    if (cur.tokens >= 1) {
+      cur.tokens -= 1
+      applyWatch(cur, now)
+      return
+    }
+    cur.queueTimer = setTimeout(() => {
+      cur.queueTimer = null
+      try {
+        if (stopped || watches.get(cur.conn.id) !== cur) return
+        const t = Date.now()
+        refillWatchTokens(cur, t)
+        cur.tokens = Math.max(0, cur.tokens - 1)
+        applyWatch(cur, t)
+      } catch (e) {
+        log('error', `account.watch: ${(e as Error)?.message ?? e}`)
+      }
+    }, Math.ceil((1 - cur.tokens) * WATCH_REFILL_MS))
+    cur.queueTimer.unref?.()
+  }
+
+  function dropWatch(connId: string) {
+    const w = watches.get(connId)
+    if (!w) return
+    watches.delete(connId)
+    unlinkWatch(w)
+    if (w.timer) clearTimeout(w.timer)
+    if (w.queueTimer) clearTimeout(w.queueTimer)
+    w.timer = null
+    w.queueTimer = null
+    w.queued = null
+  }
+
   // ── public API ──
 
   function handle(conn: NeuronConn, msg: ClientMsg) {
@@ -2678,6 +2962,9 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
         case 'neuron.leave':
           if (remove(conn.id, 'abandoned — left with a job outstanding')) log('info', `- neuron ${conn.id} left`)
           return
+        case 'account.watch':
+          watch(conn, msg)
+          return
         default:
           return // 'ping' and anything unknown
       }
@@ -2688,8 +2975,10 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
 
   function disconnect(conn: NeuronConn) {
     try {
+      if (!conn || typeof conn.id !== 'string') return
+      dropWatch(conn.id)
       // Cooldowns live on the identity / ip records and are never cleared here.
-      if (conn && remove(conn.id, 'abandoned — disconnected with a job outstanding')) log('info', `- neuron ${conn.id} disconnected`)
+      if (remove(conn.id, 'abandoned — disconnected with a job outstanding')) log('info', `- neuron ${conn.id} disconnected`)
     } catch (e) {
       log('error', `disconnect failed: ${(e as Error).message}`)
     }
@@ -2715,6 +3004,9 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     if (neuronsTimer) clearTimeout(neuronsTimer)
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = null
+    if (watchFlushTimer) clearTimeout(watchFlushTimer)
+    watchFlushTimer = null
+    for (const id of [...watches.keys()]) dropWatch(id)
     for (const p of peers.values()) {
       if (p.timer) clearTimeout(p.timer)
       if (p.pending) settle(p.pending, false)
@@ -2742,8 +3034,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       const evm = EVM_ADDR_RE.test(q) ? q.toLowerCase() : null
       const a = accounts.get(q) ?? accounts.get(`wallet:${evm ?? q}`)
       if (!a) return null
-      let pendingInk = 0
-      for (const r of escrow.values()) for (const [k, it] of Object.entries(r.items)) if ((it.acct ?? k) === a.key) pendingInk += it.ink
+      const pendingInk = pendingInkOf(a.key)
       const { linkedTo: _l, linkedPeriod: _p, earnNet: _n, ...pub } = a
       void _l
       void _p

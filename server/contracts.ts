@@ -118,8 +118,8 @@ export interface NeuronConn {
 }
 
 export interface CoordinatorApi {
-  handle(conn: NeuronConn, msg: ClientMsg): void;   // neuron.register / job.request / job.result / train.result / neuron.leave
-  disconnect(conn: NeuronConn): void;
+  handle(conn: NeuronConn, msg: ClientMsg): void;   // neuron.register / job.request / job.result / train.result / neuron.leave / account.watch
+  disconnect(conn: NeuronConn): void;               // every closed socket (also drops its account watch)
   neurons(): NeuronInfo[];
   stats(): Pick<Stats, 'neurons' | 'gflops' | 'jobsDone' | 'jobsVerified' | 'inkIssued'>;
 }

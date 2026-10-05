@@ -384,13 +384,18 @@
   background: linear-gradient(180deg, var(--hot-a10), transparent 90%);
 }
 .earn-ink-v {
-  font-size: clamp(44px, 18cqw, 92px);
+  /* --ink-ch = characters in the number (set inline). A digit is ~0.55em wide here and the unit
+     ~1.1em, so long totals (12,345.67) shrink to fit the panel; short ones keep 18cqw. */
+  font-size: clamp(30px, min(18cqw, calc(96cqw / (var(--ink-ch, 4) * 0.56 + 1.2))), 92px);
   letter-spacing: -0.05em;
   line-height: 0.88;
   color: var(--fg-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.earn-ink-v.earn-ink-has {
+  color: var(--fg);
 }
 .earn-earning .earn-ink-v {
   color: var(--hot);
@@ -411,6 +416,11 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--fg-2);
+}
+.earn-ink-addr {
+  /* base58 is case-sensitive */
+  text-transform: none;
+  letter-spacing: 0.02em;
 }
 .earn-msg {
   display: flex;

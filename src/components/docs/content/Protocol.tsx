@@ -20,6 +20,7 @@ const SERVER: Row[] = [
   ['ink', 'event: InkEvent · kind: sim | train · status: confirmed | pending | forfeited', 'every verdict, pass or fail, and every escrow change', 'all'],
   ['neuron.ok', 'neuron: NeuronInfo · auth: verified | invalid | none', 'answer to neuron.register', 'that neuron'],
   ['payout', 'overview: PayoutsOverview', 'a payout period closes or a payout transaction confirms', 'all'],
+  ['account', 'scope: wallet | device | null · account: AccountView | null · at', 'answer to account.watch, then whenever that ledger account or its escrow changes (≤ 1/s)', 'that client'],
   ['error', 'msg', 'a request could not be served', 'that client'],
 ]
 
@@ -29,6 +30,7 @@ const CLIENT: [string, string, string][] = [
   ['job.result', 'result: { id, best[], sim[] (cosine similarity), ms }', 'answer the outstanding dedupe job'],
   ['train.result', "result: { id, kind: 'train', grad (base64 encodeGrad), loss, ms }", 'answer the outstanding training job'],
   ['neuron.leave', '—', 'leave the pool; the socket stays open as a viewer'],
+  ['account.watch', 'device: string | null · auth?: string | null', 'follow your own ledger account, no register needed: a valid session token (auth) → the wallet account, else the device id → the device account; one watch per socket, a new one replaces it'],
   ['ping', '—', 'accepted and ignored (keep-alive)'],
 ]
 
@@ -89,8 +91,8 @@ export function Protocol() {
         Client → server
       </H3>
       <p>
-        Only neurons send anything. Inbound frames are limited to {HUB.wsMaxPayloadMB} MB and {HUB.msgRate}/s sustained (burst {HUB.msgBurst}); binary
-        frames and unknown types are ignored.
+        Neurons send these; any page may also send <C>account.watch</C> to follow its own credits. Inbound frames are limited to{' '}
+        {HUB.wsMaxPayloadMB} MB and {HUB.msgRate}/s sustained (burst {HUB.msgBurst}); binary frames and unknown types are ignored.
       </p>
       <Table label="ClientMsg">
         <thead>

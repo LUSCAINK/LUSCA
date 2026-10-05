@@ -71,6 +71,15 @@ const FAQ: [string, ReactNode][] = [
     </>,
   ],
   [
+    'Do I lose credits when I reload or close the page?',
+    <>
+      No. Credits are kept on the server’s ledger, not in the page: per verified wallet, otherwise per anonymous device id that this browser keeps in local
+      storage. When <Link to="/node">Start earning</Link> opens, the earnings panel reads your saved total from the server; figures marked “this session”
+      count only since the page loaded. Clearing this browser’s site data creates a new device id, and credits saved under the old one are no longer
+      shown here; credits on a verified wallet show in any browser signed in with that wallet.
+    </>,
+  ],
+  [
     'What does my GPU actually compute?',
     <>
       Mostly SEPIA-0 training: the forward and backward pass of the model on a batch of text the server picks, returning the gradient. The server
