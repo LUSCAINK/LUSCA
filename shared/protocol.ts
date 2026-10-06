@@ -3,6 +3,7 @@
 // Transport: one WebSocket at /ws carrying JSON messages, plus a few REST routes.
 
 import type { PayoutsOverview } from './payouts.ts'
+import type { ChainEvent } from './chain.ts'
 
 /** Lifecycle of one agent ("sucker") as it works a page. */
 export type AgentState =
@@ -287,6 +288,8 @@ export type ServerMsg =
   // also named a valid device id: that device's own account (credits earned there before the wallet
   // was verified, which stay on it), null = none; absent otherwise
   | { t: 'account'; scope: 'wallet' | 'device' | null; account: AccountView | null; at: number; device?: AccountView | null }
+  // one read by a chain agent (shared/chain.ts), broadcast, throttled ≤ 4/s
+  | { t: 'chain'; event: ChainEvent }
   | { t: 'error'; msg: string };
 
 export type ClientMsg =

@@ -106,6 +106,19 @@
   line-height: 1.5;
   color: var(--fg-1);
 }
+.ag-chain {
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  color: var(--fg-2);
+}
+.ag-chain a {
+  color: var(--fg);
+  border-bottom: 1px dotted var(--line-4);
+  white-space: nowrap;
+}
+.ag-chain a:hover {
+  color: var(--hot);
+}
 .ag-title .pk-otp {
   margin-top: 4px;
 }

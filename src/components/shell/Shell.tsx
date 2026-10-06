@@ -16,8 +16,9 @@ export const NAV = [
   { to: '/node', label: 'Start earning', n: '02' },
   { to: '/earn', label: 'Rewards', n: '03' },
   { to: '/agents', label: 'Agents', n: '04' },
-  { to: '/sepia', label: 'Model', n: '05' },
-  { to: '/docs', label: 'Docs', n: '06' },
+  { to: '/chain', label: 'Chain', n: '05' },
+  { to: '/sepia', label: 'Model', n: '06' },
+  { to: '/docs', label: 'Docs', n: '07' },
 ]
 
 /** Legal pages: status bar (desktop/tablet) and the menu drawer (mobile). */
@@ -278,7 +279,19 @@ export function Shell() {
   const loc = useLocation()
   useEffect(() => {
     window.scrollTo(0, 0)
-  }, [loc.pathname])
+    // a link to a section (/sepia#sp-code): scroll to it once the (lazily loaded) page has rendered it
+    const id = loc.hash ? decodeURIComponent(loc.hash.slice(1)) : ''
+    if (!id) return
+    let tries = 0
+    let t: number | undefined
+    const go = () => {
+      const el = document.getElementById(id)
+      if (el) el.scrollIntoView({ block: 'start' })
+      else if (++tries < 60) t = window.setTimeout(go, 50)
+    }
+    go()
+    return () => window.clearTimeout(t)
+  }, [loc.pathname, loc.hash])
   return (
     <div className="shell">
       <TopBar />

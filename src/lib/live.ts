@@ -19,6 +19,7 @@
 import type { ClientMsg, ServerMsg } from '@shared/protocol'
 import type { PayoutsOverview } from '@shared/payouts'
 import { bus } from './bus'
+import { ingestChainEvent } from './chain'
 import { ingestPayoutOverview } from './payouts'
 import { useLive } from './store'
 
@@ -45,7 +46,9 @@ let parked = false // socket closed on purpose because the tab is hidden
 let lastJobAt = -Infinity
 
 function dispatch(msg: ServerMsg) {
-  useLive.getState().apply(msg)
+  // chain agents' reads (src/lib/chain.ts) keep their own store, like payouts
+  if (msg.t === 'chain') ingestChainEvent(msg.event)
+  else useLive.getState().apply(msg)
   bus.emit(msg)
 }
 

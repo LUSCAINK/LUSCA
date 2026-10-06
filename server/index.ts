@@ -35,6 +35,9 @@
 //      LUSCA_PAYOUT_MIN_SOL (0.001) — see server/payouts/config.ts
 //      LUSCA_CODE_INDEX (1; 0 = off) · LUSCA_CODE_MAX_MB (150; compressed shards under <data>/code)
 //      — protocol code index for SEPIA-1, see server/codebase
+//      LUSCA_CHAIN_AGENTS (1; 0 = off, stored chain data still served) · LUSCA_SOLANA_DISCOVERY_RPC
+//      LUSCA_ETH_RPC · LUSCA_BASE_RPC · LUSCA_ARB_RPC · LUSCA_CHAIN_MAX_MB (100) — chain agents
+//      (programs / contracts found on-chain, read, kept or rejected), see server/chain/index.ts
 //      NODE_ENV=development disables static serving of dist/.
 //
 // One process per data directory: <data>/.lock holds the owner's pid (refreshed every
@@ -52,6 +55,8 @@ import { createAuth, type Auth } from './auth/auth.ts'
 import { resolvePayoutConfig } from './payouts/config.ts'
 import { createPayouts } from './payouts/index.ts'
 import { createCodeIndex } from './codebase/index.ts'
+import { createChainAgents } from './chain/index.ts'
+import { createWeightsExporter } from './model/export.ts'
 import { createHub, ansi, log, DEFAULT_HUB_LIMITS, type HealthReport } from './http.ts'
 import type { CrawlerApi, TrainerApi } from './contracts.ts'
 import type { LuscaCoordinator } from './neurons/coordinator.ts'
@@ -463,8 +468,41 @@ async function main() {
       log.error('code', 'code index unavailable:', (e as Error)?.message ?? e)
     }
   }
+  // Chain agents (optional): find programs / contracts on-chain by themselves, read, keep or reject.
+  // LUSCA_CHAIN_AGENTS=0 stops the agents inside the module; its stored data is still served.
+  let chainAgents: ReturnType<typeof createChainAgents> | undefined
+  try {
+    // LUSCA_SOLANA_RPC (Helius on Render) is shared with payouts. Program reads must hit mainnet:
+    // a devnet / testnet URL there is ignored and reads use the public mainnet RPC. The URL carries
+    // a key and is never logged.
+    let solanaRpc = process.env.LUSCA_SOLANA_RPC?.trim() ?? ''
+    if (solanaRpc && /devnet|testnet/i.test(solanaRpc)) {
+      log.warn('chain', 'LUSCA_SOLANA_RPC is not a mainnet endpoint; chain agents read programs over the public mainnet RPC')
+      solanaRpc = ''
+    }
+    const evm = (k: string) => process.env[k]?.trim() || undefined
+    chainAgents = createChainAgents({
+      solanaRpc, // '' → the public mainnet RPC (server/chain/rpc.ts)
+      solanaDiscoveryRpc: evm('LUSCA_SOLANA_DISCOVERY_RPC'),
+      evmRpcs: { ethereum: evm('LUSCA_ETH_RPC'), base: evm('LUSCA_BASE_RPC'), arbitrum: evm('LUSCA_ARB_RPC') },
+      dataDir: DATA_DIR,
+      log: (level, msg) => log[level]('chain', msg),
+      broadcast: (msg) => hub.emit(msg),
+    })
+  } catch (e) {
+    log.error('chain', 'chain agents unavailable:', (e as Error)?.message ?? e)
+  }
   // `code` serves GET /api/code/stats (CodeIndexStats); undefined when LUSCA_CODE_INDEX=0.
-  hub.bind({ crawler, trainer, coordinator, auth, payouts, code: codeIndex })
+  // `chain` serves GET /api/chain/* from stored reads (no RPC per request).
+  // SEPIA-0 public weights (GET /api/model/weights.safetensors, /api/model/manifest.json), rebuilt from
+  // <LUSCA_DATA>/sepia.ckpt at most every 10 min. LUSCA_WEIGHTS_LICENSE sets the license field (default MIT).
+  const modelExport = createWeightsExporter({
+    ckptPath: path.join(DATA_DIR, 'sepia.ckpt'),
+    license: process.env.LUSCA_WEIGHTS_LICENSE?.trim() || 'MIT',
+    log: (level, msg) => log[level]('model', msg),
+  })
+  const modules = { crawler, trainer, coordinator, auth, payouts, code: codeIndex, chain: chainAgents, model: modelExport }
+  hub.bind(modules)
 
   let port: number
   try {
@@ -500,6 +538,11 @@ async function main() {
   } catch (e) {
     log.error('code', 'start failed:', (e as Error)?.stack ?? e)
   }
+  try {
+    chainAgents?.start() // discovery samples blocks at once; the first read about 20 s later
+  } catch (e) {
+    log.error('chain', 'start failed:', (e as Error)?.stack ?? e)
+  }
 
   // ── graceful shutdown ──
   let stopping = false
@@ -531,6 +574,7 @@ async function main() {
       step('crawler', () => crawler.stop()),
       step('trainer', () => trainer.stop()),
       step('code', () => codeIndex?.stop()), // aborts an in-flight download; committed shards stay
+      step('chain', () => chainAgents?.stop()), // aborts in-flight RPC; index, frontier, feed and budgets saved
     ])
     await step('coordinator', () => coordinator.stop())
     log.info('process', 'bye.')

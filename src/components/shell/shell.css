@@ -359,7 +359,8 @@
   }
 }
 
-@media (max-width: 1240px) {
+/* seven nav items: compact padding and no page counter until the drawer takes over at 1220px */
+@media (max-width: 1360px) {
   .bar-stat {
     display: none;
   }
@@ -374,7 +375,8 @@
   }
 }
 
-@media (max-width: 960px) {
+/* menu drawer: below this width the seven nav items and the bar controls no longer fit in one row */
+@media (max-width: 1220px) {
   .burger {
     display: flex;
   }

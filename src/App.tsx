@@ -7,6 +7,7 @@ const Landing = lazy(() => import('@/pages/Landing'))
 const Observatory = lazy(() => import('@/pages/Observatory'))
 const Agents = lazy(() => import('@/pages/Agents'))
 const Node = lazy(() => import('@/pages/Node'))
+const Chain = lazy(() => import('@/pages/Chain'))
 const Sepia = lazy(() => import('@/pages/Sepia'))
 const Earn = lazy(() => import('@/pages/Earn'))
 const Docs = lazy(() => import('@/pages/Docs'))
@@ -34,6 +35,8 @@ export default function App() {
             <Route path="live" element={<Suspense fallback={<Loading />}><Observatory /></Suspense>} />
             <Route path="agents" element={<Suspense fallback={<Loading />}><Agents /></Suspense>} />
             <Route path="agents/:id" element={<Suspense fallback={<Loading />}><Agents /></Suspense>} />
+            <Route path="chain" element={<Suspense fallback={<Loading />}><Chain /></Suspense>} />
+            <Route path="chain/:chain/:address" element={<Suspense fallback={<Loading />}><Chain /></Suspense>} />
             <Route path="node" element={<Suspense fallback={<Loading />}><Node /></Suspense>} />
             <Route path="sepia" element={<Suspense fallback={<Loading />}><Sepia /></Suspense>} />
             <Route path="earn" element={<Suspense fallback={<Loading />}><Earn /></Suspense>} />

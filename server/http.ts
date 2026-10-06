@@ -18,8 +18,10 @@ import type { ClientMsg, Hello, ModelInfo, SectorInfo, ServerMsg, Stats } from '
 import { SECTORS } from '../shared/sectors.ts'
 import type { PayoutsOverview, WalletPayouts } from '../shared/payouts.ts'
 import type { CodeIndexStats } from '../shared/codebase.ts'
+import type { ChainEvent, ChainId, ChainIndexItem, ChainRead, ChainStats } from '../shared/chain.ts'
 import { isSolanaAddress } from '../shared/base58.ts'
 import type { Auth } from './auth/auth.ts'
+import { handleModelRoute, type WeightsExporter } from './model/export.ts'
 import { SPAWN_TTL_MS, type CoordinatorApi, type CrawlerApi, type Emit, type NeuronConn, type TrainerApi } from './contracts.ts'
 import type { LuscaCoordinator } from './neurons/coordinator.ts'
 import { parseV6 } from './ingest/netguard.ts'
@@ -89,6 +91,18 @@ export interface Modules {
   payouts?: HubPayouts
   /** Protocol code index (server/codebase). Without it /api/code/stats answers 503. */
   code?: { stats(): CodeIndexStats }
+  /** Chain agents (server/chain): stored reads only. Without it /api/chain/* answers 503. */
+  chain?: HubChain
+  /** SEPIA-0 weights export (server/model). Without it /api/model/* answers 503. */
+  model?: WeightsExporter
+}
+
+/** Read side of the chain agents (server/chain/index.ts): every answer comes from stored data, no RPC. */
+export interface HubChain {
+  stats(): ChainStats
+  feed(limit: number): ChainEvent[]
+  items(q: { chain?: ChainId; limit?: number; cursor?: string }): { items: ChainIndexItem[]; next: string | null }
+  item(chain: ChainId, address: string): { item: ChainIndexItem; read: ChainRead } | null
 }
 
 export interface HubOptions {
@@ -208,6 +222,11 @@ const READ_CACHE_MS = 2_000               // /api/ledger, /api/neurons, traces: 
 const READ_CACHE_MAX = 64
 const PAYOUTS_CACHE_MS = 5_000            // /api/payouts and /api/payouts/wallet/:address
 const CODE_STATS_CACHE_MS = 10_000        // /api/code/stats (the index changes once per repository)
+const CHAIN_CACHE_MS = 2_000              // /api/chain/stats, /feed, /items (a chain agent reads every ~20 s at most)
+const CHAIN_ITEM_CACHE_MS = 30_000        // /api/chain/item/:chain/:address (one stored record; disk read)
+const CHAIN_IDS = new Set<ChainId>(['solana', 'ethereum', 'base', 'arbitrum'])
+const EVM_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/
+const CHAIN_CURSOR_RE = /^\d{1,16}\.[a-z]{1,16}\.[A-Za-z0-9]{20,64}$/
 const DEVICE_ID_RE = /^[A-Za-z0-9_-]{6,64}$/ // browser / desktop neuron device ids (as the coordinator accepts them)
 const NON_ESSENTIAL = new Set<ServerMsg['t']>(['trace', 'agent', 'discover', 'reject'])
 /**
@@ -223,6 +242,7 @@ const STREAM_RESERVE: Partial<Record<ServerMsg['t'], number>> = {
   discover: 0.5,
   reject: 0.35,
   agent: 0.2,
+  chain: 0.2, // chain agents' reads (≤ 4/s); the /chain page backfills from /api/chain/feed
   stats: -0.5,
   neurons: -0.5,
   ink: Number.NEGATIVE_INFINITY,
@@ -561,6 +581,7 @@ export function createHub(opts: HubOptions): Hub {
   const statsLimit = createLimiter(60_000, 120)
   const wsConnectLimit = createLimiter(10_000, 20)
   const readLimit = createLimiter(60_000, Math.max(1, Math.floor(L.readsPerMin)))
+  const modelLimit = createLimiter(60_000, 30) // /api/model/* per address (responses are cacheable for 10 min)
   const authLimit = createLimiter(60_000, 30) // /api/auth/* per address (server/auth adds its own per-route caps)
   const limiters = [spawnLimit, spawnLiveLimit, spawnGlobalLimit, generateLimit, pagesLimit, helloLimit, statsLimit, wsConnectLimit, readLimit, authLimit]
   let generating = 0
@@ -1469,11 +1490,73 @@ export function createHub(opts: HubOptions): Hub {
       return sendJsonText(req, res, 200, cachedJson('code:stats', () => code.stats(), CODE_STATS_CACHE_MS))
     }
 
+    // ── chain agents (programs / contracts they found and read; stored data only, no RPC here) ──
+
+    if (p === '/api/chain/stats' || p === '/api/chain/feed' || p === '/api/chain/items' || p.startsWith('/api/chain/item/')) {
+      allow(['GET', 'HEAD'])
+      const m = requireModules()
+      if (!m.chain) throw new HttpError(503, 'chain agents are not available on this server')
+      limit(readLimit, req, 'read')
+      const chainApi = m.chain
+      const shortCache = { 'Cache-Control': 'public, max-age=5' }
+
+      if (p === '/api/chain/stats') {
+        return sendJsonText(req, res, 200, cachedJson('chain:stats', () => chainApi.stats(), CHAIN_CACHE_MS), shortCache)
+      }
+
+      if (p === '/api/chain/feed') {
+        const raw = url.searchParams.get('limit')
+        const n = raw === null || raw === '' ? 50 : Number(raw)
+        if (!Number.isInteger(n) || n < 1) throw new HttpError(400, 'limit must be an integer from 1 to 200')
+        const lim = Math.min(200, n)
+        return sendJsonText(req, res, 200, cachedJson(`chain:feed:${lim}`, () => chainApi.feed(lim), CHAIN_CACHE_MS), shortCache)
+      }
+
+      if (p === '/api/chain/items') {
+        const chainQ = url.searchParams.get('chain') || ''
+        if (chainQ && !CHAIN_IDS.has(chainQ as ChainId)) throw new HttpError(400, 'chain must be solana, ethereum, base or arbitrum')
+        const rawLimit = url.searchParams.get('limit')
+        const n = rawLimit === null || rawLimit === '' ? 50 : Number(rawLimit)
+        if (!Number.isInteger(n) || n < 1) throw new HttpError(400, 'limit must be an integer from 1 to 200')
+        const lim = Math.min(200, n)
+        const cursor = url.searchParams.get('cursor') || ''
+        if (cursor && !CHAIN_CURSOR_RE.test(cursor)) throw new HttpError(400, 'cursor is not one this server issued')
+        const q = { chain: (chainQ || undefined) as ChainId | undefined, limit: lim, cursor: cursor || undefined }
+        return sendJsonText(req, res, 200, cachedJson(`chain:items:${chainQ}:${lim}:${cursor}`, () => chainApi.items(q), CHAIN_CACHE_MS), shortCache)
+      }
+
+      const itemMatch = /^\/api\/chain\/item\/([a-z]{1,16})\/([^/]{1,64})$/.exec(p)
+      if (!itemMatch) throw new HttpError(404, 'not found')
+      const chain = itemMatch[1] as ChainId
+      if (!CHAIN_IDS.has(chain)) throw new HttpError(400, 'chain must be solana, ethereum, base or arbitrum')
+      let address: string
+      try {
+        address = decodeURIComponent(itemMatch[2])
+      } catch {
+        throw new HttpError(400, 'address is not valid for this chain')
+      }
+      if (chain === 'solana' ? !isSolanaAddress(address) : !EVM_ADDRESS_RE.test(address)) throw new HttpError(400, 'address is not valid for this chain')
+      const key = `chain:item:${chain}:${chain === 'solana' ? address : address.toLowerCase()}`
+      const json = cachedJson(key, () => chainApi.item(chain, address), CHAIN_ITEM_CACHE_MS)
+      if (json === 'null') {
+        readCache.delete(key) // a miss is not cached: the address may be kept a moment later
+        throw new HttpError(404, 'not in the kept index')
+      }
+      return sendJsonText(req, res, 200, json, { 'Cache-Control': 'public, max-age=30' })
+    }
+
+    // ── SEPIA-0 weights export: newest checkpoint as safetensors + manifest (server/model/export.ts) ──
+    if (p.startsWith('/api/model/')) {
+      const m = requireModules()
+      if (!m.model) throw new HttpError(503, 'the weights export is not available on this server')
+      if (await handleModelRoute(p, req, res, { exporter: m.model, take: (r) => modelLimit.take(clientIp(r)) })) return
+    }
+
     throw new HttpError(404, 'not found')
   }
 
   /** Client routes as declared in src/App.tsx (first segment → allowed extra segments). */
-  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, agents: 1, docs: 1 }
+  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, agents: 1, docs: 1, chain: 2 }
   function isClientRoute(segs: string[]): boolean {
     if (segs.length === 0) return true
     const first = segs[0].toLowerCase() // react-router matches case-insensitively

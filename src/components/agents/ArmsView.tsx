@@ -1,6 +1,6 @@
 // /agents — every agent, live: who they are, what they are doing, and a form to add one.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import type { AgentInfo } from '@shared/protocol'
 import { ROMAN, SECTORS } from '@shared/sectors'
 import { Stat, stateTone } from '@/components/obs/parts'
@@ -143,6 +143,9 @@ export function ArmsView() {
           </Kicker>
           <h1 className="display">The Arms</h1>
           <p className="ag-lede">Every agent in the data pipeline, what it is doing right now, and how to add your own.</p>
+          <p className="ag-chain mono">
+            Programs and contracts on Solana, Ethereum, Base and Arbitrum are read by separate chain agents. <Link to="/chain">Chain agents →</Link>
+          </p>
           <ConnNote />
           <OnThisPage
             links={[

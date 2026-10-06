@@ -20,6 +20,7 @@ const SERVER: Row[] = [
   ['ink', 'event: InkEvent · kind: sim | train · status: confirmed | pending | forfeited', 'every verdict, pass or fail, and every escrow change', 'all'],
   ['neuron.ok', 'neuron: NeuronInfo · auth: verified | invalid | none', 'answer to neuron.register', 'that neuron'],
   ['payout', 'overview: PayoutsOverview', 'a payout period closes or a payout transaction confirms', 'all'],
+  ['chain', 'event: ChainEvent (agent · chain · address · name · kind · via · verdict · reason · idl · verifiedBy · sourceFiles · sourceBytes)', 'a chain agent finishes a read (≤ 4/s)', 'all'],
   ['account', 'scope: wallet | device | null · account: AccountView | null · at · device?: AccountView | null', 'answer to account.watch, then whenever that ledger account or its escrow changes (≤ 1/s); a wallet watch that names a device also carries that device’s account (credits that stay on it)', 'that client'],
   ['error', 'msg', 'a request could not be served', 'that client'],
 ]
@@ -49,6 +50,10 @@ const REST: [string, string, string, string][] = [
   ['POST', '/api/auth/link-device', '{ token, deviceId }', '{ wallet, ink } · moves the device’s current-period credits to the verified wallet (same network that earned them)'],
   ['GET', '/api/payouts', '—', 'PayoutsOverview { mode, treasury, period, history, rules } · cached 5 s'],
   ['GET', '/api/payouts/wallet/:address', '—', 'WalletPayouts: periods paid with amounts and tx signatures, current-period credits and estimated share'],
+  ['GET', '/api/chain/stats', '—', 'ChainStats: chain agents, reads, kept, rejections by reason, queues, daily call budgets · stored data, no RPC'],
+  ['GET', '/api/chain/feed', 'limit ≤ 200', 'ChainEvent[] newest first'],
+  ['GET', '/api/chain/items', 'chain · limit ≤ 200 · cursor', '{ items: ChainIndexItem[], next } kept programs and contracts, newest first'],
+  ['GET', '/api/chain/item/:chain/:address', '—', '{ item, read } one kept item and its stored read; 404 when not kept'],
 ]
 
 export function Protocol() {
