@@ -39,6 +39,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (Solmate ERC4626, an OpenBook v2 Anchor instruction, DeepBook Move, OpenZeppelin Cairo) or your
   own text in the browser and compare token counts with o200k_base and cl100k_base, next to the
   measured held-out evaluation. The GPT encodings load only when you edit the text.
+- **Proof of contribution.** Every epoch (60 minutes by default, `LUSCA_EPOCH_MIN`, aligned to the
+  UTC clock) the server commits each identity's confirmed credits, jobs and FLOPs for that epoch as
+  a leaf of a SHA-256 Merkle tree and writes a header linking to the previous header by hash.
+  Escrowed credits enter only once an audit confirms them; forfeited credits never do. Epoch 0
+  commits every balance that existed when proofs started. On `/earn` a browser can re-hash the
+  whole chain, check its own leaf and Merkle path with WebCrypto, keep the last head it verified
+  and copy a head hash to post publicly; the desktop neuron checks its newest leaf the same way.
+  The chain proves that committed credits were not rewritten for anyone who kept an earlier head;
+  it is not anchored on Solana yet. Routes under `/api/proofs` (docs 10.5).
+- **Payout preview on `/earn`.** Runs the payout engine's own `planPayout()` (now in
+  `shared/payoutPlan.ts`) in the browser on your period credits. Payouts stay as configured; the
+  preview sends nothing.
+- **LUSCA Lens (`/lens`).** Paste a Solana program id or an Ethereum, Base or Arbitrum contract
+  address and get a report read on-chain with the chain agents' own readers: upgrade authority or
+  proxy admin, verified source (OtterSec / Sourcify), interface, admin-gated functions with the file
+  and line of the guard, cryptographic primitives, and files byte-identical to a repository in the
+  protocol code index. Every fact links to where it was read; no model writes any of it. Reads that
+  pass the SEPIA-1 rules are added to the chain index (discovery source `lens`, capped per day).
+  Per-IP and daily call budgets; `LUSCA_LENS=0` turns it off. Design notes in `docs/LENS.md`.
+
+### Fixed
+
+- **SEPIA-0 counters after a crash.** The public step, weights version, server and GPU step counts
+  and GPU samples no longer go back after a hard kill between two 90-s checkpoints. Step numbers are
+  reserved in `<data>/progress.json` before they are shown, so a crash skips at most 256 step
+  numbers and never shows one twice; the work counters are shown as persisted. Audit counts have
+  the same guarantee (`<data>/audits.json`).
 
 ### Changed
 

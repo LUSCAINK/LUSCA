@@ -701,7 +701,7 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
     }
     try {
       applyCheckpoint(decodeCheckpoint(r.buf))
-      log(`restored ${CKPT_FILE}: step ${step}, ${history.length} loss points, ${sampleList.length} samples`)
+      log(`restored ${CKPT_FILE}: step ${savedStep}${step > savedStep ? ` (numbering resumes at ${step}, from progress.json)` : ''}, ${history.length} loss points, ${sampleList.length} samples`)
       return true
     } catch (e) {
       const aside = `${ckptPath}.corrupt-${Date.now()}`

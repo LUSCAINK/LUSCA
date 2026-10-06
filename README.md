@@ -52,6 +52,9 @@ shows "—" and reconnects; it never substitutes recorded or generated data.
 | Live site | https://lusca.ink |
 | Run a neuron in your browser | https://lusca.ink/node |
 | Run a neuron on your computer (one file, Node 20+) | https://lusca.ink/neuron.mjs |
+| Proof of contribution: verify the credit chain and your own leaf | https://lusca.ink/earn#ep-proofs |
+| Lens: read any Solana program or EVM contract, with a cited report | https://lusca.ink/lens |
+| SEPIA-1 tokenizer playground and release files | https://lusca.ink/sepia#sp-tok · `/models/sepia-1-tokenizer/` |
 | Manual (protocol, threat model, economics) | https://lusca.ink/docs |
 | Source | https://github.com/LUSCAINK/LUSCA |
 | Security reports and site-owner requests | lusca@collider.capital ([SECURITY.md](SECURITY.md)) |
@@ -164,6 +167,7 @@ and [`/docs/protocol`](https://lusca.ink/docs/protocol) (source: `src/components
 | Escrow | training credits are *pending* until the identity's next passed full audit releases it; a failed audit forfeits all of it | `server/neurons/coordinator.ts` |
 | Strikes | 3 consecutive failed jobs per identity, or 12 per remote IP across identities, disconnect the neuron with a cooldown of 30 s that doubles per repeat, up to 15 min | `server/neurons/coordinator.ts` |
 | Tier proof | a tier above MESO earns its credit bonus only after 2 large jobs average at least 3 GFLOPS end to end | `server/neurons/coordinator.ts` |
+| Proof of contribution | every epoch (`LUSCA_EPOCH_MIN`, default 60) the confirmed credits of each identity become a leaf of a SHA-256 Merkle tree; each header links to the previous one by hash, and browsers and neurons re-check the chain against the last head they verified | `server/proofs/`, `shared/proofs.ts` |
 
 ## Quick start
 
@@ -382,6 +386,20 @@ Nothing reads a `.env` file.
 </details>
 
 <details>
+<summary><b>Proof of contribution and Lens</b></summary>
+
+| var | default | |
+|---|---|---|
+| `LUSCA_EPOCH_MIN` | `60` | minutes per contribution epoch, boundaries on the UTC clock |
+| `LUSCA_PROOFS_RESTART` | off | `1` = start a new proof chain when `<LUSCA_DATA>/proofs` is missing; otherwise proofs stay off (`proofs-off` in `/api/health`) so a lost chain is never silently replaced |
+| `LUSCA_LENS` | on | `0` = Lens off; `/api/lens/*` answers 503 |
+| `LUSCA_LENS_SOL_CALLS` | 15 % of the agents' Solana limit (1,200 at the default) | Lens's daily share of Solana RPC calls, charged on top of the chain agents' budget |
+| `LUSCA_LENS_EVM_CALLS` | 15 % of the agents' EVM limit (2,250 at the default) | Lens's daily share of RPC calls per EVM chain |
+| `LUSCA_LENS_HTTP_CALLS` | 40 % of the registry limit | Lens's daily share of Sourcify and OtterSec calls, each |
+
+</details>
+
+<details>
 <summary><b>Wallet sign-in and payouts</b> (see <a href="#payouts">Payouts</a>)</summary>
 
 | var | default | |
@@ -432,7 +450,8 @@ Nothing reads a `.env` file.
 LUSCA/
 ├── .github/        CI workflow, Dependabot, issue and pull request templates; assets/ holds the banner and social preview
 ├── public/         static files served as-is: favicon, share images, robots.txt, sitemap.xml
-├── scripts/        neuron.ts (desktop neuron source) and build-neuron.mjs (bundles it into dist/neuron.mjs)
+├── models/         sepia-1-tokenizer/: the SEPIA-1 tokenizer release (tokenizer.json, model card, eval)
+├── scripts/        neuron.ts (desktop neuron source) and build-neuron.mjs (bundles it into dist/neuron.mjs); tokenizer/ and hf/ for the SEPIA-1 tokenizer
 ├── server/         one Node process
 │   ├── index.ts    entry point: wires agents, trainer, coordinator, payouts and auth; graceful shutdown
 │   ├── http.ts     the hub: REST /api/*, the /ws socket and static hosting of dist/
@@ -441,6 +460,8 @@ LUSCA/
 │   ├── neurons/    coordinator: job issue, result checks, escrow, strikes, credit ledger, issuance log
 │   ├── payouts/    payout periods, plans and SOL transfers from the treasury
 │   ├── auth/       wallet sign-in (nonce, ed25519 signature, session tokens)
+│   ├── proofs/     contribution epochs: Merkle leaves, hash-linked headers, proof lookups
+│   ├── lens/       LUSCA Lens: on-demand reads of one program or contract, cited reports
 │   └── data/       runtime data (git-ignored): dataset, checkpoint, ledger, salts
 ├── shared/         code used by server, browser and desktop neuron: protocol.ts, sectors, vectorizer, payouts
 │   └── sepia/      the one SEPIA implementation: forward, backward, f16 gradient codec, trainFlops

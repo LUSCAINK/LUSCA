@@ -54,6 +54,16 @@ const REST: [string, string, string, string][] = [
   ['GET', '/api/chain/feed', 'limit ≤ 200', 'ChainEvent[] newest first'],
   ['GET', '/api/chain/items', 'chain · limit ≤ 200 · cursor', '{ items: ChainIndexItem[], next } kept programs and contracts, newest first'],
   ['GET', '/api/chain/item/:chain/:address', '—', '{ item, read } one kept item and its stored read; 404 when not kept'],
+  ['GET', '/api/proofs', 'limit ≤ 100 · before', '{ head, headers, next, open, status, committed } contribution epochs, newest first (10.5)'],
+  ['GET', '/api/proofs/:index', '—', '{ header } one epoch header'],
+  ['GET', '/api/proofs/:index/leaves.json', '—', 'every leaf of the epoch in tree order · ETag, immutable once closed'],
+  ['POST', '/api/proofs/mine', '{ auth?, device? }', '{ identities } your identity hashes and the epochs that hold a leaf for them · 30/min'],
+  ['POST', '/api/proofs/:index/proof', '{ auth?, device? }', '{ proofs } your leaf and Merkle path in that epoch'],
+  ['POST', '/api/proofs/preview', '{ auth?, device? }', 'period credits for the payout preview (nothing is sent)'],
+  ['GET', '/api/lens/:chain/:address', 'chain: solana · ethereum · base · arbitrum', 'LensAnswer: a cited report, cached or read live · per-IP and daily call budgets, 503 with Retry-After when used up'],
+  ['GET', '/api/lens/detect/:address', '0x address', 'LensDetect: which EVM chains hold code at the address'],
+  ['GET', '/api/lens/recent', '—', '{ reads, recent } public strip of recent reads'],
+  ['GET', '/api/lens/status', '—', 'LensStatus: call budgets left today, cache, code index'],
 ]
 
 export function Protocol() {

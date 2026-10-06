@@ -110,7 +110,8 @@ function ChainOverview() {
             training data for SEPIA-1.
           </p>
           <p className="ch-honest mono">
-            Nobody submits addresses. SEPIA-0, the current model, cannot read code: this index is what SEPIA-1 will train on.
+            The agents find addresses themselves. Anyone can read one address with <Link to="/lens">Lens</Link>; a Lens read that passes the same rules
+            is kept here, marked &ldquo;lens&rdquo;. SEPIA-0, the current model, cannot read code: this index is what SEPIA-1 will train on.
           </p>
           <StatusLine error={statsError} hasData={!!stats} />
           <OnThisPage
