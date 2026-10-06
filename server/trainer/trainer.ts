@@ -27,6 +27,7 @@ import type { LossPoint, ModelInfo, TrainJob } from '../../shared/protocol.ts'
 import type { TrainerApi, TrainerOptions, TrainStats } from '../contracts.ts'
 import { CTX, EMB, HIDDEN, VOCAB_SIZE, SepiaModel, generateText, mulberry32, paramCount } from './model.mjs'
 import { createAuditCounter } from './auditCounter.ts'
+import { createProgressFloor, type ProgressCounts } from './progressFloor.ts'
 
 const NAME = 'SEPIA-0'
 const ARCH = `char-MLP · ctx ${CTX} · emb ${EMB} · hidden ${HIDDEN} · tanh`
@@ -285,6 +286,11 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
   const auditCounter = createAuditCounter(dataDir, (m) => warn(m))
   // Added to the worker's own counts: the floor it could not restore (no checkpoint to patch).
   let auditBase = { ok: 0, failed: 0 }
+  // The public step and work counters never go backwards either (progressFloor.ts): step numbers
+  // are reserved on disk before they are published, counters are published as persisted.
+  const progress = createProgressFloor(dataDir, (m) => warn(m))
+  const trainCounts = (t: unknown): ProgressCounts | null =>
+    isObj(t) ? { gpuSteps: num(t.gpuSteps), serverSteps: num(t.serverSteps), gpuSamples: num(t.gpuSamples), samplesSeen: num(t.samplesSeen) } : null
 
   const emit = (msg: Parameters<TrainerOptions['emit']>[0]) => {
     try {
@@ -463,12 +469,16 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
   function takeTrainStats(x: unknown) {
     if (!isObj(x)) return
     const a = isObj(x.audits) ? x.audits : {}
+    const version = num(x.version, step)
+    progress.reserveStep(version)
+    const pc = progress.observe(trainCounts(x) ?? { gpuSteps: 0, serverSteps: 0, gpuSamples: 0, samplesSeen: 0 })
     tstats = {
       ...(x as Partial<WorkerTrainStats>),
-      version: num(x.version, step),
-      gpuSteps: num(x.gpuSteps),
-      serverSteps: num(x.serverSteps),
-      gpuSamples: num(x.gpuSamples),
+      version,
+      gpuSteps: pc.gpuSteps,
+      serverSteps: pc.serverSteps,
+      gpuSamples: pc.gpuSamples,
+      samplesSeen: pc.samplesSeen,
       contributors24h: num(x.contributors24h),
       audits: auditCounter.observe({ ok: num(a.ok) + auditBase.ok, failed: num(a.failed) + auditBase.failed }),
       gpuStepsPerMin: num(x.gpuStepsPerMin),
@@ -482,6 +492,7 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
       case 'ready': {
         ready = true
         spawnedAt = Date.now()
+        progress.reserveStep(num(msg.step))
         step = Math.max(step, num(msg.step))
         gpuEnabled = msg.gpu === true
         if (!gpuEnabled) warn('GPU training jobs disabled (shared/sepia unavailable in the worker)')
@@ -508,6 +519,7 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
           tokens: num(p.tokens),
           ts: num(p.ts, Date.now()),
         }
+        progress.reserveStep(point.step) // durable before this step number is published
         step = point.step
         lastLoss = point.loss
         if (point.val !== null) lastVal = point.val
@@ -594,12 +606,16 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
     if (lastSnap) {
       // Raise the checkpoint's audit counts to the persisted floor, so the worker resumes from it.
       const t = lastSnap.train && typeof lastSnap.train === 'object' ? { ...(lastSnap.train as Record<string, unknown>) } : null
+      const pf = progress.floor()
       if (t) {
         t.auditsOk = Math.max(num(t.auditsOk), floor.ok)
         t.auditsFailed = Math.max(num(t.auditsFailed), floor.failed)
         auditBase = { ok: 0, failed: 0 }
+        for (const k of ['gpuSteps', 'serverSteps', 'gpuSamples', 'samplesSeen'] as const) t[k] = Math.max(num(t[k]), pf[k])
       }
-      ckpt = { step: lastSnap.step, adamT: lastSnap.adamT, params: lastSnap.params.slice(), m: lastSnap.m.slice(), v: lastSnap.v.slice(), train: t ?? lastSnap.train }
+      // Step numbering resumes at the reservation: numbers published before a hard kill are never reused.
+      // Adam's own counter (adamT) stays with the weights.
+      ckpt = { step: Math.max(lastSnap.step, pf.step), adamT: lastSnap.adamT, params: lastSnap.params.slice(), m: lastSnap.m.slice(), v: lastSnap.v.slice(), train: t ?? lastSnap.train }
       transfer.push(ckpt.params.buffer as ArrayBuffer, ckpt.m.buffer as ArrayBuffer, ckpt.v.buffer as ArrayBuffer)
     }
     try {
@@ -619,7 +635,7 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
     const resumeStep = lastSnap ? lastSnap.step : 0
     history = history.filter((p) => p.step <= resumeStep)
     sampleList = sampleList.filter((s) => s.step <= resumeStep)
-    step = resumeStep
+    step = Math.max(resumeStep, progress.floor().step)
     lastLoss = history.length ? history[history.length - 1].loss : Math.log(VOCAB_SIZE)
     lastVal = null
     for (let i = history.length - 1; i >= 0; i--) {
@@ -657,7 +673,14 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
     savedStep = ck.snap.step
     history = ck.history
     sampleList = ck.samples
-    step = ck.snap.step
+    // Published step and counters start from max(checkpoint, progress floor): after a hard kill the
+    // floor is ahead of the 90-s checkpoint.
+    const tc = trainCounts(ck.snap.train)
+    if (tc) {
+      progress.observe(tc)
+      progress.flushSync()
+    }
+    step = Math.max(ck.snap.step, progress.floor().step) // already on disk: no new reservation needed to show it
     if (history.length) lastLoss = history[history.length - 1].loss
     for (let i = history.length - 1; i >= 0; i--) {
       const v = history[i].val
@@ -801,13 +824,17 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
 
   // ── public API ──
 
+  function pubCounts(): { gpuSteps: number; serverSteps: number; gpuSamples: number } {
+    const pc = progress.observe({ gpuSteps: tstats.gpuSteps, serverSteps: tstats.serverSteps, gpuSamples: tstats.gpuSamples, samplesSeen: num(tstats.samplesSeen) })
+    return { gpuSteps: pc.gpuSteps, serverSteps: pc.serverSteps, gpuSamples: pc.gpuSamples }
+  }
+
   function trainStats(): TrainStats {
     const fresh = Date.now() - tstatsAt < TRAIN_STATS_FRESH_MS
     return {
       version: Math.max(step, tstats.version),
-      gpuSteps: tstats.gpuSteps,
-      serverSteps: tstats.serverSteps,
-      gpuSamples: tstats.gpuSamples,
+      // Before the worker's first report (boot) these are the persisted floor, not zeros.
+      ...pubCounts(),
       contributors24h: tstats.contributors24h,
       audits: auditCounter.observe(tstats.audits),
       gpuStepsPerMin: fresh && worker && ready ? tstats.gpuStepsPerMin : 0,
@@ -850,6 +877,7 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
     stop() {
       if (stopP) return stopP
       auditCounter.flushSync()
+      progress.flushSync()
       if (!running && !worker) return Promise.resolve()
       stopping = true
       const p = (async () => {
@@ -870,6 +898,10 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
             lastSnap = snap
             await writeCheckpoint(snap)
             log(`checkpoint saved at step ${snap.step}`)
+            // The final checkpoint holds every published step: give back the unused reservation.
+            const tc = trainCounts(snap.train)
+            if (tc) progress.observe(tc)
+            progress.release(snap.step)
           } catch (e) {
             warn(`final checkpoint failed: ${errMsg(e)}`)
           }

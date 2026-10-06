@@ -188,7 +188,10 @@ export function Sepia() {
           <tr>
             <td>checkpoint</td>
             <td className="mono strong">sepia.ckpt · every {MODEL.ckptEveryS} s</td>
-            <td>params + Adam moments + loss history; also on shutdown; restored on boot when the architecture matches</td>
+            <td>
+              params + Adam moments + loss history; also on shutdown; restored on boot when the architecture matches. After a crash the weights resume
+              from the last checkpoint and the step number from <C>progress.json</C>: up to {MODEL.stepBlock} step numbers are skipped, none is shown twice
+            </td>
           </tr>
         </tbody>
       </Table>

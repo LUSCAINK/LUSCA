@@ -147,6 +147,14 @@ npm run dev`}</Code>
             <td>Binary checkpoint: params, Adam moments, loss history. Every {MODEL.ckptEveryS} s and on shutdown.</td>
           </tr>
           <tr>
+            <td className="mono strong">progress.json · audits.json</td>
+            <td className="mono small">trainer</td>
+            <td>
+              Floors for the public step, the GPU / server step and sample counters and the audit counts, so none of them goes back after a crash.
+              Step numbers are reserved {MODEL.stepBlock} at a time before they are shown.
+            </td>
+          </tr>
+          <tr>
             <td className="mono strong">ledger.json</td>
             <td className="mono small">coordinator</td>
             <td>Credit accounts (by verified wallet, device id or label), period credits and lifetime totals. Every 30 s, on shutdown and at each period close.</td>

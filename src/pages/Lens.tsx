@@ -999,7 +999,7 @@ export default function Lens() {
   const input = useMemo(() => classify(text), [text])
 
   useEffect(() => {
-    document.title = routeAddr ? `Lens · ${short(routeAddr, 4)} · LUSCA` : 'Lens · LUSCA'
+    document.title = routeAddr ? `${short(routeAddr, 4)} · Lens — LUSCA` : 'Lens — LUSCA'
   }, [routeAddr])
 
   // the report of the address in the URL

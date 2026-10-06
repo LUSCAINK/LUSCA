@@ -104,6 +104,7 @@ export const MODEL = {
   duty: 0.85,
   chunkMs: 40,
   ckptEveryS: 90,
+  stepBlock: 256, // server/trainer/progressFloor.ts STEP_BLOCK
   reloadTailMB: 64,
 } as const
 
