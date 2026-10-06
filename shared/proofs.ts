@@ -82,6 +82,8 @@ export interface ProofChainPage {
   /** Startup verification of the stored chain. */
   status: ProofChainStatus
   epochMinutes: number
+  /** Σ over every closed epoch, genesis included: credits in micro-credits, leaves = committed (identity, epoch) pairs. */
+  committed: { epochs: number; credits: number; leaves: number }
 }
 
 export interface ProofChainStatus {
@@ -103,7 +105,7 @@ export interface ProofLeaves {
 export interface ProofIdentity {
   scope: 'wallet' | 'device'
   id: string
-  /** Newest first: epochs with a leaf for this identity (up to 200). */
+  /** Newest first: epochs with a leaf for this identity (up to 100). */
   epochs: number[]
 }
 

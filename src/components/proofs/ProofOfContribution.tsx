@@ -603,6 +603,32 @@ export function ProofOfContribution() {
         </p>
       )}
 
+      <dl className="poc-stats">
+        <div>
+          <dt className="label">epochs closed</dt>
+          <dd className="num">{page?.committed ? fmtInt(page.committed.epochs) : DASH}</dd>
+        </div>
+        <div>
+          <dt className="label">credits committed</dt>
+          <dd className="num">{page?.committed ? credits(page.committed.credits) : DASH}</dd>
+          {page?.committed && page.head && (
+            <dd className="poc-stat-s mono">
+              {page.committed.credits === page.head.totals.ledgerCredits
+                ? `= ledger lifetime at #${page.head.index}`
+                : `ledger lifetime at #${page.head.index}: ${credits(page.head.totals.ledgerCredits)}`}
+            </dd>
+          )}
+        </div>
+        <div>
+          <dt className="label">leaves committed</dt>
+          <dd className="num">{page?.committed ? fmtInt(page.committed.leaves) : DASH}</dd>
+        </div>
+        <div>
+          <dt className="label">next epoch closes in</dt>
+          <dd className="num hot">{page?.open ? fmtCountdown(page.open.closesAt - now) : DASH}</dd>
+        </div>
+      </dl>
+
       <ol className="poc-chain" aria-label="Epoch chain, newest first">
         {page?.open && <OpenBlock open={page.open} now={now} />}
         {headers.map((h) => (

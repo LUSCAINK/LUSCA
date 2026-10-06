@@ -45,8 +45,8 @@ type LogFn = (level: 'info' | 'warn' | 'error', msg: string) => void
 const HEADER_RE = /^h-(\d{8})\.json$/
 const TICK_MS = 15_000
 const LEAF_CACHE = 24
-const IDENT_EPOCHS = 200
-const MAX_IDENTS = 200_000
+const IDENT_EPOCHS = 100
+const MAX_IDENTS = 50_000
 const RETRYABLE = new Set(['EPERM', 'EBUSY', 'EACCES', 'EAGAIN'])
 
 // ─── pure tree code (sync, node:crypto) ─────────────────────────────────────
@@ -281,6 +281,8 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
   let pendingWrite: ClosingRecord | null = null
   let timer: NodeJS.Timeout | null = null
   let ready = false
+  let savingWarned = false
+  const committed = { credits: 0, leaves: 0 } // Σ over every stored header (genesis included)
 
   const head = () => (headers.length ? headers[headers.length - 1] : null)
   const closesAt = (startedAt: number) => Math.floor(startedAt / epochMs) * epochMs + epochMs
@@ -384,6 +386,8 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
 
   function adopt(rec: ClosingRecord) {
     headers.push(rec.header)
+    committed.credits += rec.header.totals.credits
+    committed.leaves += rec.header.leafCount
     cacheLeaves(rec.header.index, rec.leaves)
     noteIdentities(rec.header.index, rec.leaves)
     if (status.ok) status = { ...status, verified: status.verified + 1, checkedAt: now() }
@@ -449,6 +453,8 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
         // keep going from here so the chain can still be served and extended; the status stays broken
       } else verified++
       headers.push(h)
+      committed.credits += h.totals.credits
+      committed.leaves += h.leafCount
       if (leaves) {
         noteIdentities(h.index, leaves)
         if (h.index >= names.length - LEAF_CACHE) cacheLeaves(h.index, leaves)
@@ -514,6 +520,11 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
 
   function tick(force = false): EpochHeader | null {
     if (!ready) return null
+    if (!epochs.saving()) {
+      if (!savingWarned) log('error', 'ledger.json is not being saved: no epoch closes until it is readable again (the open epoch keeps collecting)')
+      savingWarned = true
+      return null
+    }
     if (pendingWrite && !flushPending()) return null
     const open = epochs.open()
     if (!open) return null
@@ -582,6 +593,7 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
         open: ready && open ? { index: open.index, startedAt: open.startedAt, closesAt: closesAt(open.startedAt) } : null,
         status,
         epochMinutes: epochMs / 60_000,
+        committed: { epochs: headers.length, credits: committed.credits, leaves: committed.leaves },
       }
     },
     header: (index) => (headers[index]?.index === index ? headers[index] : null),

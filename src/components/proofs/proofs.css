@@ -76,6 +76,40 @@
   color: var(--err);
 }
 
+/* ─── stats ─────────────────────────────────────── */
+.poc-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  border: 1px solid var(--line-2);
+  background: var(--line-2);
+}
+.poc-stats > div {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--bg-1);
+}
+.poc-stats dd {
+  margin: 0;
+  font-size: clamp(22px, 2.2vw, 34px);
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.poc-stats dd.poc-stat-s {
+  font-size: var(--t-3xs);
+  letter-spacing: 0.1em;
+  line-height: 1.4;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.poc-stats dd.hot {
+  color: var(--hot);
+}
+
 /* ─── chain ─────────────────────────────────────── */
 .poc-chain {
   display: flex;
@@ -471,6 +505,9 @@ button.poc-blk-b:hover {
   }
 }
 @media (max-width: 640px) {
+  .poc-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .poc-strip {
     flex-wrap: wrap;
   }
