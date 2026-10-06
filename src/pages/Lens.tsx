@@ -22,6 +22,7 @@ import {
   fmtBytes,
   fmtN,
   repoFileUrl,
+  repoLink,
   repoSlug,
   short,
   slotUrl,
@@ -127,7 +128,16 @@ function Section({ n, title, meta, children, open = true, id }: { n: string; tit
 const LOADER_SHORT: Record<string, string> = { 'bpf-upgradeable': 'v3', 'bpf-loader-2': 'v2', 'bpf-loader-1': 'v1', 'loader-v4': 'v4', native: 'native' }
 
 const verifiedText = (v: LensReport['summary']['verified']) =>
-  v === 'osec' ? 'OtterSec verified build' : v === 'sourcify-full' ? 'Sourcify full match' : v === 'sourcify-partial' ? 'Sourcify partial match' : 'not verified'
+  v === 'osec'
+    ? 'OtterSec verified build'
+    : v === 'sourcify-full'
+      ? 'Sourcify full match'
+      : v === 'sourcify-partial'
+        ? 'Sourcify partial match'
+        : v === 'unknown'
+          ? 'not checked: registry unavailable'
+          : 'not verified'
+const isVerified = (v: LensReport['summary']['verified']) => !!v && v !== 'unknown'
 
 const VERDICT_CLASS: Partial<Record<Verdict, string>> = { kept: 'is-hot', duplicate: 'is-on', error: 'is-err' }
 
@@ -136,8 +146,15 @@ const VERDICT_CLASS: Partial<Record<Verdict, string>> = { kept: 'is-hot', duplic
 function Strip({ r }: { r: LensReport }) {
   const s = r.summary
   const sol = r.chain === 'solana'
+  const incomplete = !!(r.evm?.self.analysis || r.evm?.implementation?.analysis)
   const cells: { k: string; v: ReactNode; sub?: ReactNode; hot?: boolean; href?: string }[] = [
-    { k: 'verified', v: s.verified ? 'yes' : 'no', sub: s.verified ? verifiedText(s.verified) : sol ? 'no OtterSec verified build' : 'no verified source on Sourcify', hot: !!s.verified, href: '#ln-verify' },
+    {
+      k: 'verified',
+      v: s.verified === 'unknown' ? 'n/a' : s.verified ? 'yes' : 'no',
+      sub: s.verified === 'unknown' ? 'OtterSec could not be asked: not checked' : s.verified ? verifiedText(s.verified) : sol ? 'no OtterSec verified build' : 'no verified source on Sourcify',
+      hot: isVerified(s.verified),
+      href: '#ln-verify',
+    },
     {
       k: 'upgradeable',
       v: s.upgradeable === true ? 'yes' : s.upgradeable === false ? 'no' : 'unknown',
@@ -154,11 +171,11 @@ function Strip({ r }: { r: LensReport }) {
     {
       k: 'privileged',
       v: fmtN(s.privileged),
-      sub: s.privileged === null ? (sol ? 'needs an IDL' : 'needs verified source') : sol ? 'instructions with a role signer' : 'guarded state-changing fns',
+      sub: s.privileged === null ? (sol ? 'needs an IDL' : incomplete ? 'analysis not completed' : 'needs verified source') : sol ? 'instructions with a role signer' : 'guarded state-changing fns',
       hot: (s.privileged ?? 0) > 0,
       href: '#ln-priv',
     },
-    { k: 'crypto', v: fmtN(s.primitives), sub: sol ? 'syscalls / sig programs' : 'primitives in source', href: '#ln-prim' },
+    { k: 'crypto', v: fmtN(s.primitives), sub: sol ? 'syscalls / sig programs' : s.primitives === null ? 'analysis not completed' : 'primitives in source', href: '#ln-prim' },
     {
       k: 'provenance',
       v: sol
@@ -174,7 +191,7 @@ function Strip({ r }: { r: LensReport }) {
         ? r.provenance.osecRepo
           ? `${r.solana?.osec?.verified ? 'verified build' : 'build record'} · ${repoSlug(r.provenance.osecRepo.repo)}${r.provenance.osecRepo.inCodeIndex ? ' · in code index' : ''}`
           : 'no build repository'
-        : 'files ≡ code index',
+        : `${fmtN(s.provenanceExact ?? 0)} ≡ byte-identical · ${fmtN(s.provenance - (s.provenanceExact ?? 0))} ≈ same code`,
       href: '#ln-prov',
     },
     { k: 'SEPIA-1', v: VERDICT_LABEL[r.dataset.verdict], sub: r.dataset.added ? 'added to the index by this report' : r.dataset.before ? `before: ${VERDICT_LABEL[r.dataset.before.verdict]}` : 'not seen before', hot: r.dataset.added, href: '#ln-data' },
@@ -313,7 +330,10 @@ function SolanaSections({ r }: { r: LensReport }) {
         <Row k="programdata" cite={s.programDataAddress ? { href: explorerUrl('solana', s.programDataAddress), label: 'Explorer' } : null}>
           {s.programDataAddress ? <span className="mono">{s.programDataAddress}</span> : '—'}
         </Row>
-        <Row k="executable size">{fmtBytes(s.programBytes)}</Row>
+        <Row k="executable size">
+          {fmtBytes(s.programBytes)}
+          {s.programBytes !== null && <span className="dimmer ln-note"> ELF in the programdata account, trailing zero padding removed</span>}
+        </Row>
         <Row k="last deploy slot" cite={s.lastDeploySlot ? { href: slotUrl(s.lastDeploySlot), label: 'block' } : null}>
           {fmtN(s.lastDeploySlot)}
         </Row>
@@ -323,10 +343,21 @@ function SolanaSections({ r }: { r: LensReport }) {
         </Row>
       </Section>
 
-      <Section n="02" title="Verified build" id="ln-verify" meta={<span className={s.osec?.verified ? 'hot' : 'dim'}>{s.osec?.verified ? 'verified' : 'not verified'}</span>}>
+      <Section
+        n="02"
+        title="Verified build"
+        id="ln-verify"
+        meta={<span className={s.osec?.verified ? 'hot' : 'dim'}>{r.summary.verified === 'unknown' ? 'not checked' : s.osec?.verified ? 'verified' : 'not verified'}</span>}
+      >
         <Row k="OtterSec" cite={{ href: `https://verify.osec.io/status/${r.address}`, label: 'verify.osec.io' }}>
           {s.osec === null ? (
-            <span className="dim">registry not asked or unavailable</span>
+            <span className="dim">
+              {r.summary.verified === 'unknown'
+                ? `not checked: ${r.notes.find((n) => n.startsWith('OtterSec status unavailable'))?.replace(/^OtterSec status unavailable:?\s*/, '') || 'the registry could not be asked'}. This is not a fact about the program; this report is cached for one minute only.`
+                : r.kind === 'program'
+                  ? 'registry not asked'
+                  : 'only executable programs are looked up'}
+            </span>
           ) : s.osec.verified ? (
             'verified: the build from this repository and commit hashes to the deployed code'
           ) : s.osec.repo ? (
@@ -336,7 +367,7 @@ function SolanaSections({ r }: { r: LensReport }) {
           )}
         </Row>
         {s.osec?.repo && (
-          <Row k="repository" cite={{ href: s.osec.commit ? `${s.osec.repo.replace(/\/+$/, '')}/tree/${s.osec.commit}` : s.osec.repo, label: 'GitHub' }}>
+          <Row k="repository" cite={repoLink(s.osec.repo, s.osec.commit)}>
             <span className="mono">
               {repoSlug(s.osec.repo)}
               {s.osec.commit ? `@${s.osec.commit.slice(0, 10)}` : ''}
@@ -480,6 +511,7 @@ function EvmSections({ r }: { r: LensReport }) {
   const e = r.evm!
   const code = e.implementation ?? e.self
   const allPriv = [...(e.implementation?.privileged ?? []).map((p) => ({ ...p, of: 'implementation' })), ...e.self.privileged.map((p) => ({ ...p, of: e.proxy ? 'proxy' : 'contract' }))]
+  const analysis = e.self.analysis || e.implementation?.analysis || null
   return (
     <>
       <Section n="01" title="Code & deployment" id="ln-code" meta={<span className="mono">{fmtBytes(e.bytecodeBytes)}</span>}>
@@ -497,6 +529,11 @@ function EvmSections({ r }: { r: LensReport }) {
             <Row k="implementation" cite={{ href: explorerUrl(r.chain, e.proxy.implementation), label: explorerName(r.chain) }}>
               <span className="mono">{e.proxy.implementation}</span>
             </Row>
+            {e.proxy.beacon && (
+              <Row k="beacon" cite={{ href: explorerUrl(r.chain, e.proxy.beacon), label: explorerName(r.chain) }}>
+                <span className="mono">{e.proxy.beacon}</span> <span className="dim">implementation() was read from this beacon</span>
+              </Row>
+            )}
             <Row k="admin" cite={e.proxy.admin ? { href: explorerUrl(r.chain, e.proxy.admin), label: explorerName(r.chain) } : null}>
               {e.proxy.admin ? <span className="mono">{e.proxy.admin}</span> : <span className="dim">not in a standard admin slot (upgrade rights are in the code; see privileged)</span>}
             </Row>
@@ -565,6 +602,8 @@ function EvmSections({ r }: { r: LensReport }) {
       <Section n="04" title="Privileged functions" id="ln-priv" meta={<span className="mono">{allPriv.length}</span>}>
         {!(e.implementation?.sources.length || e.self.sources.length) ? (
           <p className="dim ln-p">Needs verified source.</p>
+        ) : analysis ? (
+          <p className="dim ln-p">Source analysis {analysis}. Nothing is listed: a partial list would read as a complete one.</p>
         ) : allPriv.length === 0 ? (
           <p className="dim ln-p">No state-changing function is guarded by an access-control modifier or a check on msg.sender.</p>
         ) : (
@@ -592,8 +631,8 @@ function EvmSections({ r }: { r: LensReport }) {
         )}
       </Section>
 
-      <Section n="05" title="Cryptography" id="ln-prim" meta={<span className="mono">{r.primitives.length}</span>}>
-        <Primitives r={r} list={r.primitives} />
+      <Section n="05" title="Cryptography" id="ln-prim" meta={<span className="mono">{analysis ? '—' : r.primitives.length}</span>}>
+        {analysis ? <p className="dim ln-p">Source analysis {analysis}. Nothing is listed.</p> : <Primitives r={r} list={r.primitives} />}
       </Section>
     </>
   )
@@ -744,6 +783,7 @@ function ControlMap({ r }: { r: LensReport }) {
 
 function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
   const r = a.report
+  const example = EXAMPLES.find((x) => x.chain === r.chain && x.address.toLowerCase() === r.address.toLowerCase())
   const sol = r.chain === 'solana'
   const p = r.provenance
   const d = r.dataset
@@ -755,13 +795,19 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
         <div className="ln-rtags">
           <span className="tag solid">{CHAIN_SHORT[r.chain]}</span>
           <span className="tag">{r.kind}</span>
-          {r.summary.verified && <span className="tag hot">{verifiedText(r.summary.verified)}</span>}
+          {r.summary.verified && <span className={`tag ${isVerified(r.summary.verified) ? 'hot' : ''}`}>{verifiedText(r.summary.verified)}</span>}
           <span className="label dimmer">
             read {fmtUtc(r.readAt)} · {fmtN(r.ms)} ms · {r.rpcCalls} RPC · {r.registryCalls} registry
             {a.cached ? ' · from cache' : ''}
           </span>
         </div>
         <h2 className="display ln-name">{r.name ?? (r.kind === 'program' ? 'unnamed program' : r.kind === 'contract' ? 'unnamed contract' : r.kind)}</h2>
+        {!r.name && example && (
+          <p className="dim ln-p ln-exnote">
+            Listed on this page as the example “{example.label}”. The {r.chain === 'solana' ? 'program' : 'contract'} carries no name in anything Lens reads
+            {r.chain === 'solana' ? ' (no security.txt name, no IDL name)' : ' (no verified source)'}.
+          </p>
+        )}
         <div className="ln-raddr">
           <span className="mono">{r.address}</span>
           <Copy text={r.address} />
@@ -808,19 +854,26 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
       {isCode && (sol ? <SolanaSections r={r} /> : <EvmSections r={r} />)}
 
       {isCode && (
-      <Section n={sol ? '07' : '06'} title="Provenance" id="ln-prov" meta={<span className="mono">{sol ? (p.osecRepo ? repoSlug(p.osecRepo.repo) : '—') : `${p.matches.length}/${p.checked} files`}</span>}>
+      <Section
+        n={sol ? '07' : '06'}
+        title="Provenance"
+        id="ln-prov"
+        meta={<span className="mono">{sol ? (p.osecRepo ? repoSlug(p.osecRepo.repo) : '—') : `${p.matches.filter((m) => m.exact).length} ≡ · ${p.matches.filter((m) => !m.exact).length} ≈ of ${p.checked} files`}</span>}
+      >
         <p className="dim ln-p">
           {p.index.files > 0 ? (
             <>
               Compared against LUSCA's protocol code index: {fmtN(p.index.repos)} repositories, {fmtN(p.index.files)} files hashed
-              {p.index.builtAt ? ` (${ago(p.index.builtAt)})` : ''}. ≡ byte-identical file · ≈ same code, comments and whitespace aside.
+              {p.index.builtAt ? ` (${ago(p.index.builtAt)})` : ''}. ≡ the same bytes are in that repository at that commit · ≈ the same code, comments
+              and whitespace aside. The index keeps one copy of a file that several repositories share, so the repository shown holds the file; it is
+              not necessarily where the file was first written.
             </>
           ) : (
             'The code index is not connected yet on this server: provenance cannot be checked.'
           )}
         </p>
         {sol && p.osecRepo && (
-          <Row k="build repository" cite={{ href: `https://github.com/${p.osecRepo.repo}${p.osecRepo.commit ? `/tree/${p.osecRepo.commit}` : ''}`, label: 'GitHub' }}>
+          <Row k="build repository" cite={repoLink(p.osecRepo.repo, p.osecRepo.commit)}>
             <span className="mono">
               {p.osecRepo.repo}
               {p.osecRepo.commit ? `@${p.osecRepo.commit.slice(0, 10)}` : ''}
@@ -912,10 +965,11 @@ function Reading({ chain, address }: { chain: ChainId; address: string }) {
       <div className="ln-reading-h">
         <span className="led on pulse" /> <span className="label">reading</span> <span className="mono">{short(address, 8)}</span>{' '}
         <span className="dimmer mono">{CHAIN_LABEL[chain]}</span>
+        <span className="dimmer">· what this read asks for</span>
       </div>
       <ol>
         {steps.map((s, i) => (
-          <li key={s} style={{ animationDelay: `${i * 0.35}s` }}>
+          <li key={s}>
             <span className="ln-step-n mono">{String(i + 1).padStart(2, '0')}</span>
             {s}
           </li>
@@ -932,6 +986,7 @@ export default function Lens() {
   const nav = useNavigate()
   const routeChain = isChainId(params.chain) ? params.chain : null
   const routeAddr = params.address ?? null
+  const badChain = !!params.chain && !routeChain
   const [text, setText] = useState(routeAddr ?? '')
   const [phase, setPhase] = useState<Phase>({ s: 'idle' })
   const [detectMsg, setDetectMsg] = useState<string | null>(null)
@@ -949,6 +1004,10 @@ export default function Lens() {
 
   // the report of the address in the URL
   useEffect(() => {
+    if (badChain) {
+      setPhase({ s: 'error', msg: `"${String(params.chain).slice(0, 24)}" is not a chain Lens reads: use solana, ethereum, base or arbitrum.`, retry: null, status: 404 })
+      return
+    }
     if (!routeChain || !routeAddr) {
       setPhase({ s: 'idle' })
       return
@@ -963,7 +1022,7 @@ export default function Lens() {
         setPhase({ s: 'error', msg: e instanceof Error ? e.message : String(e), retry: e instanceof LensHttpError ? e.retryAfter : null, status: e instanceof LensHttpError ? e.status : null })
       })
     return () => ac.abort()
-  }, [routeChain, routeAddr, nonce])
+  }, [routeChain, routeAddr, nonce, badChain, params.chain])
 
   // recent reads (public strip): on load and after each report
   const doneAt = phase.s === 'done' ? phase.a.report.readAt : 0
@@ -1089,6 +1148,18 @@ export default function Lens() {
                     .filter(Boolean)
                     .join(' · ')}
             </span>
+            <span>
+              <span className="dimmer">registry lookups left today</span>{' '}
+              {status === null
+                ? '—'
+                : (['osec', 'sourcify'] as const)
+                    .map((k) => {
+                      const b = status.budget[k]
+                      return b ? `${k === 'osec' ? 'OtterSec' : 'Sourcify'} ${fmtN(Math.max(0, b.limit - b.used))}` : null
+                    })
+                    .filter(Boolean)
+                    .join(' · ')}
+            </span>
           </div>
         </form>
       </section>
@@ -1158,9 +1229,9 @@ export default function Lens() {
                   <span className="mono">{CHAIN_SHORT[x.chain]}</span>
                   <span className="dimmer">{ago(x.at)}</span>
                 </span>
-                <span className="ln-rc-n">{x.name ?? short(x.address, 5)}</span>
-                <span className="mono dimmer">{short(x.address, 5)}</span>
-                <span className={`ln-rc-v ${x.verified ? 'hot' : 'dimmer'}`}>{x.verified ? verifiedText(x.verified) : 'not verified'}</span>
+                <span className={`ln-rc-n ${x.name ? '' : 'mono'}`}>{x.name ?? short(x.address, 5)}</span>
+                <span className="mono dimmer">{x.name ? short(x.address, 5) : x.kind}</span>
+                <span className={`ln-rc-v ${isVerified(x.verified) ? 'hot' : 'dimmer'}`}>{verifiedText(x.verified)}</span>
               </Link>
             ))}
           </div>

@@ -44,38 +44,59 @@ export interface LensLimits {
   budget: Record<BudgetKey, number>
   freshPerMin: number
   freshPerHour: number
+  /** Fresh reads per IP (IPv6: per /64) per UTC day: no single client can drain the day's slice. */
+  freshPerDay: number
   cachedPerMin: number
   detectPerMin: number
+  detectPerHour: number
+  detectPerDay: number
   concurrency: number
   queue: number
   queueWaitMs: number
   cacheTtlMs: number
+  /** Cache life of a report whose registry could not be asked (verified: 'unknown'). */
+  unknownTtlMs: number
+  /** Cache life of a detect answer (code / no code per chain). */
+  detectTtlMs: number
   memCache: number
   diskCache: number
   readTimeoutMs: number
   recent: number
+  /** New SEPIA-1 items Lens may hand to the chain store per UTC day (count and source bytes). */
+  keepPerDay: number
+  keepBytesPerDay: number
+  /** Lens stops handing items to the store once it is this full (the rest is the agents' headroom). */
+  keepMaxFill: number
 }
 
 export const DEFAULT_LENS_LIMITS: LensLimits = {
-  budget: { solana: 1200, 'solana-discovery': 0, ethereum: 2250, base: 2250, arbitrum: 2250, sourcify: 750, osec: 750 },
+  budget: { solana: 1200, 'solana-discovery': 0, ethereum: 2250, base: 2250, arbitrum: 2250, sourcify: 2000, osec: 2000 },
   freshPerMin: 5,
   freshPerHour: 40,
+  freshPerDay: 100,
   cachedPerMin: 60,
   detectPerMin: 12,
+  detectPerHour: 60,
+  detectPerDay: 200,
   concurrency: 3,
   queue: 6,
   queueWaitMs: 20_000,
   cacheTtlMs: 15 * 60_000,
+  unknownTtlMs: 60_000,
+  detectTtlMs: 6 * 3_600_000,
   memCache: 100,
   diskCache: 600,
   readTimeoutMs: 60_000,
   recent: 24,
+  keepPerDay: 50,
+  keepBytesPerDay: 16 * 1024 * 1024,
+  keepMaxFill: 0.8,
 }
 
 export interface LensDeps {
   /** The chain agents' network layer (shared budgets, endpoint gates). */
   rpc: RpcCtx
-  store: Pick<ChainStore, 'item' | 'evaluate' | 'process' | 'full'>
+  store: Pick<ChainStore, 'item' | 'evaluate' | 'process' | 'full'> & Partial<Pick<ChainStore, 'summary'>>
   /** Into the chain feed + broadcast (agents.record). */
   record: (ev: ChainEvent) => void
   /** The chain feed, newest first (a prior verdict on the address). */
@@ -167,7 +188,14 @@ function writeAtomic(file: string, data: string, sync = false) {
   fs.renameSync(tmp, file)
 }
 
-/** The daily slice of the shared budgets Lens may use (persisted, resets 00:00 UTC). */
+/** Calls reserved on disk ahead of use: a hard kill can never lose a charged call. */
+const RESERVE = 16
+
+/**
+ * The daily slice of the shared budgets Lens may use (persisted, resets 00:00 UTC). Write-ahead: the
+ * file always holds at least the calls charged (a block of RESERVE is written before the calls in it
+ * are made), so after a hard kill the restored count is ≥ the last one shown, never lower.
+ */
 function createSlice(limits: Record<BudgetKey, number>, file: string, now: () => number) {
   let day = Math.floor(now() / DAY)
   let used: Partial<Record<BudgetKey, number>> = {}
@@ -177,12 +205,18 @@ function createSlice(limits: Record<BudgetKey, number>, file: string, now: () =>
   } catch {
     /* first day */
   }
+  let onDisk: Partial<Record<BudgetKey, number>> = { ...used }
   let dirty = false
+  const write = (v: Partial<Record<BudgetKey, number>>) => {
+    writeAtomic(file, JSON.stringify({ day, used: v }), true)
+    onDisk = { ...v }
+  }
   const roll = () => {
     const d = Math.floor(now() / DAY)
     if (d !== day) {
       day = d
       used = {}
+      onDisk = {}
       dirty = true
     }
   }
@@ -194,7 +228,9 @@ function createSlice(limits: Record<BudgetKey, number>, file: string, now: () =>
     charge(k: BudgetKey) {
       roll()
       if ((used[k] ?? 0) + 1 > limits[k]) throw new BudgetError(k)
-      used[k] = (used[k] ?? 0) + 1
+      const next = (used[k] ?? 0) + 1
+      if (next > (onDisk[k] ?? 0)) write({ ...used, ...onDisk, [k]: Math.min(limits[k], next + RESERVE - 1) }) // throws: the call is not made
+      used[k] = next
       dirty = true
     },
     usage() {
@@ -203,11 +239,12 @@ function createSlice(limits: Record<BudgetKey, number>, file: string, now: () =>
       for (const k of Object.keys(limits) as BudgetKey[]) if (limits[k] > 0) out[k] = { used: used[k] ?? 0, limit: limits[k] }
       return out
     },
+    /** Write the exact counts (≥ every count shown so far). */
     flush() {
       if (!dirty) return
       dirty = false
       try {
-        writeAtomic(file, JSON.stringify({ day, used }), true)
+        write({ ...used })
       } catch {
         dirty = true
       }
@@ -215,9 +252,51 @@ function createSlice(limits: Record<BudgetKey, number>, file: string, now: () =>
   }
 }
 
+/** A per-UTC-day counter set persisted with fsync + rename (Lens keeps per day). */
+function createDayCounter(file: string, now: () => number) {
+  let day = Math.floor(now() / DAY)
+  let v = { items: 0, bytes: 0 }
+  try {
+    const j = JSON.parse(fs.readFileSync(file, 'utf8')) as { day?: number; items?: number; bytes?: number }
+    if (j.day === day) v = { items: Math.max(0, Math.floor(Number(j.items) || 0)), bytes: Math.max(0, Math.floor(Number(j.bytes) || 0)) }
+  } catch {
+    /* first day */
+  }
+  const roll = () => {
+    const d = Math.floor(now() / DAY)
+    if (d !== day) {
+      day = d
+      v = { items: 0, bytes: 0 }
+    }
+  }
+  return {
+    get() {
+      roll()
+      return { ...v }
+    },
+    add(items: number, bytes: number) {
+      roll()
+      v = { items: v.items + items, bytes: v.bytes + bytes }
+      writeAtomic(file, JSON.stringify({ day, ...v }), true)
+    },
+  }
+}
+
 interface Counter {
   rpc: number
   http: number
+  /** set when the read passed its deadline: no more calls, nothing handed to the store */
+  dead: boolean
+}
+
+const URLISH = /https?:|www\.|:\/\/|\.(?:com|io|xyz|net|org|app|gg|me|co|fi|finance|ink|site|online|top|vip|cc|link|click|claims?)\b|t\.me|discord|telegram|@/i
+
+/** A name fit for a public list: plain identifier-like text, no links or handles, at most 48 characters; else null. */
+export function safeName(name: string | null | undefined): string | null {
+  if (!name) return null
+  const n = name.trim()
+  if (!n || n.length > 48 || URLISH.test(n) || !/^[\w .()+:/-]+$/.test(n)) return null
+  return n
 }
 
 export function createLens(d: LensDeps): Lens {
@@ -229,12 +308,37 @@ export function createLens(d: LensDeps): Lens {
   const cacheDir = path.join(dir, 'cache')
   const recentFile = path.join(dir, 'recent.json')
   const slice = createSlice(L.budget, path.join(dir, 'budget.json'), now)
+  const keeps = createDayCounter(path.join(dir, 'keeps.json'), now)
 
   const freshMin = createWindow(60_000, L.freshPerMin, now)
   const freshHour = createWindow(3_600_000, L.freshPerHour, now)
+  const freshDay = createWindow(DAY, L.freshPerDay, now)
   const cachedMin = createWindow(60_000, L.cachedPerMin, now)
   const detectMin = createWindow(60_000, L.detectPerMin, now)
+  const detectHour = createWindow(3_600_000, L.detectPerHour, now)
+  const detectDay = createWindow(DAY, L.detectPerDay, now)
   const listMin = createWindow(60_000, 120, now)
+  /** Take one hit from each window in order; on a refusal give back the ones already taken. */
+  function takeAll(ip: string, ws: { w: ReturnType<typeof createWindow>; msg: string }[]) {
+    for (let i = 0; i < ws.length; i++) {
+      const wait = ws[i].w.take(ip)
+      if (wait > 0) {
+        for (let k = 0; k < i; k++) ws[k].w.refund(ip)
+        throw new LensError(429, ws[i].msg, Math.ceil(wait / 1000))
+      }
+    }
+  }
+  const FRESH = [
+    { w: freshMin, msg: `too many Lens reads from this address: at most ${L.freshPerMin} a minute` },
+    { w: freshHour, msg: `too many Lens reads from this address this hour (at most ${L.freshPerHour})` },
+    { w: freshDay, msg: `too many Lens reads from this address today (at most ${L.freshPerDay} a day)` },
+  ]
+  const DETECT = [
+    { w: detectMin, msg: 'too many Lens requests — slow down' },
+    { w: detectHour, msg: 'too many chain lookups from this address this hour' },
+    { w: detectDay, msg: 'too many chain lookups from this address today' },
+  ]
+  const refundFresh = (ip: string) => FRESH.forEach((x) => x.w.refund(ip))
 
   const mem = new Map<string, { at: number; json: string; report: LensReport }>()
   const inflight = new Map<string, Promise<LensReport>>()
@@ -285,7 +389,8 @@ export function createLens(d: LensDeps): Lens {
   }
 
   function cachePut(k: string, report: LensReport) {
-    const at = now()
+    // a report whose registry could not be asked lives one minute (it ages out of the 15-minute TTL)
+    const at = report.summary.verified === 'unknown' ? now() - L.cacheTtlMs + L.unknownTtlMs : now()
     memPut(k, { at, json: '', report })
     try {
       writeAtomic(cacheFile(k), JSON.stringify({ at, report }))
@@ -346,13 +451,21 @@ export function createLens(d: LensDeps): Lens {
     const keyOf = (chain: ChainId): BudgetKey => (chain === 'solana' ? 'solana' : (chain as EvmChain))
     return {
       call(chain, method, params, o) {
+        if (cnt.dead) return Promise.reject(new LensError(504, 'the read took too long'))
+        // the shared budget first: a call the shared layer would refuse is not charged to the slice
+        if (!d.rpc.canSpend(chain, 1, false)) return Promise.reject(new BudgetError(keyOf(chain)))
         slice.charge(keyOf(chain))
         cnt.rpc++
         return d.rpc.call(chain, method, params, { ...o, discovery: false })
       },
       async fetchJson(url, o) {
+        if (cnt.dead) throw new LensError(504, 'the read took too long')
         const host = o?.host ?? (/^https?:\/\/([^/]+\.)?sourcify\.dev\b/i.test(url) ? 'sourcify' : /^https?:\/\/([^/]+\.)?osec\.io\b/i.test(url) ? 'osec' : null)
-        if (host) slice.charge(host)
+        if (host) {
+          const u = d.rpc.usage()[host]
+          if (u && u.used >= u.limit) throw new BudgetError(host)
+          slice.charge(host)
+        }
         cnt.http++
         const j = await d.rpc.fetchJson(url, o)
         onJson?.(url, j)
@@ -373,7 +486,20 @@ export function createLens(d: LensDeps): Lens {
     return ev ? { verdict: ev.verdict, reason: ev.reason, at: ev.ts, via: ev.via } : null
   }
 
-  async function judge(input: Omit<KeepInput, 'agent' | 'via'>): Promise<LensDataset> {
+  /** Why Lens may not hand one more item to the chain store now, or null. */
+  function keepRefusal(bytes: number): string | null {
+    const full = d.store.full()
+    if (full) return `the chain store is full (${full})`
+    const sum = d.store.summary?.()
+    if (sum && sum.capBytes > 0 && sum.bytes >= sum.capBytes * L.keepMaxFill)
+      return `the chain store is ${Math.round((sum.bytes / sum.capBytes) * 100)} % full; the rest is kept for the chain agents`
+    const k = keeps.get()
+    if (k.items >= L.keepPerDay) return `Lens has added its ${L.keepPerDay} items for today (UTC)`
+    if (k.bytes + bytes > L.keepBytesPerDay) return `Lens has added its ${Math.round(L.keepBytesPerDay / 1048576)} MB of source for today (UTC)`
+    return null
+  }
+
+  async function judge(input: Omit<KeepInput, 'agent' | 'via'>, cnt: Counter): Promise<LensDataset> {
     const r = input.read
     const prior = before(r.chain, r.address)
     const ev = d.store.evaluate(input)
@@ -381,16 +507,18 @@ export function createLens(d: LensDeps): Lens {
     let reason = ev.reason
     let added = false
     if (ev.verdict === 'kept') {
-      const full = d.store.full()
-      if (full) {
+      const bytes = (input.sources ?? []).reduce((s, f) => s + f.text.length, 0)
+      const no = cnt.dead ? 'the read ran past its deadline' : keepRefusal(bytes)
+      if (no) {
         verdict = 'error'
-        reason = `would be kept, but the chain store is full (${full}): not stored`
+        reason = `passes the SEPIA-1 rules but was not stored: ${no}. The chain agents may still keep it.`
       } else {
         const res = await d.store.process({ ...input, agent: 'lens', via: 'lens' })
         verdict = res.verdict
         reason = res.reason
         added = res.verdict === 'kept'
         if (added) {
+          keeps.add(1, res.item?.sourceBytes ?? bytes)
           const ts = now()
           d.record({
             id: `${ts.toString(36)}-lens`,
@@ -398,7 +526,7 @@ export function createLens(d: LensDeps): Lens {
             agent: 'lens',
             chain: r.chain,
             address: r.address,
-            name: r.name,
+            name: safeName(r.name),
             kind: r.kind,
             via: 'lens',
             verdict: 'kept',
@@ -416,9 +544,8 @@ export function createLens(d: LensDeps): Lens {
 
   // ─── reads ────────────────────────────────────────────────────────────────
 
-  async function readSol(address: string): Promise<LensReport> {
+  async function readSol(address: string, cnt: Counter): Promise<LensReport> {
     const t0 = now()
-    const cnt: Counter = { rpc: 0, http: 0 }
     let osec: OsecStatus | null = null
     let elf: ElfScan | null = null
     const ctx = ctxFor(cnt, (url, j) => {
@@ -429,7 +556,7 @@ export function createLens(d: LensDeps): Lens {
     const notes: string[] = []
     if (r.kind === 'token-mint') notes.push('a token mint is not a program: Lens reads programs and contracts')
     const pda = r.loader === LOADER_LABEL[UPGRADEABLE_LOADER] ? programAddresses(address).programData : null
-    const dataset = await judge({ read: r, idlJson: res.idlJson })
+    const dataset = await judge({ read: r, idlJson: res.idlJson }, cnt)
     return buildSolanaReport(
       { read: r, idlJson: res.idlJson, elf, osec, programDataAddress: pda },
       { ms: now() - t0, rpcCalls: cnt.rpc, registryCalls: cnt.http, provenance: d.provenance, dataset, notes },
@@ -450,9 +577,8 @@ export function createLens(d: LensDeps): Lens {
     return { read: raw.read, abiJson: raw.abiJson, sources: raw.sources, profile: raw.profile, deployBlock: block, raw }
   }
 
-  async function readEvmReport(chain: EvmChain, address: string): Promise<LensReport> {
+  async function readEvmReport(chain: EvmChain, address: string, cnt: Counter): Promise<LensReport> {
     const t0 = now()
-    const cnt: Counter = { rpc: 0, http: 0 }
     const self = await readOneEvm(chain, address, cnt)
     let impl: (EvmPart & { raw: EvmReadResult }) | null = null
     const notes: string[] = []
@@ -472,7 +598,7 @@ export function createLens(d: LensDeps): Lens {
       sources: code.raw.sources,
       sourceBundleHash: code.raw.sourceBundleHash,
       boilerplate: code.raw.profile?.boilerplate ?? null,
-    })
+    }, cnt)
     return buildEvmReport(chain, self, impl, { ms: now() - t0, rpcCalls: cnt.rpc, registryCalls: cnt.http, provenance: d.provenance, dataset, notes })
   }
 
@@ -491,8 +617,13 @@ export function createLens(d: LensDeps): Lens {
   function remember(rep: LensReport) {
     reads++
     if (rep.kind === 'program' || rep.kind === 'contract') {
+      // the public strip names only verified code that the SEPIA-1 rules kept (or already hold), and
+      // only a plain name: anything else shows its address (a chosen name is not a public billboard)
+      const v = rep.summary.verified
+      const okVerdict = rep.dataset.verdict === 'kept' || rep.dataset.verdict === 'duplicate' || rep.dataset.before?.verdict === 'kept'
+      const name = v && v !== 'unknown' && okVerdict ? safeName(rep.name) : null
       recent = [
-        { chain: rep.chain, address: rep.address, name: rep.name, kind: rep.kind, verified: rep.summary.verified, at: rep.readAt || now() },
+        { chain: rep.chain, address: rep.address, name, kind: rep.kind, verified: v, at: rep.readAt || now() },
         ...recent.filter((r) => !(r.chain === rep.chain && r.address === rep.address)),
       ].slice(0, L.recent)
     }
@@ -520,38 +651,37 @@ export function createLens(d: LensDeps): Lens {
       const report = await running
       return { report, cached: true, fresh: now() + L.cacheTtlMs }
     }
-    const w1 = freshMin.take(ip)
-    if (w1 > 0) throw new LensError(429, 'too many Lens reads from this address — at most 5 a minute', Math.ceil(w1 / 1000))
-    const w2 = freshHour.take(ip)
-    if (w2 > 0) {
-      freshMin.refund(ip)
-      throw new LensError(429, 'too many Lens reads from this address this hour', Math.ceil(w2 / 1000))
-    }
+    takeAll(ip, FRESH)
+    // every slice a read needs, before any call: a read that cannot finish is not started
     const budgetKey: BudgetKey = chain === 'solana' ? 'solana' : chain
-    if (!slice.can(budgetKey, chain === 'solana' ? 1 : 3) || !d.rpc.canSpend(chain, chain === 'solana' ? 1 : 3)) {
-      freshMin.refund(ip)
-      freshHour.refund(ip)
-      throw errorOf(new BudgetError(budgetKey))
+    const need = chain === 'solana' ? 1 : 3
+    const registry: BudgetKey = chain === 'solana' ? 'osec' : 'sourcify'
+    const ru = d.rpc.usage()[registry]
+    if (!slice.can(budgetKey, need) || !d.rpc.canSpend(chain, need) || !slice.can(registry, 1) || (ru && ru.used >= ru.limit)) {
+      refundFresh(ip)
+      throw errorOf(new BudgetError(slice.can(budgetKey, need) && d.rpc.canSpend(chain, need) ? registry : budgetKey))
     }
+    const cnt: Counter = { rpc: 0, http: 0, dead: false }
     const p = (async () => {
       await acquire()
+      // the slot is held until the read itself settles, also after a timeout answered the caller
+      const work = chain === 'solana' ? readSol(address, cnt) : readEvmReport(chain as EvmChain, address, cnt)
+      void work.then(release, release)
+      let timer: NodeJS.Timeout | undefined
       try {
-        let timer: NodeJS.Timeout | undefined
-        const work = chain === 'solana' ? readSol(address) : readEvmReport(chain as EvmChain, address)
-        try {
-          return await Promise.race([
-            work,
-            new Promise<never>((_, reject) => {
-              timer = setTimeout(() => reject(new LensError(504, 'the read took too long — retry in a minute')), L.readTimeoutMs)
-              timer.unref?.()
-            }),
-          ])
-        } finally {
-          if (timer) clearTimeout(timer)
-          work.catch(() => {})
-        }
+        return await Promise.race([
+          work,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+              cnt.dead = true // no further calls, nothing handed to the store
+              reject(new LensError(504, 'the read took too long — retry in a minute'))
+            }, L.readTimeoutMs)
+            timer.unref?.()
+          }),
+        ])
       } finally {
-        release()
+        if (timer) clearTimeout(timer)
+        work.catch(() => {})
       }
     })()
     inflight.set(k, p)
@@ -564,10 +694,7 @@ export function createLens(d: LensDeps): Lens {
       slice.flush()
       const le = errorOf(e)
       // busy / an endpoint down / budget: the caller got no read, so it costs no read
-      if (le.status === 503) {
-        freshMin.refund(ip)
-        freshHour.refund(ip)
-      }
+      if (le.status === 503) refundFresh(ip)
       throw le
     } finally {
       inflight.delete(k)
@@ -580,13 +707,15 @@ export function createLens(d: LensDeps): Lens {
     if (!EVM_RE.test(a)) throw new LensError(400, 'not a Solana or EVM address')
     const addr = a.toLowerCase()
     const c = detectCache.get(addr)
-    if (c && now() - c.at < L.cacheTtlMs) return c.v
-    const w = detectMin.take(ip)
-    if (w > 0) throw new LensError(429, 'too many Lens requests — slow down', Math.ceil(w / 1000))
-    const cnt: Counter = { rpc: 0, http: 0 }
+    // chains that answered are remembered (code or no code); only the ones that did not are asked again
+    const known = c && now() - c.at < L.detectTtlMs ? c.v.chains.filter((x) => x.code !== null) : []
+    const ask = EVM.filter((ch) => !known.some((x) => x.chain === ch))
+    if (!ask.length) return { address: addr, chains: EVM.map((ch) => known.find((x) => x.chain === ch)!) }
+    takeAll(ip, DETECT)
+    const cnt: Counter = { rpc: 0, http: 0, dead: false }
     const ctx = ctxFor(cnt)
-    const chains = await Promise.all(
-      EVM.map(async (chain) => {
+    const asked = await Promise.all(
+      ask.map(async (chain) => {
         try {
           const code = hexToBytes(await ctx.call(chain, 'eth_getCode', [addr, 'latest'], { timeoutMs: 6000, maxBytes: 256 * 1024 }))
           return { chain, code: code ? code.length > 0 : null, bytes: code ? code.length : null }
@@ -596,15 +725,17 @@ export function createLens(d: LensDeps): Lens {
       }),
     )
     slice.flush()
+    const chains = EVM.map((ch) => known.find((x) => x.chain === ch) ?? asked.find((x) => x.chain === ch)!)
     const v: LensDetect = { address: addr, chains }
-    if (chains.every((x) => x.code !== null)) {
-      detectCache.set(addr, { at: now(), v })
-      if (detectCache.size > 2000) detectCache.delete(detectCache.keys().next().value!)
+    if (chains.some((x) => x.code !== null)) {
+      detectCache.delete(addr)
+      detectCache.set(addr, { at: c && known.length ? c.at : now(), v })
+      if (detectCache.size > 5000) detectCache.delete(detectCache.keys().next().value!)
     }
     return v
   }
 
-  const status = (): LensStatus => ({ budget: slice.usage(), inFlight: active, cached: mem.size, index: d.provenance.stats() })
+  const status = (): LensStatus => ({ budget: slice.usage(), keeps: { items: keeps.get().items, limit: L.keepPerDay }, inFlight: active, cached: mem.size, index: d.provenance.stats() })
 
   function ok(v: unknown, headers?: Record<string, string>): LensRouteResult {
     return { status: 200, json: JSON.stringify(v), headers }

@@ -91,6 +91,8 @@ export interface LensContract {
   events: string[]
   privileged: LensPrivileged[]
   primitives: LensPrimitive[]
+  /** null when the source analysis (privileged, primitives) completed; else why not (both lists are then empty and not shown). */
+  analysis?: string | null
   /** custom / library / interface lines and the boilerplate verdict of the source profile */
   profile: { customLines: number; libraryLines: number; interfaceLines: number; boilerplate: string | null } | null
 }
@@ -104,6 +106,8 @@ export interface LensEvm {
     label: string
     implementation: string
     admin: string | null
+    /** EIP-1967 beacon proxies: the beacon contract the implementation was read from. */
+    beacon?: string | null
   } | null
   /** The proxy itself (or the contract when it is not a proxy). */
   self: LensContract
@@ -145,7 +149,8 @@ export interface LensDataset {
 }
 
 export interface LensSummary {
-  verified: 'osec' | 'sourcify-full' | 'sourcify-partial' | null
+  /** null: no verified build / source. 'unknown': the registry could not be asked (an endpoint or its budget), not a fact about the code. */
+  verified: 'osec' | 'sourcify-full' | 'sourcify-partial' | 'unknown' | null
   upgradeable: boolean | null
   /** Who can change the code: upgrade authority (Solana) or proxy admin (EVM), when read. */
   authority: string | null
@@ -153,8 +158,11 @@ export interface LensSummary {
   /** Instructions (Solana IDL) or ABI functions (EVM, the implementation's when proxied). */
   surface: number | null
   privileged: number | null
-  primitives: number
+  /** null when the source analysis did not complete */
+  primitives: number | null
+  /** files matched in the code index: all (≡ and ≈) and byte-identical only */
   provenance: number
+  provenanceExact?: number
 }
 
 export interface LensReport {
@@ -203,6 +211,8 @@ export interface LensDetect {
 
 export interface LensStatus {
   budget: Record<string, { used: number; limit: number }>
+  /** New SEPIA-1 items Lens handed to the chain store today (UTC) and the daily cap. */
+  keeps?: { items: number; limit: number }
   inFlight: number
   cached: number
   index: LensProvenance['index']

@@ -11,6 +11,12 @@
 //
 // Line numbers are those of the verified file: comments are blanked with their newlines kept and
 // string literals emptied before matching (server/chain/evm-source.ts stripSolidity 'lines').
+//
+// Cost on hostile input (anyone can verify a contract): every run of whitespace is compacted to one
+// character before any pattern runs (a map keeps the original line numbers), no pattern has two
+// unbounded quantifiers that can match the same characters, and the whole analysis of one contract
+// spends from a fixed work budget (characters scanned). When the budget runs out the analysis stops
+// and the report says "not completed": no partial or guessed list is shown.
 
 import type { LensPrimitive, LensPrivileged, PrimitiveGroup } from '../../shared/lens.ts'
 import { langOfPath, stripSolidity } from '../chain/evm-source.ts'
@@ -18,6 +24,83 @@ import { langOfPath, stripSolidity } from '../chain/evm-source.ts'
 export interface SourceFile {
   path: string
   text: string
+}
+
+/** The source analysis of one contract ran out of its work budget. */
+export class AnalysisLimit extends Error {
+  readonly why: string
+  constructor(why: string) {
+    super(why)
+    this.why = why
+    this.name = 'AnalysisLimit'
+  }
+}
+
+/**
+ * Characters (scanned or matched over) one contract's analysis may spend. Real bundles cost ~11–17 units
+ * per source byte (measured over every Solidity repository of the code index), so a 6 MB bundle (the
+ * readers' cap) needs ~100 M: the limit leaves 4× headroom and stops hostile nesting in ~0.3 s.
+ */
+export const ANALYSIS_BUDGET = 400_000_000
+/** Wall-clock backstop for the same analysis (the budget above is the deterministic limit). */
+export const ANALYSIS_MAX_MS = 8_000
+
+export class Work {
+  private used = 0
+  private readonly t0 = Date.now()
+  readonly limit: number
+  readonly maxMs: number
+  constructor(limit = ANALYSIS_BUDGET, maxMs = ANALYSIS_MAX_MS) {
+    this.limit = limit
+    this.maxMs = maxMs
+  }
+  spend(n: number) {
+    this.used += n
+    if (this.used > this.limit) throw new AnalysisLimit('source too large to analyse within the fixed work budget')
+    if ((this.used & 0xfff) < n && Date.now() - this.t0 > this.maxMs) throw new AnalysisLimit('source analysis took too long')
+  }
+  get spent() {
+    return this.used
+  }
+}
+
+const isWs = (c: number) => c === 32 || c === 9 || c === 10 || c === 13 || c === 11 || c === 12
+
+/**
+ * `s` with every whitespace run collapsed to one character ('\n' when the run held a newline, else
+ * ' '), and `map[i]` = index in `s` of compacted character i (map[length] = s.length).
+ */
+export function compactWs(s: string): { text: string; map: Int32Array } {
+  const map = new Int32Array(s.length + 1)
+  const parts: string[] = []
+  let n = 0
+  let run = 0
+  let i = 0
+  while (i < s.length) {
+    if (!isWs(s.charCodeAt(i))) {
+      i++
+      continue
+    }
+    if (i > run) {
+      parts.push(s.slice(run, i))
+      for (let k = run; k < i; k++) map[n++] = k
+    }
+    const st = i
+    let nl = false
+    while (i < s.length && isWs(s.charCodeAt(i))) {
+      if (s.charCodeAt(i) === 10) nl = true
+      i++
+    }
+    parts.push(nl ? '\n' : ' ')
+    map[n++] = nl ? s.indexOf('\n', st) : st
+    run = i
+  }
+  if (s.length > run) {
+    parts.push(s.slice(run))
+    for (let k = run; k < s.length; k++) map[n++] = k
+  }
+  map[n] = s.length
+  return { text: parts.join(''), map: map.subarray(0, n + 1) }
 }
 
 // ─── ABI ─────────────────────────────────────────────────────────────────────
@@ -90,51 +173,60 @@ function lineStarts(s: string): number[] {
 }
 
 /** Index after the block that opens at `open` ('{'), or -1. */
-function blockEnd(s: string, open: number): number {
+function blockEnd(s: string, open: number, w: Work): number {
   let depth = 0
   for (let i = open; i < s.length; i++) {
     const c = s.charCodeAt(i)
     if (c === 123) depth++
     else if (c === 125) {
       depth--
-      if (depth === 0) return i + 1
+      if (depth === 0) {
+        w.spend(i + 1 - open)
+        return i + 1
+      }
     }
   }
+  w.spend(s.length - open)
   return -1
 }
 
 /** Index after the parenthesized group that opens at `open` ('('), or -1. */
-function parenEnd(s: string, open: number): number {
+function parenEnd(s: string, open: number, w?: Work): number {
   let depth = 0
   for (let i = open; i < s.length; i++) {
     const c = s.charCodeAt(i)
     if (c === 40) depth++
     else if (c === 41) {
       depth--
-      if (depth === 0) return i + 1
+      if (depth === 0) {
+        w?.spend(i + 1 - open)
+        return i + 1
+      }
     }
   }
+  w?.spend(s.length - open)
   return -1
 }
 
-const SENDER = String.raw`(?:msg\.sender|_msgSender\(\s*\))`
-// bounded repetitions: the pattern is tried at every position of a body, so nothing in it may scan far
-const OPERAND = String.raw`(?:address|payable)?\s*\(?\s*[A-Za-z_$][\w$]{0,63}(?:\s*\.\s*[A-Za-z_$][\w$]{0,63}){0,6}(?:\s*\([^()]{0,120}\))?\s*\)?`
+// Every pattern below runs on whitespace-compacted text (compactWs), so `\s?` stands for any run of
+// whitespace, and every other repetition is bounded: nothing can backtrack over a long run.
+const SENDER = String.raw`(?:msg\.sender|_msgSender\(\s?\))`
+const OPERAND = String.raw`(?:address|payable)?\s?\(?\s?[A-Za-z_$][\w$]{0,63}(?:\s?\.\s?[A-Za-z_$][\w$]{0,63}){0,6}(?:\s?\([^()]{0,120}\))?\s?\)?`
 /**
  * Caller checks in a body. Comparisons keep their other operand (group `rhs` / `lhs`): a comparison
  * with a parameter or local of the function itself (`msg.sender != from`) is a user's own permission,
- * not a privileged role, and is skipped by authAt().
+ * not a privileged role, and is skipped by authAt(). The `lhs` form only starts at a token boundary.
  */
 const AUTH_RE = new RegExp(
   [
-    String.raw`${SENDER}\s*[!=]=\s*(?<rhs>${OPERAND})`,
-    String.raw`(?<lhs>${OPERAND})\s*[!=]=\s*${SENDER}`,
-    String.raw`\b(?:require|assert|if)\s*\(\s*!?\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\[\s*${SENDER}\s*\]\s*(?:==|!=|\)|,|&&|\|\|)`,
-    String.raw`\b_?check(?:Owner|Role|Admin|Auth|Authorized|Caller|Sender|Governance|Guardian|Operator)\w*\s*\(`,
-    String.raw`\b_?(?:onlyOwner|onlyAdmin|requireOwner|requireAdmin|authorize|auth)\s*\(`,
-    String.raw`\bhasRole\s*\([^;]{0,240}${SENDER}`,
-    String.raw`\bisAuthorized\s*\(\s*${SENDER}`,
-    String.raw`\bcanCall\s*\(\s*${SENDER}`,
+    String.raw`${SENDER}\s?[!=]=\s?(?<rhs>${OPERAND})`,
+    String.raw`(?<![\w$.])(?<lhs>${OPERAND})\s?[!=]=\s?${SENDER}`,
+    String.raw`\b(?:require|assert|if)\s?\(\s?!?\s?[A-Za-z_$][\w$]{0,63}(?:\.[A-Za-z_$][\w$]{0,63}){0,6}\s?\[\s?${SENDER}\s?\]\s?(?:==|!=|\)|,|&&|\|\|)`,
+    String.raw`\b_?check(?:Owner|Role|Admin|Auth|Authorized|Caller|Sender|Governance|Guardian|Operator)\w{0,40}\s?\(`,
+    String.raw`\b_?(?:onlyOwner|onlyAdmin|requireOwner|requireAdmin|authorize|auth)\s?\(`,
+    String.raw`\bhasRole\s?\([^;]{0,240}?${SENDER}`,
+    String.raw`\bisAuthorized\s?\(\s?${SENDER}`,
+    String.raw`\bcanCall\s?\(\s?${SENDER}`,
   ].join('|'),
   'g',
 )
@@ -152,18 +244,21 @@ function paramNames(list: string): Set<string> {
     if (c === '(') depth++
     else if (c === ')') depth--
     if (c === ',' && depth === 0) {
-      const m = /([A-Za-z_$][\w$]*)\s*$/.exec(cur.trim())
-      if (m && cur.trim().split(/\s+/).length > 1) out.add(m[1])
+      // the trailing identifier of a declaration with at least two tokens (no regex: linear on any input)
+      const t = cur.trim()
+      let k = t.length
+      while (k > 0 && /[\w$]/.test(t[k - 1])) k--
+      if (k < t.length && /[A-Za-z_$]/.test(t[k]) && /\s/.test(t)) out.add(t.slice(k))
       cur = ''
     } else cur += c
   }
   return out
 }
 
-/** Locals declared in a body ('address owner_ = …', '(uint a, address b) = …'). */
+/** Locals declared in a body ('address owner_ = …', '(uint a, address b) = …'). Body is whitespace-compacted. */
 function localNames(body: string): Set<string> {
   const out = new Set<string>()
-  const re = /\b(?:address|bool|bytes\d*|u?int\d*|string|[A-Z][\w$]*)(?:\s*\[\s*\d*\s*\])?\s+(?:memory\s+|storage\s+|calldata\s+|payable\s+)?([a-z_$][\w$]*)\s*[=;,)]/g
+  const re = /\b(?:address|bool|bytes\d{0,2}|u?int\d{0,3}|string|[A-Z][\w$]{0,63})(?:\s?\[\s?\d{0,10}\s?\])?\s(?:memory\s|storage\s|calldata\s|payable\s)?([a-z_$][\w$]{0,63})\s?[=;,)]/g
   for (let m = re.exec(body); m; m = re.exec(body)) out.add(m[1])
   return out
 }
@@ -180,7 +275,8 @@ const operandBase = (op: string): string => {
 }
 
 /** First caller check in a body that is not against the function's own parameters / locals, or null. */
-function authAt(body: string, own: Set<string>): number | null {
+function authAt(body: string, own: Set<string>, w: Work): number | null {
+  w.spend(body.length * 4)
   AUTH_RE.lastIndex = 0
   for (let m = AUTH_RE.exec(body); m; m = AUTH_RE.exec(body)) {
     const op = m.groups?.rhs ?? m.groups?.lhs
@@ -207,27 +303,38 @@ interface FnDef {
 
 interface FileScan {
   path: string
+  /** comment-free, whitespace-compacted text */
   code: string
-  starts: number[]
+  /** line (1-based, in the verified file) of an index in `code` */
+  lineOf: (i: number) => number
   fns: FnDef[]
   modifiers: { name: string; body: string; params: Set<string> }[]
 }
 
-const FN_RE = /\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/g
-const MOD_RE = /\bmodifier\s+([A-Za-z_$][\w$]*)\s*(\(|\{)/g
+const FN_RE = /\bfunction\s([A-Za-z_$][\w$]{0,127})\s?\(/g
+const MOD_RE = /\bmodifier\s([A-Za-z_$][\w$]{0,127})\s?(\(|\{)/g
 
-function scanSolidity(f: SourceFile): FileScan {
-  const code = stripSolidity(f.text, 'lines')
-  const starts = lineStarts(code)
+/** Comment-free text of a Solidity / Yul file, whitespace-compacted, with its line map. */
+function prepSolidity(text: string, w: Work): { code: string; lineOf: (i: number) => number } {
+  w.spend(text.length * 3)
+  const orig = stripSolidity(text, 'lines')
+  const starts = lineStarts(orig)
+  const { text: code, map } = compactWs(orig)
+  return { code, lineOf: (i: number) => lineAt(starts, map[Math.max(0, Math.min(i, map.length - 1))]) }
+}
+
+function scanSolidity(f: SourceFile, w: Work): FileScan {
+  const { code, lineOf } = prepSolidity(f.text, w)
   const lib = LIB_PATH.test(f.path)
   const fns: FnDef[] = []
   const modifiers: FileScan['modifiers'] = []
   MOD_RE.lastIndex = 0
+  w.spend(code.length * 2)
   for (let m = MOD_RE.exec(code); m; m = MOD_RE.exec(code)) {
     let i = m.index + m[0].length - 1
     let params = new Set<string>()
     if (code[i] === '(') {
-      const pe = parenEnd(code, i)
+      const pe = parenEnd(code, i, w)
       if (pe < 0) continue
       params = paramNames(code.slice(i + 1, pe - 1))
       i = pe
@@ -235,9 +342,10 @@ function scanSolidity(f: SourceFile): FileScan {
     const open = code.indexOf('{', i)
     const semi = code.indexOf(';', i)
     if (open < 0 || (semi >= 0 && semi < open)) continue
-    const end = blockEnd(code, open)
+    const end = blockEnd(code, open, w)
     if (end < 0) continue
     const body = code.slice(open, end)
+    w.spend(body.length * 2)
     for (const l of localNames(body)) params.add(l)
     modifiers.push({ name: m[1], body, params })
     MOD_RE.lastIndex = end
@@ -245,7 +353,7 @@ function scanSolidity(f: SourceFile): FileScan {
   FN_RE.lastIndex = 0
   for (let m = FN_RE.exec(code); m; m = FN_RE.exec(code)) {
     const po = m.index + m[0].length - 1
-    const pe = parenEnd(code, po)
+    const pe = parenEnd(code, po, w)
     if (pe < 0) continue
     // header ends at the body '{' or a ';' (no body), whichever comes first outside parentheses
     let i = pe
@@ -260,27 +368,29 @@ function scanSolidity(f: SourceFile): FileScan {
         break
       } else if (depth === 0 && c === 59) break
     }
+    w.spend(i - pe + 1)
     if (open < 0) {
       FN_RE.lastIndex = i + 1
       continue
     }
-    const end = blockEnd(code, open)
+    const end = blockEnd(code, open, w)
     if (end < 0) continue
     const header = code.slice(pe, open)
     const body = code.slice(open, end)
     const params = paramNames(code.slice(po + 1, pe - 1))
     // named return values are locals too
-    const ret = /\breturns\s*\(/.exec(header)
+    const ret = /\breturns\s?\(/.exec(header)
     if (ret) {
       const rs = header.indexOf('(', ret.index)
-      const re = parenEnd(header, rs)
+      const re = parenEnd(header, rs, w)
       if (re > rs) for (const n of paramNames(header.slice(rs + 1, re - 1))) params.add(n)
     }
+    w.spend(body.length * 2 + header.length)
     for (const l of localNames(body)) params.add(l)
     fns.push({
       name: m[1],
       file: f.path,
-      line: lineAt(starts, m.index),
+      line: lineOf(m.index),
       header,
       params,
       body,
@@ -290,11 +400,12 @@ function scanSolidity(f: SourceFile): FileScan {
     })
     FN_RE.lastIndex = open + 1
   }
-  return { path: f.path, code, starts, fns, modifiers }
+  return { path: f.path, code, lineOf, fns, modifiers }
 }
 
 /** Vyper: `def name(` blocks with their decorators; the body is the indented lines that follow. */
-function scanVyper(f: SourceFile): FnDef[] {
+function scanVyper(f: SourceFile, w: Work): FnDef[] {
+  w.spend(f.text.length * 3)
   const lines = f.text.replace(/\r\n?/g, '\n').split('\n')
   const out: FnDef[] = []
   for (let i = 0; i < lines.length; i++) {
@@ -352,7 +463,7 @@ const callRe = (name: string) => new RegExp(String.raw`(?<![\w$.])${name.replace
  * ABI functions guarded in the verified source. `abiFns` are canonical signatures; a definition
  * matches by name (and by parameter count when the name is overloaded).
  */
-export function findPrivileged(files: SourceFile[], abiFns: string[]): LensPrivileged[] {
+export function findPrivileged(files: SourceFile[], abiFns: string[], w: Work = new Work()): LensPrivileged[] {
   const byName = new Map<string, string[]>()
   for (const s of abiFns) {
     const n = s.slice(0, s.indexOf('('))
@@ -361,19 +472,20 @@ export function findPrivileged(files: SourceFile[], abiFns: string[]): LensPrivi
     byName.set(n, l)
   }
   if (!byName.size) return []
-  const sol = files.filter((f) => ['solidity', 'yul'].includes(langOfPath(f.path))).map(scanSolidity)
-  const vy = files.filter((f) => langOfPath(f.path) === 'vyper').flatMap(scanVyper)
+  const sol = files.filter((f) => ['solidity', 'yul'].includes(langOfPath(f.path))).map((f) => scanSolidity(f, w))
+  const vy = files.filter((f) => langOfPath(f.path) === 'vyper').flatMap((f) => scanVyper(f, w))
 
   // internal helpers named as caller checks that check the caller (one level)
   const authHelpers = new Set<string>()
-  for (const s of sol) for (const f of s.fns) if (!f.visible && HELPER_NAME.test(f.name) && authAt(f.body, f.params) !== null) authHelpers.add(f.name)
+  for (const s of sol) for (const f of s.fns) if (!f.visible && HELPER_NAME.test(f.name) && authAt(f.body, f.params, w) !== null) authHelpers.add(f.name)
   // modifiers that check the caller, directly or through such a helper
   const authMods = new Set<string>()
   const defined = new Set<string>()
   for (const s of sol)
     for (const m of s.modifiers) {
       defined.add(m.name)
-      if (authAt(m.body, m.params) !== null || [...authHelpers].some((h) => callRe(h).test(m.body))) authMods.add(m.name)
+      w.spend(m.body.length * (authHelpers.size + 1))
+      if (authAt(m.body, m.params, w) !== null || [...authHelpers].some((h) => callRe(h).test(m.body))) authMods.add(m.name)
     }
 
   const found: (LensPrivileged & { lib: boolean })[] = []
@@ -389,18 +501,19 @@ export function findPrivileged(files: SourceFile[], abiFns: string[]): LensPrivi
       if (!sigs) continue
       const defStart = s.code.lastIndexOf('function', f.bodyStart)
       const po = s.code.indexOf('(', defStart)
-      const pe = parenEnd(s.code, po)
+      const pe = parenEnd(s.code, po, w)
       const inner = po >= 0 && pe > po ? s.code.slice(po + 1, pe - 1).trim() : ''
       const params = inner ? paramCount(`f(${inner})`) : 0
       // modifiers in the header
       let guarded = false
-      const MODCALL = /\b([A-Za-z_$][\w$]*)\s*(\([^)]*\))?/g
+      const MODCALL = /\b([A-Za-z_$][\w$]{0,127})\s?(\([^)]{0,200}\))?/g
+      w.spend(f.header.length * 2)
       for (let m = MODCALL.exec(f.header); m; m = MODCALL.exec(f.header)) {
         const nm = m[1]
         if (/^(public|external|internal|private|view|pure|payable|virtual|override|returns|memory|calldata|storage|constant)$/.test(nm)) {
           if (nm === 'returns' || nm === 'override') {
             const after = f.header.indexOf('(', m.index)
-            if (after >= 0 && after - m.index - nm.length < 3) MODCALL.lastIndex = Math.max(MODCALL.lastIndex, parenEnd(f.header, after))
+            if (after >= 0 && after - m.index - nm.length < 3) MODCALL.lastIndex = Math.max(MODCALL.lastIndex, parenEnd(f.header, after, w))
           }
           continue
         }
@@ -411,15 +524,16 @@ export function findPrivileged(files: SourceFile[], abiFns: string[]): LensPrivi
         }
       }
       if (guarded) continue
-      const at = authAt(f.body, f.params)
+      const at = authAt(f.body, f.params, w)
       if (at !== null) {
-        take(f, snippet(f.body, at), lineAt(s.starts, f.bodyStart + at), sigs, params)
+        take(f, snippet(f.body, at), s.lineOf(f.bodyStart + at), sigs, params)
         continue
       }
+      w.spend(f.body.length * authHelpers.size)
       for (const h of authHelpers) {
         const hm = callRe(h).exec(f.body)
         if (hm) {
-          take(f, `${h}(…)`, lineAt(s.starts, f.bodyStart + hm.index), sigs, params)
+          take(f, `${h}(…)`, s.lineOf(f.bodyStart + hm.index), sigs, params)
           break
         }
       }
@@ -451,57 +565,116 @@ export function findPrivileged(files: SourceFile[], abiFns: string[]): LensPrivi
 interface PrimRule {
   name: string
   group: PrimitiveGroup
-  re: RegExp
+  /** a use in the source (literal prefix, bounded: linear on any input) */
+  re?: RegExp
+  /** or a call to this precompile address: staticcall / call with it as the address argument */
+  precompile?: number
   langs: ('solidity' | 'vyper')[]
 }
 
-const PRECOMPILE = (hex: string) => String.raw`(?:0x0*${hex}|${parseInt(hex, 16)})`
-const STATICCALL_TO = (hex: string) =>
-  new RegExp(String.raw`\b(?:staticcall|call)\s*\(\s*[^,()]*(?:\([^()]*\))?[^,()]*,\s*${PRECOMPILE(hex)}\s*,|\baddress\s*\(\s*${PRECOMPILE(hex)}\s*\)\s*\.\s*staticcall`, 'g')
-
 export const PRIM_RULES: PrimRule[] = [
-  { name: 'Keccak-256 (keccak256)', group: 'hash', re: /\bkeccak256\s*\(/g, langs: ['solidity', 'vyper'] },
-  { name: 'SHA-256 (sha256, precompile 0x02)', group: 'hash', re: /\bsha256\s*\(/g, langs: ['solidity', 'vyper'] },
-  { name: 'RIPEMD-160 (ripemd160, precompile 0x03)', group: 'hash', re: /\bripemd160\s*\(/g, langs: ['solidity'] },
-  { name: 'ecrecover (secp256k1, precompile 0x01)', group: 'signature', re: /\becrecover\s*\(/g, langs: ['solidity', 'vyper'] },
-  { name: 'ECDSA signature recovery (ECDSA.recover)', group: 'signature', re: /\bECDSA\s*\.\s*(?:try)?[Rr]ecover\w*\s*\(/g, langs: ['solidity'] },
-  { name: 'EIP-1271 contract signatures (isValidSignature)', group: 'signature', re: /\bisValidSignature(?:Now)?\s*\(/g, langs: ['solidity'] },
-  { name: 'EIP-712 typed-data hashing', group: 'signature', re: /\b_hashTypedDataV4\s*\(|\btoTypedDataHash\s*\(|\bhashTypedData\s*\(/g, langs: ['solidity'] },
-  { name: 'Merkle proof verification', group: 'hash', re: /\bMerkleProof(?:Lib)?\s*\.\s*(?:verify|verifyCalldata|multiProofVerify|processProof)\w*\s*\(/g, langs: ['solidity'] },
-  { name: 'modexp (precompile 0x05)', group: 'zk', re: STATICCALL_TO('05'), langs: ['solidity'] },
-  { name: 'BN254 point addition (precompile 0x06)', group: 'zk', re: STATICCALL_TO('06'), langs: ['solidity'] },
-  { name: 'BN254 scalar multiplication (precompile 0x07)', group: 'zk', re: STATICCALL_TO('07'), langs: ['solidity'] },
-  { name: 'BN254 pairing check (precompile 0x08)', group: 'zk', re: STATICCALL_TO('08'), langs: ['solidity'] },
-  { name: 'BLAKE2b compression F (precompile 0x09)', group: 'hash', re: STATICCALL_TO('09'), langs: ['solidity'] },
-  { name: 'KZG point evaluation (EIP-4844, precompile 0x0a)', group: 'zk', re: STATICCALL_TO('0a'), langs: ['solidity'] },
-  { name: 'P-256 signature verification (RIP-7212, precompile 0x100)', group: 'signature', re: STATICCALL_TO('100'), langs: ['solidity'] },
+  { name: 'Keccak-256 (keccak256)', group: 'hash', re: /\bkeccak256\s?\(/g, langs: ['solidity', 'vyper'] },
+  { name: 'SHA-256 (sha256, precompile 0x02)', group: 'hash', re: /\bsha256\s?\(/g, langs: ['solidity', 'vyper'] },
+  { name: 'RIPEMD-160 (ripemd160, precompile 0x03)', group: 'hash', re: /\bripemd160\s?\(/g, langs: ['solidity'] },
+  { name: 'ecrecover (secp256k1, precompile 0x01)', group: 'signature', re: /\becrecover\s?\(/g, langs: ['solidity', 'vyper'] },
+  { name: 'ECDSA signature recovery (ECDSA.recover)', group: 'signature', re: /\bECDSA\s?\.\s?(?:try)?[Rr]ecover\w{0,40}\s?\(/g, langs: ['solidity'] },
+  { name: 'EIP-1271 contract signatures (isValidSignature)', group: 'signature', re: /\bisValidSignature(?:Now)?\s?\(/g, langs: ['solidity'] },
+  { name: 'EIP-712 typed-data hashing', group: 'signature', re: /\b_hashTypedDataV4\s?\(|\btoTypedDataHash\s?\(|\bhashTypedData\s?\(/g, langs: ['solidity'] },
+  { name: 'Merkle proof verification', group: 'hash', re: /\bMerkleProof(?:Lib)?\s?\.\s?(?:verify|verifyCalldata|multiProofVerify|processProof)\w{0,40}\s?\(/g, langs: ['solidity'] },
+  { name: 'modexp (precompile 0x05)', group: 'zk', precompile: 0x05, langs: ['solidity'] },
+  { name: 'BN254 point addition (precompile 0x06)', group: 'zk', precompile: 0x06, langs: ['solidity'] },
+  { name: 'BN254 scalar multiplication (precompile 0x07)', group: 'zk', precompile: 0x07, langs: ['solidity'] },
+  { name: 'BN254 pairing check (precompile 0x08)', group: 'zk', precompile: 0x08, langs: ['solidity'] },
+  { name: 'BLAKE2b compression F (precompile 0x09)', group: 'hash', precompile: 0x09, langs: ['solidity'] },
+  { name: 'KZG point evaluation (EIP-4844, precompile 0x0a)', group: 'zk', precompile: 0x0a, langs: ['solidity'] },
+  { name: 'P-256 signature verification (RIP-7212, precompile 0x100)', group: 'signature', precompile: 0x100, langs: ['solidity'] },
   { name: 'BN254 ecadd / ecmul (Vyper builtins)', group: 'zk', re: /\bec(?:add|mul)\s*\(/g, langs: ['vyper'] },
 ]
 
 const MAX_CITES = 4
+const CALL_RE = /\b(?:staticcall|call)\s?\(/g
+const ADDR_CALL_RE = /\baddress\s?\(\s?(0x[0-9a-fA-F]{1,64}|\d{1,6})\s?\)\s?\.\s?staticcall\b/g
+
+/** A numeric literal (hex or decimal), or null. */
+function literal(s: string): number | null {
+  const t = s.trim()
+  if (/^0x[0-9a-fA-F]{1,64}$/.test(t)) {
+    const v = t.replace(/^0x0*/, '')
+    return v.length > 6 ? null : v ? parseInt(v, 16) : 0
+  }
+  return /^\d{1,6}$/.test(t) ? Number(t) : null
+}
+
+/** Second argument of the call whose '(' is at `open`, read at most 400 characters ahead; null if not found. */
+function secondArg(code: string, open: number): string | null {
+  let depth = 0
+  let start = -1
+  const end = Math.min(code.length, open + 400)
+  for (let i = open; i < end; i++) {
+    const c = code.charCodeAt(i)
+    if (c === 40) depth++
+    else if (c === 41) {
+      depth--
+      if (depth === 0) return start >= 0 ? code.slice(start, i) : null
+    } else if (c === 44 && depth === 1) {
+      if (start < 0) start = i + 1
+      else return code.slice(start, i)
+    }
+  }
+  return null
+}
 
 /** Primitives used in the sources, with up to 4 citations each (the author's files before library files). */
-export function findPrimitives(files: SourceFile[]): LensPrimitive[] {
+export function findPrimitives(files: SourceFile[], w: Work = new Work()): LensPrimitive[] {
   const hits = new Map<string, { rule: PrimRule; at: { file: string; line: number; lib: boolean }[]; count: number }>()
+  const byAddr = new Map(PRIM_RULES.filter((r) => r.precompile !== undefined).map((r) => [r.precompile!, r]))
+  const hit = (rule: PrimRule, file: string, line: number, lib: boolean) => {
+    const h = hits.get(rule.name) ?? { rule, at: [], count: 0 }
+    h.count++
+    // up to MAX_CITES of the author's files and of library files each; the author's are listed first
+    if (h.at.reduce((n, x) => n + (x.lib === lib ? 1 : 0), 0) < MAX_CITES) h.at.push({ file, line, lib })
+    hits.set(rule.name, h)
+  }
   for (const f of files) {
     const lang = langOfPath(f.path)
     if (lang !== 'solidity' && lang !== 'vyper' && lang !== 'yul') continue
-    const code = lang === 'vyper' ? f.text.replace(/\r\n?/g, '\n').replace(/#[^\n]*/g, '') : stripSolidity(f.text, 'lines')
-    const starts = lineStarts(code)
+    let code: string
+    let lineOf: (i: number) => number
+    if (lang === 'vyper') {
+      w.spend(f.text.length * 2)
+      code = f.text.replace(/\r\n?/g, '\n').replace(/#[^\n]*/g, '')
+      const starts = lineStarts(code)
+      lineOf = (i) => lineAt(starts, i)
+    } else ({ code, lineOf } = prepSolidity(f.text, w))
     const lib = LIB_PATH.test(f.path)
     const l = lang === 'yul' ? 'solidity' : lang
     for (const rule of PRIM_RULES) {
-      if (!rule.langs.includes(l)) continue
+      if (!rule.re || !rule.langs.includes(l)) continue
+      w.spend(code.length)
       rule.re.lastIndex = 0
       for (let m = rule.re.exec(code); m; m = rule.re.exec(code)) {
         if (m[0].length === 0) rule.re.lastIndex++
         // a declaration ('function isValidSignature(…)' in an interface) is not a use
         if (/\b(function|event|error)\s+$/.test(code.slice(Math.max(0, m.index - 24), m.index))) continue
-        const h = hits.get(rule.name) ?? { rule, at: [], count: 0 }
-        h.count++
-        h.at.push({ file: f.path, line: lineAt(starts, m.index), lib })
-        hits.set(rule.name, h)
+        hit(rule, f.path, lineOf(m.index), lib)
       }
+    }
+    if (l !== 'solidity') continue
+    // precompile calls: Yul staticcall(gas(), 0x08, …) / call(…, 0x05, …), and address(0x05).staticcall(…)
+    w.spend(code.length * 2)
+    CALL_RE.lastIndex = 0
+    for (let m = CALL_RE.exec(code); m; m = CALL_RE.exec(code)) {
+      w.spend(400)
+      const a = secondArg(code, m.index + m[0].length - 1)
+      const v = a === null ? null : literal(a)
+      const rule = v === null ? undefined : byAddr.get(v)
+      if (rule) hit(rule, f.path, lineOf(m.index), lib)
+    }
+    ADDR_CALL_RE.lastIndex = 0
+    for (let m = ADDR_CALL_RE.exec(code); m; m = ADDR_CALL_RE.exec(code)) {
+      const v = literal(m[1])
+      const rule = v === null ? undefined : byAddr.get(v)
+      if (rule) hit(rule, f.path, lineOf(m.index), lib)
     }
   }
   const out: LensPrimitive[] = []

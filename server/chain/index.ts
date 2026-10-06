@@ -11,7 +11,8 @@
 //      LUSCA_CHAIN_SOL_CALLS (8000/day) · LUSCA_CHAIN_SOL_DISCOVERY_CALLS (3000/day)
 //      LUSCA_CHAIN_EVM_CALLS (15000/day per chain) · LUSCA_CHAIN_HTTP_CALLS (5000/day per registry)
 //      LUSCA_LENS=0 (Lens off) · LUSCA_LENS_SOL_CALLS / LUSCA_LENS_EVM_CALLS / LUSCA_LENS_HTTP_CALLS (Lens's
-//      daily slice, charged on top of the shared budgets; default 15 % of the limits above) — server/lens
+//      daily slice, charged on top of the shared budgets; default 15 % of the RPC limits above, 40 % of the
+//      registry limits) — server/lens
 //
 // The REST routes read stored data only (stats / feed / items / item): no RPC per request.
 
@@ -108,12 +109,13 @@ export function createChainAgents(opts: {
   })
 
   // LUSCA Lens: on-demand reads through the same network layer, under its own daily slice of every
-  // budget (LUSCA_LENS_SOL_CALLS / _EVM_CALLS / _HTTP_CALLS; default 15 % of the agents' limits)
+  // budget (LUSCA_LENS_SOL_CALLS / _EVM_CALLS / _HTTP_CALLS; default 15 % of the agents' RPC limits, 40 % of the registry limits)
   const lensOn = !/^(0|false|no|off)$/i.test(process.env.LUSCA_LENS?.trim() ?? '')
   const provenance = createProvenanceIndex({ dataDir: opts.dataDir, log: (l, m) => log(l, m) })
   const pct = (n: number) => Math.floor(n * 0.15)
   const lensEvm = intEnv('LUSCA_LENS_EVM_CALLS', pct(evmCalls), 0, 10_000_000)
-  const lensHttp = intEnv('LUSCA_LENS_HTTP_CALLS', pct(httpCalls), 0, 1_000_000)
+  // registries are free public services; the 5000/day is LUSCA's own politeness cap, and every Lens read needs one
+  const lensHttp = intEnv('LUSCA_LENS_HTTP_CALLS', Math.floor(httpCalls * 0.4), 0, 1_000_000)
   const lens: Lens | null = lensOn
     ? createLens({
         rpc,

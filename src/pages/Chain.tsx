@@ -68,8 +68,14 @@ function ChainOverview() {
 
   const via = useMemo(() => {
     const n: Record<string, number> = {}
-    for (const e of feed) n[e.via] = (n[e.via] ?? 0) + 1
-    return { n, total: feed.length }
+    // the agents' own ways in: Lens reads (on request) are not part of where the agents look
+    let total = 0
+    for (const e of feed) {
+      if (e.via === 'lens') continue
+      n[e.via] = (n[e.via] ?? 0) + 1
+      total++
+    }
+    return { n, total }
   }, [feed])
 
   // last read per agent, from the feed

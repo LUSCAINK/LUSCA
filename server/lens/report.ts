@@ -17,7 +17,8 @@ import type {
 } from '../../shared/lens.ts'
 import { EVM_CHAIN_IDS, type EvmChain } from '../chain/evm.ts'
 import { normalizeRepoUrl, osecStatusUrl, type OsecStatus } from '../chain/solana/osec.ts'
-import { findPrimitives, findPrivileged, groupAbi } from './evm-analysis.ts'
+import { OSEC_UNAVAILABLE } from '../chain/solana.ts'
+import { AnalysisLimit, Work, findPrimitives, findPrivileged, groupAbi } from './evm-analysis.ts'
 import { solanaPrimitives, KNOWN_SYSCALLS, type ElfScan } from './elf-syscalls.ts'
 import { idlDetail, signerRoles } from './idl-detail.ts'
 import type { ProvenanceIndex } from './provenance.ts'
@@ -30,9 +31,14 @@ export const EXPLORER: Record<ChainId, (a: string) => string> = {
 }
 export const sourcifyUrl = (chain: EvmChain, a: string) => `https://repo.sourcify.dev/${EVM_CHAIN_IDS[chain]}/${a}`
 export const sourcifyApiUrl = (chain: EvmChain, a: string) => `https://sourcify.dev/server/v2/contract/${EVM_CHAIN_IDS[chain]}/${a}?fields=all`
-export const repoCommitUrl = (repo: string, commit: string | null) => {
-  const slug = repo.replace(/^https?:\/\/(www\.)?github\.com\//i, '').replace(/\/+$/, '')
-  return `https://github.com/${slug}${commit ? `/tree/${commit}` : ''}`
+/** Link to a repository at a commit: GitHub slugs get a tree link; another host's https URL is linked as given; anything else, no link. */
+export const repoCommitUrl = (repo: string, commit: string | null): string | null => {
+  const slug = repo
+    .replace(/^https?:\/\/(www\.)?github\.com\//i, '')
+    .replace(/\/+$/, '')
+    .replace(/\.git$/, '')
+  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(slug)) return `https://github.com/${slug}${commit && /^[0-9a-f]{7,64}$/i.test(commit) ? `/tree/${commit}` : ''}`
+  return /^https:\/\/[^\s"'<>]+$/i.test(repo) ? repo : null
 }
 
 export interface EvmPart {
@@ -131,11 +137,14 @@ export function buildSolanaReport(x: SolanaInput, c: BuildCommon): LensReport {
   if (x.programDataAddress) cites.push({ label: 'programdata account', url: EXPLORER.solana(x.programDataAddress) })
   if (r.upgradeAuthority) cites.push({ label: 'upgrade authority', url: EXPLORER.solana(r.upgradeAuthority) })
   if (x.osec || r.kind === 'program') cites.push({ label: 'OtterSec verify registry', url: osecStatusUrl(r.address) })
-  if (osecRepo) cites.push({ label: `${osecRepo.repo}${osecRepo.commit ? `@${osecRepo.commit.slice(0, 10)}` : ''}`, url: repoCommitUrl(osecRepo.repo, osecRepo.commit) })
+  const osecLink = osecRepo ? repoCommitUrl(osecRepo.repo, osecRepo.commit) : null
+  if (osecRepo && osecLink) cites.push({ label: `${osecRepo.repo}${osecRepo.commit ? `@${osecRepo.commit.slice(0, 10)}` : ''}`, url: osecLink })
 
   const notes = [...r.notes, ...(x.elf?.notes ?? []), ...(c.notes ?? [])]
+  // OtterSec could not be asked (endpoint failure or its budget): unknown, not "not verified"
+  const osecDown = r.kind === 'program' && !r.verified && r.notes.some((n) => n.startsWith(OSEC_UNAVAILABLE))
   const summary: LensSummary = {
-    verified: verifiedOf(r),
+    verified: osecDown ? 'unknown' : verifiedOf(r),
     upgradeable: r.upgradeable,
     authority: r.upgradeAuthority,
     proxy: null,
@@ -170,6 +179,23 @@ export function buildSolanaReport(x: SolanaInput, c: BuildCommon): LensReport {
 function contractOf(p: EvmPart): LensContract {
   const r = p.read
   const g = groupAbi(p.abiJson)
+  // only state-changing functions can be privileged in a way that matters (views are listed nowhere)
+  let privileged: LensContract['privileged'] = []
+  let primitives: LensContract['primitives'] = []
+  let analysis: string | null = null
+  if (p.sources.length) {
+    const w = new Work()
+    try {
+      privileged = findPrivileged(p.sources, [...g.write, ...g.payable], w)
+      primitives = findPrimitives(p.sources, w)
+    } catch (e) {
+      if (!(e instanceof AnalysisLimit)) throw e
+      // nothing partial is shown: an incomplete list would read as a complete one
+      privileged = []
+      primitives = []
+      analysis = `not completed: ${e.why}`
+    }
+  }
   return {
     address: r.address,
     name: r.name,
@@ -180,9 +206,9 @@ function contractOf(p: EvmPart): LensContract {
     sources: r.sources.map((s) => ({ path: s.path, lang: s.lang, bytes: s.bytes })),
     functions: { write: g.write, payable: g.payable, view: g.view },
     events: g.events,
-    // only state-changing functions can be privileged in a way that matters (views are listed nowhere)
-    privileged: p.sources.length ? findPrivileged(p.sources, [...g.write, ...g.payable]) : [],
-    primitives: p.sources.length ? findPrimitives(p.sources) : [],
+    privileged,
+    primitives,
+    analysis,
     profile: p.profile ? { customLines: p.profile.customLines, libraryLines: p.profile.libraryLines, interfaceLines: p.profile.interfaceLines, boilerplate: p.profile.boilerplate } : null,
   }
 }
@@ -198,6 +224,8 @@ export function buildEvmReport(chain: EvmChain, self: EvmPart, impl: EvmPart | n
         label: proxyLabel(r),
         implementation: r.proxy.implementation,
         admin: r.upgradeAuthority,
+        // the beacon address as the reader noted it ('… proxy: beacon 0x… → implementation 0x…')
+        beacon: r.proxy.standard === 'beacon' ? (r.notes.map((n) => /proxy: beacon (0x[0-9a-fA-F]{40})\b/.exec(n)?.[1]).find(Boolean) ?? null) : null,
       }
     : null
   const evm: LensEvm = { chainId: EVM_CHAIN_IDS[chain], bytecodeBytes: r.bytecodeBytes, codeHash: r.codeHash, proxy, self: selfC, implementation: implC }
@@ -226,9 +254,14 @@ export function buildEvmReport(chain: EvmChain, self: EvmPart, impl: EvmPart | n
   if (proxy) cites.push({ label: 'implementation', url: EXPLORER[chain](proxy.implementation) })
   if (impl?.read.verified) cites.push({ label: 'Sourcify (implementation)', url: sourcifyUrl(chain, impl.read.address) }, { label: 'Sourcify API record (implementation)', url: sourcifyApiUrl(chain, impl.read.address) })
   if (proxy?.admin) cites.push({ label: 'proxy admin', url: EXPLORER[chain](proxy.admin) })
-  for (const m of matches.slice(0, 3)) cites.push({ label: `${m.repo}@${(m.commit ?? '').slice(0, 10)}`, url: repoCommitUrl(m.repo, m.commit) })
+  for (const m of matches.slice(0, 3)) {
+    const u = repoCommitUrl(m.repo, m.commit)
+    if (u) cites.push({ label: `${m.repo}@${(m.commit ?? '').slice(0, 10)}`, url: u })
+  }
+  if (proxy?.beacon) cites.push({ label: 'beacon', url: EXPLORER[chain](proxy.beacon) })
 
   const surface = code.functions.write.length + code.functions.payable.length + code.functions.view.length
+  const incomplete = !!(selfC.analysis || implC?.analysis)
   const hasAbi = !!(impl?.abiJson ?? self.abiJson)
   const summary: LensSummary = {
     verified: verifiedOf(impl?.read ?? r),
@@ -237,9 +270,10 @@ export function buildEvmReport(chain: EvmChain, self: EvmPart, impl: EvmPart | n
     proxy: proxy?.label ?? null,
     surface: hasAbi ? surface : null,
     // the implementation's guarded functions plus the proxy's own (upgradeTo, changeAdmin…): all callable at this address
-    privileged: self.sources.length || impl?.sources.length ? selfC.privileged.length + (implC?.privileged.length ?? 0) : null,
-    primitives: primitives.length,
+    privileged: incomplete ? null : self.sources.length || impl?.sources.length ? selfC.privileged.length + (implC?.privileged.length ?? 0) : null,
+    primitives: incomplete ? null : primitives.length,
     provenance: matches.length,
+    provenanceExact: matches.filter((m) => m.exact).length,
   }
   const notes = [...r.notes, ...(impl ? impl.read.notes.map((n) => `implementation: ${n}`) : []), ...(c.notes ?? [])]
   return {

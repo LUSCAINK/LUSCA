@@ -73,6 +73,21 @@ export const sourcifyUrl = (chainId: number, a: string) => `https://repo.sourcif
 
 export const repoSlug = (repo: string) => repo.replace(/^https?:\/\/(www\.)?github\.com\//i, '').replace(/\/+$/, '').replace(/\.git$/, '')
 
+/**
+ * A repository at a commit as a cite: GitHub slugs link to the tree at that commit; another host's
+ * https URL is linked as given and labelled with its host name; anything else gets no link.
+ */
+export function repoLink(repo: string, commit: string | null): { href: string; label: string } | null {
+  const slug = repoSlug(repo)
+  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(slug)) return { href: `https://github.com/${slug}${commit && /^[0-9a-f]{7,64}$/i.test(commit) ? `/tree/${commit}` : ''}`, label: 'GitHub' }
+  if (!/^https:\/\/[^\s"'<>]+$/i.test(repo)) return null
+  try {
+    return { href: repo, label: new URL(repo).hostname }
+  } catch {
+    return null
+  }
+}
+
 /** github.com/<repo>/blob/<commit>/<path>#L<line> (line only when the files are byte-identical). */
 export function repoFileUrl(repo: string, commit: string | null, path: string, line?: number | null) {
   return `https://github.com/${repoSlug(repo)}/blob/${commit ?? 'HEAD'}/${path.split('/').map(encodeURIComponent).join('/')}${line ? `#L${line}` : ''}`
