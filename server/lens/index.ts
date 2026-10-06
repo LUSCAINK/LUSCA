@@ -8,7 +8,7 @@
 //
 // Guards: strict validation · per-IP sliding windows (fresh reads 5/min and 40/h, cached answers
 // 60/min, detect 12/min) · at most 3 reads at once (6 more wait ≤ 20 s, then 503) · in-flight
-// dedupe (one read per address however many ask) · cache in memory (200) and on disk (<data>/lens/
+// dedupe (one read per address however many ask) · cache in memory (100) and on disk (<data>/lens/
 // cache, 600 files) for 15 min · its own daily slice of every RPC / registry budget
 // (<data>/lens/budget.json; defaults 15 % of the agents' limits, LUSCA_LENS_*), charged on top of the
 // shared budget, so on-demand reads can never take more than the slice from the chain agents and the
@@ -66,7 +66,7 @@ export const DEFAULT_LENS_LIMITS: LensLimits = {
   queue: 6,
   queueWaitMs: 20_000,
   cacheTtlMs: 15 * 60_000,
-  memCache: 200,
+  memCache: 100,
   diskCache: 600,
   readTimeoutMs: 60_000,
   recent: 24,
@@ -234,6 +234,7 @@ export function createLens(d: LensDeps): Lens {
   const freshHour = createWindow(3_600_000, L.freshPerHour, now)
   const cachedMin = createWindow(60_000, L.cachedPerMin, now)
   const detectMin = createWindow(60_000, L.detectPerMin, now)
+  const listMin = createWindow(60_000, 120, now)
 
   const mem = new Map<string, { at: number; json: string; report: LensReport }>()
   const inflight = new Map<string, Promise<LensReport>>()
@@ -605,8 +606,11 @@ export function createLens(d: LensDeps): Lens {
 
   async function route(p: string, ip: string): Promise<LensRouteResult> {
     try {
-      if (p === '/api/lens/recent') return ok({ reads, recent }, { 'Cache-Control': 'public, max-age=5' })
-      if (p === '/api/lens/status') return ok(status(), { 'Cache-Control': 'public, max-age=5' })
+      if (p === '/api/lens/recent' || p === '/api/lens/status') {
+        const w = listMin.take(ip)
+        if (w > 0) throw new LensError(429, 'too many Lens requests — slow down', Math.ceil(w / 1000))
+        return ok(p === '/api/lens/recent' ? { reads, recent } : status(), { 'Cache-Control': 'public, max-age=5' })
+      }
       const dm = /^\/api\/lens\/detect\/([^/]{1,64})$/.exec(p)
       if (dm) return ok(await detect(decodeSeg(dm[1]), ip))
       const m = /^\/api\/lens\/([a-z]{1,16})\/([^/]{1,64})$/.exec(p)

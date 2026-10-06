@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { ChainId, Verdict } from '@shared/chain'
-import type { LensAnswer, LensContract, LensPrimitive, LensRecent, LensReport } from '@shared/lens'
+import type { LensAnswer, LensContract, LensPrimitive, LensRecent, LensReport, LensStatus } from '@shared/lens'
 import { CHAIN_LABEL, CHAIN_SHORT, VERDICT_LABEL, VERDICT_TEXT, ago, fmtUtc, isChainId } from '@/lib/chain'
 import {
   EXAMPLES,
@@ -17,6 +17,7 @@ import {
   fetchDetect,
   fetchLens,
   fetchRecent,
+  fetchStatus,
   fileLink,
   fmtBytes,
   fmtN,
@@ -68,6 +69,27 @@ function Copy({ text }: { text: string }) {
       aria-label="Copy"
     >
       {ok ? 'copied' : 'copy'}
+    </button>
+  )
+}
+
+function ShareLink() {
+  const [ok, setOk] = useState(false)
+  return (
+    <button
+      className="ln-copy"
+      onClick={() => {
+        navigator.clipboard?.writeText(location.href).then(
+          () => {
+            setOk(true)
+            setTimeout(() => setOk(false), 1200)
+          },
+          () => {},
+        )
+      }}
+      title="Copy the link to this report"
+    >
+      {ok ? 'link copied' : 'share link'}
     </button>
   )
 }
@@ -139,8 +161,20 @@ function Strip({ r }: { r: LensReport }) {
     { k: 'crypto', v: fmtN(s.primitives), sub: sol ? 'syscalls / sig programs' : 'primitives in source', href: '#ln-prim' },
     {
       k: 'provenance',
-      v: sol ? (r.provenance.osecRepo ? (r.provenance.osecRepo.inCodeIndex ? 'indexed' : 'not indexed') : '—') : `${fmtN(s.provenance)}/${fmtN(r.provenance.checked)}`,
-      sub: sol ? (r.provenance.osecRepo ? repoSlug(r.provenance.osecRepo.repo) : 'no build repository') : 'files ≡ code index',
+      v: sol
+        ? r.provenance.osecRepo
+          ? r.solana?.osec?.verified
+            ? r.provenance.osecRepo.inCodeIndex
+              ? 'indexed'
+              : 'not indexed'
+            : 'unverified'
+          : '—'
+        : `${fmtN(s.provenance)}/${fmtN(r.provenance.checked)}`,
+      sub: sol
+        ? r.provenance.osecRepo
+          ? `${r.solana?.osec?.verified ? 'verified build' : 'build record'} · ${repoSlug(r.provenance.osecRepo.repo)}${r.provenance.osecRepo.inCodeIndex ? ' · in code index' : ''}`
+          : 'no build repository'
+        : 'files ≡ code index',
       href: '#ln-prov',
     },
     { k: 'SEPIA-1', v: VERDICT_LABEL[r.dataset.verdict], sub: r.dataset.added ? 'added by this read' : r.dataset.before ? `before: ${VERDICT_LABEL[r.dataset.before.verdict]}` : 'not seen before', hot: r.dataset.added, href: '#ln-data' },
@@ -570,6 +604,8 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
   const sol = r.chain === 'solana'
   const p = r.provenance
   const d = r.dataset
+  const delegated = r.kind === 'account' && !!r.evm?.proxy && !!r.evm.implementation
+  const isCode = r.kind === 'program' || r.kind === 'contract' || delegated
   return (
     <article className="ln-report">
       <header className="ln-rhead">
@@ -586,6 +622,7 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
         <div className="ln-raddr">
           <span className="mono">{r.address}</span>
           <Copy text={r.address} />
+          <ShareLink />
           <Ext href={explorerUrl(r.chain, r.address)}>{explorerName(r.chain)} ↗</Ext>
           <button className="ln-copy" onClick={onRetry} title="Read again (served from cache within 15 minutes)">
             reload
@@ -593,7 +630,16 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
         </div>
       </header>
 
-      {r.kind === 'program' || r.kind === 'contract' ? (
+      {delegated && (
+        <div className="ln-notcode">
+          <span className="label hot">EIP-7702 delegated account</span>
+          <p>
+            An externally owned account whose code is a delegation to <Addr chain={r.chain} a={r.evm!.proxy!.implementation} />. Its owner key can change the
+            delegation at any time. The sections below describe the delegate's code.
+          </p>
+        </div>
+      )}
+      {isCode ? (
         <Strip r={r} />
       ) : (
         <div className="ln-notcode">
@@ -612,7 +658,7 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
         </div>
       )}
 
-      {(r.kind === 'program' || r.kind === 'contract') && (sol ? <SolanaSections r={r} /> : <EvmSections r={r} />)}
+      {isCode && (sol ? <SolanaSections r={r} /> : <EvmSections r={r} />)}
 
       <Section n={sol ? '07' : '06'} title="Provenance" id="ln-prov" meta={<span className="mono">{sol ? (p.osecRepo ? repoSlug(p.osecRepo.repo) : '—') : `${p.matches.length}/${p.checked} files`}</span>}>
         <p className="dim ln-p">
@@ -744,6 +790,7 @@ export default function Lens() {
   const [recent, setRecent] = useState<LensRecent[] | null>(null)
   const [reads, setReads] = useState<number | null>(null)
   const [nonce, setNonce] = useState(0)
+  const [status, setStatus] = useState<LensStatus | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const input = useMemo(() => classify(text), [text])
 
@@ -780,6 +827,15 @@ export default function Lens() {
       .catch(() => {})
     return () => ac.abort()
   }, [phase.s === 'done' ? (phase as { a: LensAnswer }).a.report.readAt : 0])
+
+  // what this server can do right now: code index size, today's Lens budget (real counters)
+  useEffect(() => {
+    const ac = new AbortController()
+    fetchStatus(ac.signal)
+      .then(setStatus)
+      .catch(() => {})
+    return () => ac.abort()
+  }, [phase.s])
 
   async function submit(chainPick?: ChainId) {
     setDetectMsg(null)
@@ -866,6 +922,24 @@ export default function Lens() {
               ))}
             </div>
           )}
+          <div className="ln-status mono">
+            <span>
+              <span className="dimmer">code index</span>{' '}
+              {status === null ? '—' : status.index.files > 0 ? `${fmtN(status.index.repos)} repos · ${fmtN(status.index.files)} files hashed` : 'not connected yet'}
+            </span>
+            <span>
+              <span className="dimmer">Lens RPC calls left today</span>{' '}
+              {status === null
+                ? '—'
+                : (['solana', 'ethereum', 'base', 'arbitrum'] as const)
+                    .map((k) => {
+                      const b = status.budget[k]
+                      return b ? `${CHAIN_SHORT[k]} ${fmtN(Math.max(0, b.limit - b.used))}` : null
+                    })
+                    .filter(Boolean)
+                    .join(' · ')}
+            </span>
+          </div>
         </form>
       </section>
 

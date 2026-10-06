@@ -2,7 +2,7 @@
 // helpers the dossier uses. Every number on the page comes from the server's report; the browser
 // reads nothing from a chain itself.
 import type { ChainId } from '@shared/chain'
-import type { LensAnswer, LensDetect, LensRecent, LensReport } from '@shared/lens'
+import type { LensAnswer, LensDetect, LensRecent, LensReport, LensStatus } from '@shared/lens'
 
 export type LensInput = { kind: 'solana'; address: string } | { kind: 'evm'; address: string } | { kind: 'invalid'; why: string } | { kind: 'empty' }
 
@@ -49,6 +49,7 @@ async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 export const fetchLens = (chain: ChainId, address: string, signal?: AbortSignal) =>
   getJson<LensAnswer>(`/api/lens/${chain}/${encodeURIComponent(address)}`, signal)
 export const fetchDetect = (address: string, signal?: AbortSignal) => getJson<LensDetect>(`/api/lens/detect/${encodeURIComponent(address)}`, signal)
+export const fetchStatus = (signal?: AbortSignal) => getJson<LensStatus>('/api/lens/status', signal)
 export const fetchRecent = (signal?: AbortSignal) => getJson<{ reads: number; recent: LensRecent[] }>('/api/lens/recent', signal)
 
 // ─── links ──────────────────────────────────────────────────────────────────

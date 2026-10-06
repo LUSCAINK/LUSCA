@@ -236,7 +236,8 @@ export function buildEvmReport(chain: EvmChain, self: EvmPart, impl: EvmPart | n
     authority: r.upgradeAuthority,
     proxy: proxy?.label ?? null,
     surface: hasAbi ? surface : null,
-    privileged: (impl ?? self).sources.length ? code.privileged.length : null,
+    // the implementation's guarded functions plus the proxy's own (upgradeTo, changeAdmin…): all callable at this address
+    privileged: self.sources.length || impl?.sources.length ? selfC.privileged.length + (implC?.privileged.length ?? 0) : null,
     primitives: primitives.length,
     provenance: matches.length,
   }

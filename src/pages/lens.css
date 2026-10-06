@@ -185,6 +185,16 @@
   color: var(--fg);
 }
 
+.ln-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin-top: 4px;
+  font-size: var(--t-3xs);
+  letter-spacing: 0.04em;
+  color: var(--fg-1);
+}
+
 /* ─── examples ───────────────────────────────────── */
 .ln-examples {
   display: grid;

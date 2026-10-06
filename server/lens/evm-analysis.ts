@@ -118,7 +118,8 @@ function parenEnd(s: string, open: number): number {
 }
 
 const SENDER = String.raw`(?:msg\.sender|_msgSender\(\s*\))`
-const OPERAND = String.raw`(?:address|payable)?\s*\(?\s*[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*(?:\s*\([^()]*\))?\s*\)?`
+// bounded repetitions: the pattern is tried at every position of a body, so nothing in it may scan far
+const OPERAND = String.raw`(?:address|payable)?\s*\(?\s*[A-Za-z_$][\w$]{0,63}(?:\s*\.\s*[A-Za-z_$][\w$]{0,63}){0,6}(?:\s*\([^()]{0,120}\))?\s*\)?`
 /**
  * Caller checks in a body. Comparisons keep their other operand (group `rhs` / `lhs`): a comparison
  * with a parameter or local of the function itself (`msg.sender != from`) is a user's own permission,
@@ -131,7 +132,7 @@ const AUTH_RE = new RegExp(
     String.raw`\b(?:require|assert|if)\s*\(\s*!?\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\[\s*${SENDER}\s*\]\s*(?:==|!=|\)|,|&&|\|\|)`,
     String.raw`\b_?check(?:Owner|Role|Admin|Auth|Authorized|Caller|Sender|Governance|Guardian|Operator)\w*\s*\(`,
     String.raw`\b_?(?:onlyOwner|onlyAdmin|requireOwner|requireAdmin|authorize|auth)\s*\(`,
-    String.raw`\bhasRole\s*\([^;]*${SENDER}`,
+    String.raw`\bhasRole\s*\([^;]{0,240}${SENDER}`,
     String.raw`\bisAuthorized\s*\(\s*${SENDER}`,
     String.raw`\bcanCall\s*\(\s*${SENDER}`,
   ].join('|'),
