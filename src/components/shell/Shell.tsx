@@ -17,8 +17,9 @@ export const NAV = [
   { to: '/earn', label: 'Rewards', n: '03' },
   { to: '/agents', label: 'Agents', n: '04' },
   { to: '/chain', label: 'Chain', n: '05' },
-  { to: '/sepia', label: 'Model', n: '06' },
-  { to: '/docs', label: 'Docs', n: '07' },
+  { to: '/lens', label: 'Lens', n: '06' },
+  { to: '/sepia', label: 'Model', n: '07' },
+  { to: '/docs', label: 'Docs', n: '08' },
 ]
 
 /** Legal pages: status bar (desktop/tablet) and the menu drawer (mobile). */

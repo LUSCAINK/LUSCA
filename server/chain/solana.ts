@@ -40,6 +40,8 @@ import { osecStatusUrl, parseOsecStatus, type OsecStatus } from './solana/osec.t
 export interface ReadSolanaOptions {
   /** True when this code hash is already kept: the read is a duplicate either way, OtterSec is not asked. */
   skipOsec?: (codeHash: string) => boolean
+  /** Handed the trimmed program executable (Lens reads its syscall imports); not called when there is none. */
+  onElf?: (elf: Uint8Array) => void
 }
 
 export interface SolanaReadResult {
@@ -303,6 +305,7 @@ export async function readSolana(address: string, ctx: RpcCtx, opts: ReadSolanaO
       read.programBytes = trimmed.length
       read.codeHash = await codeHashOf(trimmed)
       read.securityTxt = parseSecurityTxt(trimmed)
+      opts.onElf?.(trimmed)
     }
   }
 

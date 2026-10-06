@@ -106,6 +106,8 @@ export interface ChainAgents {
   item(chain: ChainId, address: string): { item: ChainIndexItem; read: ChainRead } | null
   /** Seed the feed ring (oldest first) — index.ts restores the persisted feed. */
   restoreFeed(events: ChainEvent[]): void
+  /** An event from outside the agents' loop (a Lens read handed to the store): into the feed and the broadcast. */
+  record(ev: ChainEvent): void
 }
 
 export const DEFAULT_AGENTS: { id: string; chain: ChainId }[] = [
@@ -720,6 +722,7 @@ export function createChainAgentsWith(d: ChainAgentsDeps): ChainAgents {
     },
     items: (q) => d.store.items(q),
     item: (chain, address) => d.store.item(chain, address),
+    record: (ev) => emit({ ...ev, reason: redact(ev.reason).slice(0, 200) }),
     restoreFeed(events: ChainEvent[]) {
       const ok = events.filter((e) => e && typeof e.id === 'string' && typeof e.ts === 'number')
       feedRing.unshift(...ok.slice(-FEED_MAX))

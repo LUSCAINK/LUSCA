@@ -574,6 +574,8 @@ export interface ChainStore {
   seenCode(hash: string): string | null
   /** A non-kept EVM verdict (boilerplate / unverified) remembered for this code hash, or null. */
   seenRejected(hash: string): RejectedCode | null
+  /** The verdict process() would give this read now, without storing or counting anything (Lens preview). */
+  evaluate(input: Omit<KeepInput, 'agent' | 'via'>): Evaluation
   /** readAt of the kept item at this address, or null (agents skip re-reading kept code within a week). */
   keptAt(chain: ChainId, address: string): number | null
   /** Count a read that failed (verdict 'error'). */
@@ -1130,6 +1132,8 @@ export function createChainStore(o: ChainStoreOptions): ChainStore {
     process,
     seenCode: (h) => seenCode.get(h) ?? null,
     seenRejected: getRejected,
+    evaluate: (input) =>
+      evaluateRead(input.read, { sources: input.sources, sourceBundleHash: input.sourceBundleHash, idlJson: input.idlJson, boilerplate: input.boilerplate }, seen),
     keptAt: (chain, address) => items.get(itemKey(chain, address))?.readAt ?? null,
     countError: (agent, chain) => count(agent, chain, 'error'),
     full,

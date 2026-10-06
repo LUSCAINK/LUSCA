@@ -62,14 +62,16 @@ export const VIA_LABEL: Record<FoundVia, string> = {
   registry: 'registry',
   web: 'web',
   link: 'link',
+  lens: 'lens',
 }
 
-/** How an address was found. Nobody submits addresses; these are the only four ways in. */
+/** How an address was found: the agents' four ways in, plus a Lens read that passed the same rules. */
 export const VIA_TEXT: Record<FoundVia, string> = {
   block: 'Called in a recent block',
   registry: 'Listed as verified: Sourcify (newest first) or the OtterSec verified-programs registry',
   web: 'Mentioned on a page the web agents kept',
   link: 'Linked from another contract (proxy to implementation)',
+  lens: 'Read on request with LUSCA Lens, kept under the same rules as an agent read',
 }
 
 export const VIAS: readonly FoundVia[] = ['block', 'registry', 'web', 'link']

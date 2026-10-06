@@ -10,6 +10,9 @@
 //      LUSCA_ETH_RPC · LUSCA_BASE_RPC · LUSCA_ARB_RPC
 //      LUSCA_CHAIN_SOL_CALLS (8000/day) · LUSCA_CHAIN_SOL_DISCOVERY_CALLS (3000/day)
 //      LUSCA_CHAIN_EVM_CALLS (15000/day per chain) · LUSCA_CHAIN_HTTP_CALLS (5000/day per registry)
+//      LUSCA_LENS=0 (Lens off) · LUSCA_LENS_SOL_CALLS / LUSCA_LENS_EVM_CALLS / LUSCA_LENS_HTTP_CALLS (Lens's
+//      daily slice, charged on top of the shared budgets; default 15 % of the RPC limits above, 40 % of the
+//      registry limits) — server/lens
 //
 // The REST routes read stored data only (stats / feed / items / item): no RPC per request.
 
@@ -21,6 +24,8 @@ import { createChainAgentsWith, DEFAULT_AGENTS, type ChainAgents, type Discovery
 import { createDiscovery } from './discover.ts'
 import { readSolana } from './solana.ts'
 import { readEvm } from './evm.ts'
+import { createLens, DEFAULT_LENS_LIMITS, type Lens } from '../lens/index.ts'
+import { createProvenanceIndex } from '../lens/provenance.ts'
 
 type Log = (lvl: 'info' | 'warn' | 'error', msg: string) => void
 
@@ -31,6 +36,8 @@ export interface ChainAgentsApi {
   feed(limit: number): ChainEvent[]
   items(q: { chain?: ChainId; limit?: number; cursor?: string }): { items: ChainIndexItem[]; next: string | null }
   item(chain: ChainId, address: string): { item: ChainIndexItem; read: ChainRead } | null
+  /** LUSCA Lens (server/lens): on-demand reads with the same readers, its own budget slice; null when LUSCA_LENS=0. */
+  lens: Lens | null
 }
 
 function intEnv(name: string, def: number, min: number, max: number): number {
@@ -101,6 +108,37 @@ export function createChainAgents(opts: {
     startDelayMs: 20_000,
   })
 
+  // LUSCA Lens: on-demand reads through the same network layer, under its own daily slice of every
+  // budget (LUSCA_LENS_SOL_CALLS / _EVM_CALLS / _HTTP_CALLS; default 15 % of the agents' RPC limits, 40 % of the registry limits)
+  const lensOn = !/^(0|false|no|off)$/i.test(process.env.LUSCA_LENS?.trim() ?? '')
+  const provenance = createProvenanceIndex({ dataDir: opts.dataDir, log: (l, m) => log(l, m) })
+  const pct = (n: number) => Math.floor(n * 0.15)
+  const lensEvm = intEnv('LUSCA_LENS_EVM_CALLS', pct(evmCalls), 0, 10_000_000)
+  // registries are free public services; the 5000/day is LUSCA's own politeness cap, and every Lens read needs one
+  const lensHttp = intEnv('LUSCA_LENS_HTTP_CALLS', Math.floor(httpCalls * 0.4), 0, 1_000_000)
+  const lens: Lens | null = lensOn
+    ? createLens({
+        rpc,
+        store,
+        record: (ev) => agents.record(ev),
+        feed: (n) => agents.feed(n),
+        provenance,
+        dataDir: opts.dataDir,
+        log,
+        limits: {
+          budget: {
+            ...DEFAULT_LENS_LIMITS.budget,
+            solana: intEnv('LUSCA_LENS_SOL_CALLS', pct(limits.solana), 0, 10_000_000),
+            ethereum: lensEvm,
+            base: lensEvm,
+            arbitrum: lensEvm,
+            sourcify: lensHttp,
+            osec: lensHttp,
+          },
+        },
+      })
+    : null
+
   // the feed survives restarts (newest 200 events)
   const feedFile = path.join(opts.dataDir, 'chain', 'feed.json')
   const savedFeed = readJson<ChainEvent[]>(feedFile)
@@ -125,6 +163,7 @@ export function createChainAgents(opts: {
     start() {
       if (started || stopped) return
       started = true
+      if (lens) provenance.start() // code-index hashes for Lens provenance (background, incremental)
       if (!enabled) {
         log('info', 'chain agents off (LUSCA_CHAIN_AGENTS=0); stored chain data is still served')
         return
@@ -146,6 +185,8 @@ export function createChainAgents(opts: {
       if (stopped) return
       stopped = true
       if (feedTimer) clearInterval(feedTimer)
+      await provenance.stop()
+      await lens?.stop()
       const agentsDone = agents.stop() // wakes sleeping agents; in-flight reads end with the RPC close below
       await rpc.close()
       await agentsDone
@@ -158,5 +199,6 @@ export function createChainAgents(opts: {
     feed: (limit) => agents.feed(limit),
     items: (q) => agents.items(q),
     item: (chain, address) => agents.item(chain, address),
+    lens,
   }
 }
