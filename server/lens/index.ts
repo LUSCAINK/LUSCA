@@ -562,7 +562,13 @@ export function createLens(d: LensDeps): Lens {
       return { report, cached: false, fresh: now() + L.cacheTtlMs }
     } catch (e) {
       slice.flush()
-      throw errorOf(e)
+      const le = errorOf(e)
+      // busy / an endpoint down / budget: the caller got no read, so it costs no read
+      if (le.status === 503) {
+        freshMin.refund(ip)
+        freshHour.refund(ip)
+      }
+      throw le
     } finally {
       inflight.delete(k)
     }

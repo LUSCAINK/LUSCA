@@ -177,7 +177,7 @@ function Strip({ r }: { r: LensReport }) {
         : 'files ≡ code index',
       href: '#ln-prov',
     },
-    { k: 'SEPIA-1', v: VERDICT_LABEL[r.dataset.verdict], sub: r.dataset.added ? 'added by this read' : r.dataset.before ? `before: ${VERDICT_LABEL[r.dataset.before.verdict]}` : 'not seen before', hot: r.dataset.added, href: '#ln-data' },
+    { k: 'SEPIA-1', v: VERDICT_LABEL[r.dataset.verdict], sub: r.dataset.added ? 'added to the index by this report' : r.dataset.before ? `before: ${VERDICT_LABEL[r.dataset.before.verdict]}` : 'not seen before', hot: r.dataset.added, href: '#ln-data' },
   ]
   return (
     <div className="ln-strip">
@@ -867,7 +867,7 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
         </Row>
         <p className="dim ln-p">
           {d.added
-            ? 'This read passed the same rules the chain agents use and was added to the SEPIA-1 chain index (discovery source: lens).'
+            ? 'The read behind this report passed the same rules the chain agents use and was added to the SEPIA-1 chain index (discovery source: lens).'
             : `${VERDICT_TEXT[d.verdict]} Lens applies the chain agents' rules; only reads they would keep are added.`}{' '}
           <Link to={`/chain/${r.chain}/${d.address}`}>chain index →</Link>
         </p>
