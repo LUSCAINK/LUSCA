@@ -351,7 +351,12 @@ export function createLens(d: LensDeps): Lens {
   let reads = 0
   try {
     const j = JSON.parse(fs.readFileSync(recentFile, 'utf8')) as { recent?: LensRecent[]; reads?: number }
-    if (Array.isArray(j.recent)) recent = j.recent.filter((r) => r && typeof r.address === 'string').slice(0, L.recent)
+    if (Array.isArray(j.recent))
+      recent = j.recent
+        .filter((r) => r && typeof r.address === 'string')
+        .slice(0, L.recent)
+        // the same rule as remember(): a name only for verified code, and only a plain one
+        .map((r) => ({ ...r, name: r.verified && r.verified !== 'unknown' ? safeName(r.name) : null }))
     if (Number.isFinite(j.reads)) reads = Math.max(0, Math.floor(j.reads!))
   } catch {
     /* none yet */
