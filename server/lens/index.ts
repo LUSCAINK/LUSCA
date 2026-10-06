@@ -696,7 +696,7 @@ export function createLens(d: LensDeps): Lens {
       const report = await p
       cachePut(k, report)
       remember(report)
-      return { report, cached: false, fresh: now() + L.cacheTtlMs }
+      return { report, cached: false, fresh: now() + (report.summary.verified === 'unknown' ? L.unknownTtlMs : L.cacheTtlMs) }
     } catch (e) {
       slice.flush()
       const le = errorOf(e)
