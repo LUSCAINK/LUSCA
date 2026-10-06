@@ -35,7 +35,7 @@ export function Roadmap() {
         ['params', '~124M'],
         ['data', 'the LUSCA dataset + the protocol code index, tokenized'],
         ['compute', `${bathy.zone}+ neurons · ≥ ${fmtCompact(bathy.minGflops, 1)} GFLOPS · ${bathy.vram}`],
-        ['state', 'not started — gated on neuron capacity'],
+        ['state', 'M1 tokenizer done (32,768 BPE) · model not trained'],
       ],
       body: 'a real small language model: BPE tokens, attention, the GPT-2-small shape. trained by volunteers whose GPUs benchmark into the bathypelagic zone or deeper.',
     },
