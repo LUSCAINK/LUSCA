@@ -477,6 +477,7 @@ const MIME: Record<string, string> = {
   '.map': 'application/json; charset=utf-8',
   '.webmanifest': 'application/manifest+json',
   '.txt': 'text/plain; charset=utf-8',
+  '.md': 'text/plain; charset=utf-8',
   '.xml': 'application/xml',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',

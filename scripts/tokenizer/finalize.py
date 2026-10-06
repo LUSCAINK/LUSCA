@@ -32,6 +32,12 @@ def mb(n):
     return f"{n / 1e6:.2f}"
 
 
+def bold_best(vals, better, show):
+    """Cells of one table row; the best value is bold, whichever tokenizer it belongs to."""
+    best = max(vals) if better == "high" else min(vals)
+    return " | ".join(f"**{show(v)}**" if show(v) == show(best) else show(v) for v in vals)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", required=True)
@@ -42,6 +48,10 @@ def main():
     shutil.copyfile(os.path.join(a.work, "manifest.json"), os.path.join(ROOT, "scripts", "tokenizer", "data-manifest.json"))
 
     tr = data["train"]
+    ORDER = ["sepia1", "r50k", "cl100k", "o200k"]
+    f2 = lambda x: f"{x:.2f}"
+    import gzip
+    fx_n = len(json.loads(gzip.open(os.path.join(ROOT, "scripts", "tokenizer", "_fixtures.json.gz")).read())["fixtures"])
     code = ev["totals"]["code"]
     rel = code["relative"]
     pct = lambda r: f"{(1 - r) * 100:.1f}% fewer" if r < 1 else f"{(r - 1) * 100:.1f}% more"
@@ -57,7 +67,7 @@ def main():
     w(f"- trained with Hugging Face `tokenizers` {training['tokenizers_version']} (Python {training['python']}) in {training['train_seconds']} s; training twice gives a byte-identical tokenizer.json (checked: {training['deterministic_check']})")
     w(f"- held-out code: **{code['tokenizers']['sepia1']['bytesPerToken']:.2f} bytes per token**, {pct(rel['o200k'])} tokens than o200k_base, {pct(rel['cl100k'])} than cl100k_base and {pct(rel['r50k'])} than GPT-2 r50k_base on the same files")
     w(f"- exact round trip on {ev['roundTrip']['exact']:,} of {ev['roundTrip']['docs']:,} held-out documents ({mb(ev['roundTrip']['bytes'])} MB)")
-    w(f"- the TypeScript encoder used in the browser matches this tokenizer on {ev['parity']['tokens']:,} held-out tokens with {ev['parity']['mismatches']} mismatches")
+    w(f"- the TypeScript encoder used in the browser matches this tokenizer on {ev['parity']['tokens']:,} held-out tokens with {ev['parity']['mismatches']} mismatches, and on {fx_n:,} committed test strings (including Unicode 15/16 characters and random strings over all of Unicode) with 0 mismatches")
     w("")
     w("## Design")
     w("")
@@ -83,7 +93,14 @@ def main():
     w("")
     w("## Training data")
     w("")
-    w(f"Sample: {tr['docs']:,} documents, {mb(tr['bytes'])} MB, {tr['code_share_actual'] * 100:.1f}% code by bytes (code first, as in the anneal phase of the SEPIA-1 mixture). Sample sha256 `{tr['sha256']}`.")
+    bl = tr["by_language"]
+    md_b = bl.get("markdown", {}).get("train_bytes", 0)
+    idl_b = bl.get("idl", {}).get("train_bytes", 0)
+    src_b = tr["code_bytes"] - md_b - idl_b
+    share = lambda n: f"{n / tr['bytes'] * 100:.1f}%"
+    w(f"Sample: {tr['docs']:,} documents, {mb(tr['bytes'])} MB. {tr['code_share_actual'] * 100:.1f}% of the bytes come from the protocol code index "
+      f"({share(src_b)} source code, {share(md_b)} Markdown docs and EIPs, {share(idl_b)} Anchor IDL JSON) and {share(tr['web_bytes'])} is web text "
+      f"(code first, as in the anneal phase of the SEPIA-1 mixture). Sample sha256 `{tr['sha256']}`.")
     w("")
     w(f"- **Protocol code index**: {data['sources']['code_index']['repos_ok']} allowlisted repositories ({data['sources']['code_index']['files_read']:,} files), fetched with LUSCA's code index (`server/codebase`) at the commits listed in `data-manifest.json`, with each repository's and file's license recorded. All licenses are included, as in the code index policy.")
     w(f"- **Crypto web text**: {tr['web_docs']:,} pages ({mb(tr['web_bytes'])} MB) sampled with a fixed seed from the LUSCA corpus (`dataset.jsonl`, a prefix snapshot; byte range and sha256 in the manifest).")
@@ -101,17 +118,19 @@ def main():
     w("")
     w(ev["heldOut"])
     w("")
+    w("The best value in each row is in bold. Code is held out by file, so held-out files can share code with training files of the same repository; rows with fewer than 30 files (C / C++, TypeScript, Python, Vyper) are indicative only.")
+    w("")
     w("Bytes per token (higher is better):")
     w("")
     w("| Held-out set | Files | MB | SEPIA-1 (32,768) | r50k_base (GPT-2) | cl100k_base | o200k_base |")
     w("|---|---:|---:|---:|---:|---:|---:|")
     for l in ev["languages"]:
         t = l["tokenizers"]
-        w(f"| {l['label']} | {l['docs']} | {mb(l['bytes'])} | **{t['sepia1']['bytesPerToken']:.2f}** | {t['r50k']['bytesPerToken']:.2f} | {t['cl100k']['bytesPerToken']:.2f} | {t['o200k']['bytesPerToken']:.2f} |")
+        w(f"| {l['label']} | {l['docs']} | {mb(l['bytes'])} | " + bold_best([t[k]['bytesPerToken'] for k in ORDER], "high", f2) + " |")
     t = code["tokenizers"]
-    w(f"| **All code** (no Markdown) | | {mb(code['bytes'])} | **{t['sepia1']['bytesPerToken']:.2f}** | {t['r50k']['bytesPerToken']:.2f} | {t['cl100k']['bytesPerToken']:.2f} | {t['o200k']['bytesPerToken']:.2f} |")
+    w(f"| **All code** (no Markdown) | | {mb(code['bytes'])} | " + bold_best([t[k]['bytesPerToken'] for k in ORDER], "high", f2) + " |")
     w("")
-    w("Lines of code in one 2,048-token window (2,048 × lines ÷ tokens):")
+    w("Lines of code in one 2,048-token window (2,048 × lines ÷ tokens; higher is better):")
     w("")
     w("| Held-out set | SEPIA-1 | r50k_base | cl100k_base | o200k_base |")
     w("|---|---:|---:|---:|---:|")
@@ -119,7 +138,7 @@ def main():
         if l["id"] == "web":
             continue
         t = l["tokenizers"]
-        w(f"| {l['label']} | **{t['sepia1']['linesPer2048']}** | {t['r50k']['linesPer2048']} | {t['cl100k']['linesPer2048']} | {t['o200k']['linesPer2048']} |")
+        w(f"| {l['label']} | " + bold_best([t[k]['linesPer2048'] for k in ORDER], "high", str) + " |")
     w("")
     w("Tokens per 1,000 lines and the per-file list are in `eval.json` and `eval.md`.")
     w("")
@@ -141,7 +160,7 @@ def main():
     w("- On English prose the 32,768-entry vocabulary is less compact than cl100k_base and o200k_base (100k and 200k entries). That trade keeps the SEPIA-1 embedding table small for volunteer GPUs.")
     w("- One token per decimal digit makes long numbers cost more tokens than in GPT tokenizers.")
     w("- The code holdout is by file, so held-out files can share code with training files of the same repository; repository-level holdouts come with the SEPIA-1 eval set (docs/SEPIA-1-data.md §6).")
-    w("- The pre-tokenizer uses Unicode letter and number classes; the regex engines of Rust (Oniguruma) and JavaScript may disagree on characters added in recent Unicode versions. No disagreement was found on the held-out data or the fixtures.")
+    w(r"- The pre-tokenizer uses the Unicode letter and number classes `\p{L}` and `\p{N}` as compiled by Oniguruma in `tokenizers` 0.20.3, which predates some letters and digits added in Unicode 15 and 16. Other `tokenizers` builds may use other tables. The TypeScript encoder replaces both classes with the exact code-point sets measured from 0.20.3 (`shared/sepia1/unicode-classes.ts`), so it does not depend on the JavaScript engine's Unicode version; its parity test includes Unicode 15/16 letters and digits and 3,000 random strings over all of Unicode.")
     w("")
     w("## Reproduce")
     w("")

@@ -78,16 +78,16 @@
    "sha256": "88c0792e4496dc94ced370a558bc9af0e5f397021727386028b71945e5d4e6d9"
   },
   "eval.json": {
-   "bytes": 10524,
-   "sha256": "1a11f33a8d08deac84bbbabc667bd39e9b12225043d46c487f17bc89c3d1d982"
+   "bytes": 10751,
+   "sha256": "8ebc7c40c96516bd8a594c5bb92079dcc1396923e63b820e4b89f983c51c463d"
   },
   "eval.md": {
-   "bytes": 2418,
-   "sha256": "15b1b2beb371190181242458bb01e920be9116be9ca99df0e09f670ab38f8794"
+   "bytes": 2639,
+   "sha256": "e52c6599e02bcdba99152db9b764c1a6fe101c3227798189eb27ade467668438"
   },
   "MODEL_CARD.md": {
-   "bytes": 8220,
-   "sha256": "217b6e26045efa6855d89c183af976bd423b4b2ba080252cfc3f1c00f7972036"
+   "bytes": 9049,
+   "sha256": "25c027eb9a6dd159fd7036d75be23975d436cca7e8d4c4c5c40e9ad03ad4c805"
   }
  }
 }

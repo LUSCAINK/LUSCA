@@ -8,9 +8,14 @@
 //        ─▶ stage 2: long hex literals cut into "0x" + 4-digit groups
 //        ─▶ UTF-8 bytes ─▶ GPT-2 byte-to-unicode map ─▶ BPE merges (lowest rank first, leftmost on ties)
 //
-// The stage 1 pattern is read from tokenizer.json, so it cannot drift from the trained file. Stage 2
-// is written out here because its Oniguruma anchors (\A, \z, \G) have no JavaScript equivalent; the
-// parity test (scripts/tokenizer/_test.ts) fails on any difference from the Python tokenizer.
+// The stage 1 pattern is read from tokenizer.json, so it cannot drift from the trained file. Its
+// \p{L} and \p{N} classes are replaced by the exact code-point sets Oniguruma uses in tokenizers
+// 0.20.3 (unicode-classes.ts, measured by scripts/tokenizer/unicode_classes.py), so the result does
+// not depend on which Unicode version the JavaScript engine knows. Stage 2 is written out here
+// because its Oniguruma anchors (\A, \z, \G) have no JavaScript equivalent; the parity test
+// (scripts/tokenizer/_test.ts) fails on any difference from the Python tokenizer.
+
+import { ONIG_L, ONIG_N } from './unicode-classes.ts'
 
 export interface TokenizerJsonLike {
   added_tokens: { id: number; content: string; special: boolean }[]
@@ -119,7 +124,7 @@ export class Sepia1Tokenizer {
     if (json.pre_tokenizer?.type !== 'Sequence' || !s1 || s2 !== STAGE2_PATTERN || pts[2]?.type !== 'ByteLevel') {
       throw new Error('tokenizer.json: not the SEPIA-1 pre-tokenizer')
     }
-    this.stage1 = new RegExp(s1, 'gu')
+    this.stage1 = new RegExp(pinUnicodeClasses(s1), 'gu')
     const { toChar, toByte } = byteMaps()
     this.toChar = toChar
     this.toByte = toByte
@@ -305,6 +310,37 @@ export class Sepia1Tokenizer {
     this.cache.set(piece, ids)
     return ids
   }
+}
+
+/**
+ * Replaces \p{L} and \p{N} in a regex source with explicit code-point ranges (inside a character
+ * class: the ranges; outside: a class of them). Any other \p / \P property is refused.
+ */
+export function pinUnicodeClasses(src: string): string {
+  const sets: Record<string, string> = { L: ONIG_L, N: ONIG_N }
+  let out = ''
+  let inClass = false
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i]
+    if (c === '\\') {
+      const n = src[i + 1]
+      if (n === 'p' || n === 'P') {
+        const m = /^\{(\w+)\}/.exec(src.slice(i + 2))
+        const set = m && n === 'p' ? sets[m[1]] : undefined
+        if (!m || set === undefined) throw new Error(`tokenizer.json: unsupported Unicode property at ${i}`)
+        out += inClass ? set : `[${set}]`
+        i += 1 + m[0].length
+        continue
+      }
+      out += c + (n ?? '')
+      i++
+      continue
+    }
+    if (c === '[' && !inClass) inClass = true
+    else if (c === ']' && inClass) inClass = false
+    out += c
+  }
+  return out
 }
 
 function splitMerge(m: string): [string, string] {

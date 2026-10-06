@@ -31,10 +31,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `scripts/tokenizer/`). On held-out code it averages 4.22 bytes per token (o200k_base 4.03,
   cl100k_base 4.01, GPT-2 r50k_base 2.41) and every held-out file round-trips exactly. A
   dependency-free TypeScript encoder (`shared/sepia1/tokenizer.ts`) matches Hugging Face `tokenizers`
-  token for token. The SEPIA-1 model itself is not trained yet.
-- **Sepia page: "SEPIA-1 tokenizer".** Tokenize real protocol code (Uniswap V2, an Anchor
-  instruction, Sui Move, Cairo) or your own text in the browser and compare token counts with
-  o200k_base and cl100k_base, next to the measured held-out evaluation.
+  0.20.3 on every held-out token and on 5,518 test strings, including Unicode 15/16 characters
+  (its letter and digit classes are pinned to the tables `tokenizers` uses, not the browser's).
+  The release files are served at `/models/sepia-1-tokenizer/`. The SEPIA-1 model itself is not
+  trained yet.
+- **Sepia page: "SEPIA-1 tokenizer".** Tokenize real protocol code from the held-out split
+  (Solmate ERC4626, an OpenBook v2 Anchor instruction, DeepBook Move, OpenZeppelin Cairo) or your
+  own text in the browser and compare token counts with o200k_base and cl100k_base, next to the
+  measured held-out evaluation. The GPT encodings load only when you edit the text.
 
 ### Changed
 

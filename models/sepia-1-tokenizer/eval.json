@@ -5,7 +5,7 @@
   "vocabSize": 32768,
   "sha256": "4b2ec96ed69a7c9fe7a7c01bd01e4d4c95f527384d6ee3862e43e850ed54d04f"
  },
- "created": "2026-10-06T08:49:05.998Z",
+ "created": "2026-10-06T09:22:09.466Z",
  "heldOut": "Files and pages chosen by hash before training and never trained on (scripts/tokenizer/prepare.py). Code: sha256(repo\\npath) mod 1000 < 80, up to 1.5 MB per language. Web: sha256(id) mod 1000 < 20, mostly-ASCII pages, up to 1.5 MB.",
  "definitions": {
   "bytesPerToken": "UTF-8 bytes of the held-out text divided by its token count (higher is better)",
@@ -459,10 +459,16 @@
   "docs": 1052,
   "tokens": 2287501,
   "mismatches": 0,
-  "against": "Hugging Face tokenizers 0.20.3 (Python)"
+  "against": "Hugging Face tokenizers 0.20.3 (Python)",
+  "fixtures": {
+   "strings": 5518,
+   "tokens": 366577,
+   "mismatches": 0,
+   "note": "scripts/tokenizer/_fixtures.json.gz: pre-tokenizer edge cases, Unicode 15/16 letters and digits, random strings over all of Unicode"
+  }
  },
  "speed": {
-  "encoderMBps": 6.71,
+  "encoderMBps": 7.14,
   "note": "shared/sepia1/tokenizer.ts on Node, one core, cold piece cache per process"
  },
  "evalSha256": {

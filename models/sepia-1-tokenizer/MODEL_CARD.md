@@ -7,7 +7,7 @@ Byte-level BPE tokenizer with 32,768 entries for SEPIA-1, the code-reading model
 - trained with Hugging Face `tokenizers` 0.20.3 (Python 3.12.10) in 24.6 s; training twice gives a byte-identical tokenizer.json (checked: True)
 - held-out code: **4.22 bytes per token**, 4.6% fewer tokens than o200k_base, 5.1% fewer than cl100k_base and 43.0% fewer than GPT-2 r50k_base on the same files
 - exact round trip on 1,052 of 1,052 held-out documents (9.20 MB)
-- the TypeScript encoder used in the browser matches this tokenizer on 2,287,501 held-out tokens with 0 mismatches
+- the TypeScript encoder used in the browser matches this tokenizer on 2,287,501 held-out tokens with 0 mismatches, and on 5,518 committed test strings (including Unicode 15/16 characters and random strings over all of Unicode) with 0 mismatches
 
 ## Design
 
@@ -33,7 +33,7 @@ Decisions where the design left room:
 
 ## Training data
 
-Sample: 26,411 documents, 209.22 MB, 61.8% code by bytes (code first, as in the anneal phase of the SEPIA-1 mixture). Sample sha256 `aa6d94144c63528609ee107cab3b2a97871eca28615a2c037da8ae120268a6aa`.
+Sample: 26,411 documents, 209.22 MB. 61.8% of the bytes come from the protocol code index (49.5% source code, 11.8% Markdown docs and EIPs, 0.5% Anchor IDL JSON) and 38.2% is web text (code first, as in the anneal phase of the SEPIA-1 mixture). Sample sha256 `aa6d94144c63528609ee107cab3b2a97871eca28615a2c037da8ae120268a6aa`.
 
 - **Protocol code index**: 110 allowlisted repositories (18,239 files), fetched with LUSCA's code index (`server/codebase`) at the commits listed in `data-manifest.json`, with each repository's and file's license recorded. All licenses are included, as in the code index policy.
 - **Crypto web text**: 10,595 pages (80.00 MB) sampled with a fixed seed from the LUSCA corpus (`dataset.jsonl`, a prefix snapshot; byte range and sha256 in the manifest).
@@ -60,6 +60,8 @@ Code bytes per language in the sample. Every language contributes all of its tra
 
 Files and pages chosen by hash before training and never trained on (scripts/tokenizer/prepare.py). Code: sha256(repo\npath) mod 1000 < 80, up to 1.5 MB per language. Web: sha256(id) mod 1000 < 20, mostly-ASCII pages, up to 1.5 MB.
 
+The best value in each row is in bold. Code is held out by file, so held-out files can share code with training files of the same repository; rows with fewer than 30 files (C / C++, TypeScript, Python, Vyper) are indicative only.
+
 Bytes per token (higher is better):
 
 | Held-out set | Files | MB | SEPIA-1 (32,768) | r50k_base (GPT-2) | cl100k_base | o200k_base |
@@ -70,14 +72,14 @@ Bytes per token (higher is better):
 | Move | 59 | 0.63 | **4.20** | 2.45 | 4.10 | 4.09 |
 | Cairo | 51 | 0.32 | **3.83** | 2.44 | 3.74 | 3.76 |
 | Go | 138 | 1.27 | **3.87** | 2.64 | 3.62 | 3.67 |
-| C / C++ | 9 | 0.23 | **3.78** | 2.21 | 3.81 | 3.80 |
+| C / C++ | 9 | 0.23 | 3.78 | 2.21 | **3.81** | 3.80 |
 | TypeScript | 16 | 0.11 | **4.30** | 2.43 | 3.89 | 3.91 |
 | Python | 15 | 0.16 | **4.61** | 2.49 | 4.27 | 4.24 |
-| Markdown (EIPs, docs) | 141 | 1.51 | **3.54** | 2.99 | 3.65 | 3.67 |
-| Web text (English, crypto) | 202 | 1.51 | **3.79** | 3.80 | 4.15 | 4.26 |
+| Markdown (EIPs, docs) | 141 | 1.51 | 3.54 | 2.99 | 3.65 | **3.67** |
+| Web text (English, crypto) | 202 | 1.51 | 3.79 | 3.80 | 4.15 | **4.26** |
 | **All code** (no Markdown) | | 6.19 | **4.22** | 2.41 | 4.01 | 4.03 |
 
-Lines of code in one 2,048-token window (2,048 × lines ÷ tokens):
+Lines of code in one 2,048-token window (2,048 × lines ÷ tokens; higher is better):
 
 | Held-out set | SEPIA-1 | r50k_base | cl100k_base | o200k_base |
 |---|---:|---:|---:|---:|
@@ -87,10 +89,10 @@ Lines of code in one 2,048-token window (2,048 × lines ÷ tokens):
 | Move | **233** | 135 | 227 | 226 |
 | Cairo | **230** | 147 | 225 | 226 |
 | Go | **229** | 156 | 215 | 217 |
-| C / C++ | **195** | 114 | 197 | 197 |
+| C / C++ | 195 | 114 | **197** | **197** |
 | TypeScript | **245** | 138 | 222 | 222 |
 | Python | **339** | 184 | 314 | 312 |
-| Markdown (EIPs, docs) | **130** | 110 | 135 | 135 |
+| Markdown (EIPs, docs) | 130 | 110 | **135** | **135** |
 
 Tokens per 1,000 lines and the per-file list are in `eval.json` and `eval.md`.
 
@@ -112,7 +114,7 @@ In JavaScript, `shared/sepia1/tokenizer.ts` in the LUSCA repository reads the sa
 - On English prose the 32,768-entry vocabulary is less compact than cl100k_base and o200k_base (100k and 200k entries). That trade keeps the SEPIA-1 embedding table small for volunteer GPUs.
 - One token per decimal digit makes long numbers cost more tokens than in GPT tokenizers.
 - The code holdout is by file, so held-out files can share code with training files of the same repository; repository-level holdouts come with the SEPIA-1 eval set (docs/SEPIA-1-data.md §6).
-- The pre-tokenizer uses Unicode letter and number classes; the regex engines of Rust (Oniguruma) and JavaScript may disagree on characters added in recent Unicode versions. No disagreement was found on the held-out data or the fixtures.
+- The pre-tokenizer uses the Unicode letter and number classes `\p{L}` and `\p{N}` as compiled by Oniguruma in `tokenizers` 0.20.3, which predates some letters and digits added in Unicode 15 and 16. Other `tokenizers` builds may use other tables. The TypeScript encoder replaces both classes with the exact code-point sets measured from 0.20.3 (`shared/sepia1/unicode-classes.ts`), so it does not depend on the JavaScript engine's Unicode version; its parity test includes Unicode 15/16 letters and digits and 3,000 random strings over all of Unicode.
 
 ## Reproduce
 

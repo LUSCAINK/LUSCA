@@ -7,8 +7,9 @@
    Python round trip (decode(encode(x)) == x) on every document.
 2. scripts/tokenizer/_fixtures.json.gz (committed): seeded synthetic strings built to hit every
    pre-tokenizer rule and its edges (operators, hex boundaries, digits, indentation, CRLF, Unicode
-   whitespace and letters, emoji, special tokens and near-misses), plus the playground examples
-   and slices of them, each with the ids `tokenizers` produces. scripts/tokenizer/_test.ts compares
+   whitespace and letters, emoji, special tokens and near-misses), letters and digits added in
+   Unicode 15/16, random strings over all of Unicode, plus the playground examples and slices of
+   them, each with the ids `tokenizers` produces. scripts/tokenizer/_test.ts compares
    the TypeScript encoder against these, token for token.
 """
 
@@ -37,6 +38,11 @@ OPS = ["..=", "///", "=>", "->", "::", "==", "!=", "<=", ">=", "&&", "||", "<<",
 WS = [" ", "  ", "   ", "\t", "\t\t", "\n", "\r\n", "\n    ", "\n        ", "\n\t", "\n\t\t", "\n\n", "\n\n    ", " \n", "  \n  ",
       "\r", "\r\r\n", "\x0b", "\x0c", " ", " ", "　", "﻿", "\u0085", "​", " \t ", "\t "]
 UNI = ["é", "ß", "日本語", "😀", "👨‍👩‍👧", "é", "مرحبا", "Привет", "²", "½", "Ⅻ", "∑", "→", "Ω", "中文 text", "Ä", "ı", "ǅ", "𝔘", "١٢٣"]
+# Letters and digits added in Unicode 15 and 16, which JavaScript engines may know and Oniguruma in
+# tokenizers 0.20.3 does not: CJK Ext H / I, Kawi, Nag Mundari, Garay, Kirat Rai, Sunuwar, outlined digits.
+RECENT = [0x31350, 0x31351, 0x323AF, 0x2EBF0, 0x2EE5D, 0x11F04, 0x11F10, 0x11F50, 0x11F59, 0x1E4D0, 0x1E4EB, 0x1E4F0, 0x1E4F9,
+          0x10D40, 0x10D49, 0x10D4A, 0x10D65, 0x16D40, 0x16D70, 0x16D79, 0x11BC0, 0x11BF0, 0x1CCF0, 0x1CCF9, 0x1E5D0, 0x1E5F1]
+UNI += [chr(c) for c in RECENT] + [chr(RECENT[0]) + "11", "0x1234567890abcdef" + chr(0x31350), "x" + chr(0x1E4D0) + "_1", chr(0x10D40) + chr(0x10D41)]
 SPECIAL = ["<|endoftext|>", "<|file|>", "<|repo|>", "<|pad|>", "<|fim_prefix|>", "<|", "|>", "<|endoftext", "<|reserved_31|>", "<|reserved_32|>", "<|<|file|>", "<|endoftext|>|>"]
 HEXCH = "0123456789abcdefABCDEF"
 
@@ -98,11 +104,38 @@ def synth(r):
     return sep.join(parts)
 
 
+def fuzz(r):
+    """Random strings over all of Unicode, weighted toward letters, digits and code syntax."""
+    out = []
+    for _ in range(r.randint(1, 30)):
+        k = r.random()
+        if k < 0.35:
+            out.append(chr(r.randint(0x20, 0x7E)))
+        elif k < 0.55:
+            c = r.randint(0, 0x10FFFF)
+            while 0xD800 <= c <= 0xDFFF:
+                c = r.randint(0, 0x10FFFF)
+            out.append(chr(c))
+        elif k < 0.70:
+            c = r.randint(0x80, 0x33FFF)
+            out.append(chr(c if not 0xD800 <= c <= 0xDFFF else c - 0x800))
+        elif k < 0.82:
+            out.append(chr(r.choice(RECENT)))
+        elif k < 0.90:
+            out.append(r.choice(OPS))
+        elif k < 0.95:
+            out.append(r.choice(WS))
+        else:
+            out.append(rnd_hex(r) if r.random() < 0.5 else rnd_num(r))
+    return "".join(out)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", required=True)
     ap.add_argument("--tokenizer", required=True)
     ap.add_argument("--fixtures", type=int, default=2400)
+    ap.add_argument("--fuzz", type=int, default=3000)
     a = ap.parse_args()
     tok = Tokenizer.from_file(a.tokenizer)
 
@@ -140,6 +173,7 @@ def main():
             i = r.randint(0, len(code) - 1)
             j = r.randint(i, min(len(code), i + 400))
             texts.append(code[i:j])
+    texts += [fuzz(r) for _ in range(a.fuzz)]
     texts += ["", " ", "\n", "\r\n", "<|endoftext|>", "a<|endoftext|>b", "  x", "0x" + "f" * 64, " 0x" + "a" * 9, "0x123456789g"]
     encs = tok.encode_batch(texts, add_special_tokens=False)
     fx = [{"text": t, "ids": e.ids} for t, e in zip(texts, encs)]

@@ -10,6 +10,7 @@
 //     the encoding the corpus uses at ingest).
 // Writes models/sepia-1-tokenizer/eval.json and eval.md. Exits non-zero on any parity or round-trip failure.
 import fs from 'node:fs'
+import zlib from 'node:zlib'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
@@ -131,6 +132,18 @@ const totals = {
   },
 }
 
+// committed edge-case fixtures (scripts/tokenizer/_fixtures.json.gz): Unicode 15/16, random Unicode, rule edges
+const fx = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(root, 'scripts', 'tokenizer', '_fixtures.json.gz'))).toString('utf8')) as { tokenizer_sha256: string; fixtures: { text: string; ids: number[] }[] }
+if (fx.tokenizer_sha256 !== sha) throw new Error('fixtures were made for another tokenizer.json')
+let fxTokens = 0
+let fxMismatches = 0
+for (const f of fx.fixtures) {
+  const ids = tok.encode(f.text)
+  fxTokens += ids.length
+  if (ids.length !== f.ids.length || ids.some((v, k) => v !== f.ids[k])) fxMismatches++
+}
+mismatches += fxMismatches
+
 const manifest = JSON.parse(fs.readFileSync(path.join(work, 'manifest.json'), 'utf8')) as { eval: Record<string, { sha256: string }> }
 const evalJson = {
   tokenizer: { name: 'SEPIA-1 tokenizer', version: 'v1', vocabSize: tok.vocabSize, sha256: sha },
@@ -145,27 +158,40 @@ const evalJson = {
   languages,
   totals,
   roundTrip: { docs: rtDocs, exact: rtExact, bytes: rtBytes },
-  parity: { docs: parityDocs, tokens: parityTokens, mismatches, against: 'Hugging Face tokenizers 0.20.3 (Python)' },
+  parity: {
+    docs: parityDocs,
+    tokens: parityTokens,
+    mismatches,
+    against: 'Hugging Face tokenizers 0.20.3 (Python)',
+    fixtures: { strings: fx.fixtures.length, tokens: fxTokens, mismatches: fxMismatches, note: 'scripts/tokenizer/_fixtures.json.gz: pre-tokenizer edge cases, Unicode 15/16 letters and digits, random strings over all of Unicode' },
+  },
   speed: { encoderMBps: round(encBytes / 1e6 / (encMs / 1000), 2), note: 'shared/sepia1/tokenizer.ts on Node, one core, cold piece cache per process' },
   evalSha256: Object.fromEntries(Object.entries(manifest.eval).map(([k, v]) => [k, v.sha256])),
 }
 fs.writeFileSync(path.join(outDir, 'eval.json'), JSON.stringify(evalJson, null, 1) + '\n')
 
-// human-readable table
+// human-readable table: in every row the best value is bold (whichever tokenizer it belongs to)
 const f2 = (x: number) => x.toFixed(2)
+const fi = (x: number) => x.toLocaleString('en-US')
+const ORDER: Key[] = ['sepia1', 'r50k', 'cl100k', 'o200k']
+const cells = (vals: number[], better: 'high' | 'low', show: (x: number) => string) => {
+  const best = better === 'high' ? Math.max(...vals) : Math.min(...vals)
+  return vals.map((v) => (show(v) === show(best) ? `**${show(v)}**` : show(v))).join(' | ')
+}
 const md: string[] = []
 md.push('# SEPIA-1 tokenizer: held-out evaluation', '')
 md.push(`Tokenizer sha256 \`${sha}\`. ${rtExact} of ${rtDocs} held-out documents round-trip exactly; the TypeScript encoder matches the Python tokenizer on ${parityTokens.toLocaleString('en-US')} tokens with ${mismatches} mismatches.`, '')
+md.push('The best value in each row is in bold. Code is held out by file, so held-out files can share code with training files of the same repository; rows with fewer than 30 files are indicative only.', '')
 md.push('## Bytes per token (higher is better)', '')
 md.push('| Language | Docs | MB | SEPIA-1 (32,768) | r50k (GPT-2) | cl100k | o200k |', '|---|---:|---:|---:|---:|---:|---:|')
-for (const l of languages) md.push(`| ${l.label} | ${l.docs} | ${f2(l.bytes / 1e6)} | **${f2(l.tokenizers.sepia1.bytesPerToken)}** | ${f2(l.tokenizers.r50k.bytesPerToken)} | ${f2(l.tokenizers.cl100k.bytesPerToken)} | ${f2(l.tokenizers.o200k.bytesPerToken)} |`)
-md.push(`| **All code** (no Markdown) | | ${f2(codeBytes / 1e6)} | **${f2(totals.code.tokenizers.sepia1.bytesPerToken)}** | ${f2(totals.code.tokenizers.r50k.bytesPerToken)} | ${f2(totals.code.tokenizers.cl100k.bytesPerToken)} | ${f2(totals.code.tokenizers.o200k.bytesPerToken)} |`, '')
+for (const l of languages) md.push(`| ${l.label} | ${l.docs} | ${f2(l.bytes / 1e6)} | ${cells(ORDER.map((k) => l.tokenizers[k].bytesPerToken), 'high', f2)} |`)
+md.push(`| **All code** (no Markdown) | | ${f2(codeBytes / 1e6)} | ${cells(ORDER.map((k) => totals.code.tokenizers[k].bytesPerToken), 'high', f2)} |`, '')
 md.push('## Tokens per 1,000 lines (lower is better)', '')
 md.push('| Language | SEPIA-1 | r50k | cl100k | o200k |', '|---|---:|---:|---:|---:|')
-for (const l of languages) md.push(`| ${l.label} | **${l.tokenizers.sepia1.tokensPer1kLines.toLocaleString('en-US')}** | ${l.tokenizers.r50k.tokensPer1kLines.toLocaleString('en-US')} | ${l.tokenizers.cl100k.tokensPer1kLines.toLocaleString('en-US')} | ${l.tokenizers.o200k.tokensPer1kLines.toLocaleString('en-US')} |`)
-md.push('', '## Lines in one 2,048-token window', '')
+for (const l of languages) md.push(`| ${l.label} | ${cells(ORDER.map((k) => l.tokenizers[k].tokensPer1kLines), 'low', fi)} |`)
+md.push('', '## Lines in one 2,048-token window (higher is better)', '')
 md.push('| Language | SEPIA-1 | r50k | cl100k | o200k |', '|---|---:|---:|---:|---:|')
-for (const l of languages.filter((x) => x.id !== 'web')) md.push(`| ${l.label} | **${l.tokenizers.sepia1.linesPer2048}** | ${l.tokenizers.r50k.linesPer2048} | ${l.tokenizers.cl100k.linesPer2048} | ${l.tokenizers.o200k.linesPer2048} |`)
+for (const l of languages.filter((x) => x.id !== 'web')) md.push(`| ${l.label} | ${cells(ORDER.map((k) => l.tokenizers[k].linesPer2048), 'high', String)} |`)
 md.push('', `Encoder speed (TypeScript, Node, one core): ${evalJson.speed.encoderMBps} MB/s.`, '')
 fs.writeFileSync(path.join(outDir, 'eval.md'), md.join('\n'))
 console.log(`parity ${parityDocs} docs / ${parityTokens} tokens / ${mismatches} mismatches · round trip ${rtExact}/${rtDocs} · ${evalJson.speed.encoderMBps} MB/s`)
