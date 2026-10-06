@@ -4,7 +4,7 @@
 // the server checks it and applies it with its optimizer. Dedupe (simmatrix) jobs still run too.
 //
 //   node neuron.mjs --auth <token>                        (public build: dist/neuron.mjs, Node ≥ 20)
-//   npx tsx scripts/neuron.ts [--server ws://127.0.0.1:8787/ws] [--label name] [--keypair file | --auth token] [--jobs n] [--quiet]
+//   npx tsx scripts/neuron.ts [--server ws://127.0.0.1:8787/ws] [--label name] [--keypair file | --auth token] [--jobs n] [--plain | --ascii] [--quiet]
 //
 // `npm run build:neuron` bundles this file and its imports (ws included) into one dependency-free
 // ESM file, dist/neuron.mjs, served at https://lusca.ink/neuron.mjs; that build defaults --server
@@ -17,12 +17,19 @@
 //             Preferred: no key material on this machine.
 //   --keypair a dedicated payout-only keypair JSON (solana-keygen new -o lusca-payout.json), never
 //             a wallet that holds funds. Signs the one-line sign-in message locally (no transaction,
-//             no cost; the key never leaves this machine) and links INK to that wallet.
+//             no cost; the key never leaves this machine) and links credits to that wallet.
 //   --wallet  Solana address shown with this neuron; payouts need --keypair or --auth
 //   --jobs    exit after n verified jobs     (default: run until Ctrl-C)
 //   --device  override the device id used for the ledger (16–64 chars; keep it secret)
-//   --quiet   only verdict failures and a summary every 25 jobs
+//   --plain   plain log lines instead of the live dashboard (env LUSCA_NEURON_PLAIN=1)
+//   --ascii   dashboard art in plain half blocks (LUSCA_NEURON_GLYPHS=braille|octant|ascii overrides)
+//   --quiet   plain output: only verdict failures and a summary every 25 jobs
 //   --no-train  dedupe jobs only (no SEPIA training)
+//
+// Output: every user-visible fact is a NeuronEvent (scripts/neuron-tui/types.ts) sent to a front-end:
+// the live dashboard (scripts/neuron-tui/index.ts) on a TTY of at least 90×26, otherwise plain log
+// lines (scripts/neuron-tui/log.ts). NO_COLOR turns colors off. Earnings are shown as credits: the
+// user's share of each payout period's SOL pool (the protocol's `ink` fields).
 //
 // 1. Benchmarks one CPU thread with a JS matmul → median GFLOPS (the server derives the zone),
 //    and times one SEPIA gradient on a fixed batch (also checks the f16 gradient codec).
@@ -31,16 +38,19 @@
 //      train     → weights (f16, only when the held version is not current) + x/y batch →
 //                  lossAndGrad → encodeGrad → train.result
 //      simmatrix → bestMatchesCPU (shared/vectorize.ts) → job.result
-//    printing every verdict ('ink' events for our neuron id) and the running INK totals.
+//    reporting every verdict ('ink' events for our neuron id) as a feed line. Credit totals are
+//    the server's: after each registration the neuron sends account.watch {device, auth} and shows
+//    the 'account' replies (confirmed all-time, pending in escrow), like the web panel; the session
+//    gain is the confirmed total now minus the first reply of this run.
 // 4. Handles {t:'error'} (corpus warming up, cool-downs, kicks, full pool) with backoff,
 //    reconnects on socket loss, and sends neuron.leave on Ctrl-C.
 //
 // Verification: dedupe results are re-checked on random rows; every training gradient is
 // compared with a server-computed gradient on a random sub-batch, and full audits (the whole
 // gradient recomputed from the same weights) run on the first jobs and then at random. Training
-// INK is held 'pending' until this identity's next full audit passes ('confirmed'); a failed
-// audit forfeits the pending INK. Only confirmed INK counts toward payouts: each payout period
-// the payout pool is split by INK and paid in SOL to verified wallets.
+// credits are held 'pending' until this identity's next full audit passes ('confirmed'); a failed
+// audit forfeits the pending credits. Only confirmed credits count toward payouts: each payout
+// period the payout pool is split by credits and paid in SOL to verified wallets.
 
 import os from 'node:os'
 import fs from 'node:fs'
@@ -56,6 +66,9 @@ import { base58Decode, base58Encode, isSolanaAddress } from '../shared/base58.ts
 import type { AuthNonce, AuthSession } from '../shared/payouts.ts'
 import { privateKeyFromSeed, rawPublicKey, signEd25519 } from '../server/auth/ed25519.ts'
 import { SEPIA, cosine, decodeGrad, encodeGrad, f16ToF32, lossAndGrad, trainFlops } from '../shared/sepia/index.mjs'
+import { createUI } from './neuron-tui/index.ts'
+import { createLogUI, fmtCredits, fmtDur, fmtFlop, shortAddr, shortId } from './neuron-tui/log.ts'
+import type { NeuronEvent, NeuronUI } from './neuron-tui/types.ts'
 
 // ─── build constants ─────────────────────────────────────────────────────────
 
@@ -79,6 +92,8 @@ interface Args {
   device: string | null
   jobs: number
   quiet: boolean
+  plain: boolean
+  ascii: boolean
   train: boolean
   help: boolean
 }
@@ -100,6 +115,8 @@ function parseArgs(argv: string[]): Args {
     device: null,
     jobs: 0,
     quiet: false,
+    plain: false,
+    ascii: false,
     train: true,
     help: false,
   }
@@ -156,6 +173,12 @@ function parseArgs(argv: string[]): Args {
       case '-q':
         out.quiet = true
         break
+      case '--plain':
+        out.plain = true
+        break
+      case '--ascii':
+        out.ascii = true
+        break
       case '--no-train':
         out.train = false
         break
@@ -179,54 +202,25 @@ function parseArgs(argv: string[]): Args {
   return out
 }
 
-// ─── pretty output ───────────────────────────────────────────────────────────
+// ─── output ──────────────────────────────────────────────────────────────────
 
+// Only --help and fatal errors are written here directly; everything else is a NeuronEvent rendered
+// by the front-end (scripts/neuron-tui).
 const COLOR = !!process.stdout.isTTY && !process.env.NO_COLOR
 const paint = (code: string) => (s: string | number) => (COLOR ? `\x1b[${code}m${s}\x1b[0m` : String(s))
-const hot = paint('38;5;202')
 const dim = paint('2')
 const bold = paint('1')
 const red = paint('31')
-const bone = paint('97')
 
-let QUIET = false
-
-function clock(): string {
-  const d = new Date()
-  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':')
+/** The server's texts name the INK token; to the user these amounts are work credits. */
+function credText(s: string): string {
+  return s.replace(/\bINK ledger\b/g, 'credit ledger').replace(/\$?\bINK\b/g, 'credits')
 }
 
-function line(mark: string, msg: string, force = false) {
-  if (QUIET && !force) return
-  process.stdout.write(`${dim(clock())} ${mark} ${msg}\n`)
-}
-const info = (msg: string) => line(dim('·'), msg)
-const good = (msg: string) => line(bone('■'), msg)
-const warn = (msg: string) => line(hot('▲'), msg, true)
-const bad = (msg: string) => line(red('✕'), msg, true)
-
-function fmtG(g: number): string {
-  return g >= 100 ? Math.round(g).toLocaleString('en-US') : g >= 10 ? g.toFixed(1) : g.toFixed(2)
-}
-function fmtFlop(f: number): string {
-  if (f >= 1e12) return `${(f / 1e12).toFixed(2)} TFLOP`
-  if (f >= 1e9) return `${(f / 1e9).toFixed(2)} GFLOP`
-  return `${(f / 1e6).toFixed(1)} MFLOP`
-}
-function fmtInk(n: number): string {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-function shortId(id: string): string {
-  return id.length > 10 ? `${id.slice(0, 4)}…${id.slice(-4)}` : id
-}
-function shortAddr(a: string): string {
-  return a.length > 12 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a
-}
-function fmtDur(ms: number): string {
-  const s = Math.floor(ms / 1000)
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  return `${h}:${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+/** LUSCA_NEURON_PLAIN set to anything but an explicit "off" value. */
+function plainFromEnv(): boolean {
+  const v = process.env.LUSCA_NEURON_PLAIN?.trim() ?? ''
+  return v !== '' && !/^(0|false|no|off)$/i.test(v)
 }
 
 // ─── CPU benchmark ───────────────────────────────────────────────────────────
@@ -333,7 +327,7 @@ function cpuModel(): string {
 }
 
 /**
- * Stable, anonymous per-machine id so wallet-less INK stays with this device: 80 random bits kept in
+ * Stable, anonymous per-machine id so wallet-less credits stay with this device: 80 random bits kept in
  * ~/.lusca/device-id (mode 0600). Hostname/user-derived ids are guessable, so they are only the
  * fallback when that file cannot be written.
  */
@@ -463,8 +457,8 @@ async function signIn(server: string, kp: { seed: Uint8Array; address: string })
     /^URI: https?:\/\//.test(lines[5]) && lines[5].slice(5).replace(/^https?:\/\//, '').toLowerCase() === host &&
     lines[6] === 'Version: 1' &&
     lines[7] === `Nonce: ${n.nonce}` &&
-    lines[8].startsWith('Issued At: ') && ISO.test(lines[8].slice(11)) &&
-    lines[9].startsWith('Expiration Time: ') && ISO.test(lines[9].slice(17))
+    ISO.test(lines[8].replace(/^Issued At: /, '')) && lines[8].startsWith('Issued At: ') &&
+    ISO.test(lines[9].replace(/^Expiration Time: /, '')) && lines[9].startsWith('Expiration Time: ')
   if (!expected) {
     const named = /^(.*) wants you to sign in/.exec(lines[0] ?? '')?.[1]?.toLowerCase()
     if (named && named !== host && /^[a-z0-9.-]+(:\d{1,5})?$/.test(named)) {
@@ -486,7 +480,7 @@ function usage(): string {
     '',
     `  ${bold('LUSCA desktop neuron')}`,
     '',
-    `  ${PROG} [--auth token | --keypair file] [--label name] [--server url] [--jobs n] [--quiet] [--no-train]`,
+    `  ${PROG} [--auth token | --keypair file] [--label name] [--server url] [--jobs n] [--plain | --ascii] [--quiet] [--no-train]`,
     '',
     '  Trains SEPIA on this CPU: computes gradients on batches chosen by the server, which audits',
     '  them and applies them. Also runs dedupe jobs. Node 20 or newer.',
@@ -499,14 +493,18 @@ function usage(): string {
     '  --wallet   Solana address to display      (payouts need --keypair or --auth)',
     '  --jobs     exit after n verified jobs     (default: 0 = run until Ctrl-C)',
     '  --device   override the ledger device id  (16–64 chars of A-Z a-z 0-9 _ -; keep it private)',
-    '  --quiet    only failures + a summary every 25 verified jobs',
+    '  --plain    plain log lines instead of the live dashboard (env LUSCA_NEURON_PLAIN=1). Also used',
+    '             automatically when output is not a terminal or the window is smaller than 90×26',
+    '  --ascii    draw the live dashboard with plain half blocks (fonts that lack braille / block octants);',
+    '             LUSCA_NEURON_GLYPHS=braille|octant|ascii picks the art characters (Windows Terminal: octant)',
+    '  --quiet    plain output: only failures + a summary every 25 verified jobs',
     '  --no-train dedupe jobs only (no SEPIA training)',
     '  --version  print the build id',
     '',
-    '  Credits are earned without a wallet (kept on this device). Training credits are pending until the',
-    '  next full audit of this identity passes, then confirmed; only confirmed credits count. Each',
-    '  payout period the payout pool is split by credits and paid in SOL to verified wallets.',
-    '  Source: https://github.com/LUSCAINK/LUSCA',
+    '  Credits are earned without a wallet (kept on this device). Training credits are pending until',
+    '  the next full audit of this identity passes, then confirmed; only confirmed credits are paid.',
+    '  Each payout period the payout pool is split by credits and paid in SOL to verified wallets.',
+    '  NO_COLOR=1 turns colors off. Source: https://github.com/LUSCAINK/LUSCA',
     '',
   ].join('\n')
 }
@@ -528,38 +526,114 @@ async function main() {
     process.stdout.write(usage() + '\n')
     return
   }
-  QUIET = args.quiet
 
   const threads = os.cpus().length
   const model = cpuModel()
   const label = (args.label ?? `${model} · desktop`).slice(0, 48)
   const dev = args.device ?? deviceId()
 
-  process.stdout.write(`\n  ${hot('■')} ${bold('LUSCA')} ${dim('· desktop neuron')}\n  ${dim('─'.repeat(44))}\n`)
-  process.stdout.write(`  ${dim('cpu    ')} ${model} · ${threads} threads (1 used) · ${os.platform()} ${os.arch()}\n`)
-  if (process.stdout.isTTY) process.stdout.write(`  ${dim('bench  ')} timing a 256×256 fp32 matmul…`)
-  const bench = benchmarkCpu()
-  if (process.stdout.isTTY) process.stdout.write('\r\x1b[2K')
-  const zone: Zone = zoneFor(bench.gflops)
-  const zinfo = ZONES.find((z) => z.zone === zone) ?? ZONES[0]
-  process.stdout.write(
-    `  ${dim('bench  ')} ${bold(fmtG(bench.gflops))} GFLOPS ${dim(`(median of ${bench.runs.length} · N=${bench.n} · 1 thread)`)} → ${hot(zone)} ${dim(`· ${zinfo.name} · ink bonus ×${zinfo.bonus.toFixed(2)}`)}\n`,
-  )
-  if (args.train) {
+  // ── front-end: live dashboard on a big enough terminal, plain lines otherwise ──
+  const tty = process.stdout
+  const wantTui =
+    !!tty.isTTY && (tty.columns ?? 0) >= 90 && (tty.rows ?? 0) >= 26 && !args.plain && !args.quiet && !plainFromEnv()
+  const plainUI = (resumed = false) => createLogUI({ color: COLOR, quiet: args.quiet, resumed })
+  let uiMode: 'tui' | 'log' = 'log'
+  let ui: NeuronUI
+  let uiNote: string | null = null
+  if (wantTui) {
     try {
-      const sc = trainSelfCheck(128)
-      process.stdout.write(
-        `  ${dim('sepia  ')} ${SEPIA.params.toLocaleString('en-US')} params · grad B=128 in ${sc.ms.toFixed(0)} ms ${dim(`(${fmtG(sc.gflops)} GFLOPS · f16 codec cos ${sc.codecCos.toFixed(5)})`)}\n`,
-      )
+      ui = createUI({ mode: 'tui', color: !process.env.NO_COLOR, ascii: args.ascii })
+      uiMode = 'tui'
     } catch (e) {
-      process.stderr.write(`${red('error')} ${(e as Error).message} — run with --no-train for dedupe jobs only\n`)
-      process.exit(2)
+      ui = plainUI()
+      uiNote = `live dashboard unavailable (${(e as Error)?.message ?? e}) — plain output`
     }
   } else {
-    process.stdout.write(`  ${dim('sepia  ')} training off (--no-train) · dedupe jobs only\n`)
+    ui = plainUI()
   }
-  process.stdout.write(`  ${dim('server ')} ${args.server}\n`)
-  process.stdout.write(`  ${dim('label  ')} ${label}\n`)
+
+  // A rendering failure must never stop the work: if the dashboard throws, it is shut down and the
+  // session continues on plain lines (events in between are queued and replayed).
+  let swapQueue: NeuronEvent[] | null = null
+  let swapDone: Promise<void> | null = null
+  const emit = (e: NeuronEvent) => {
+    if (swapQueue) {
+      swapQueue.push(e)
+      return
+    }
+    try {
+      ui.emit(e)
+    } catch (err) {
+      if (uiMode !== 'tui') return
+      uiMode = 'log'
+      swapQueue = [{ t: 'notice', level: 'warn', msg: `live dashboard stopped (${(err as Error)?.message ?? err}) — continuing with plain output` }, e]
+      const dead = ui
+      swapDone = within(Promise.resolve().then(() => dead.stop()), 3000).then(() => {
+        ui = plainUI(true)
+        const q = swapQueue ?? []
+        swapQueue = null
+        swapDone = null
+        for (const x of q) {
+          try {
+            ui.emit(x)
+          } catch {
+            /* plain output cannot fail in a way worth stopping for */
+          }
+        }
+      })
+    }
+  }
+
+  let uiStopped = false
+  /** Stop the front-end (restores the terminal); bounded so a stuck renderer cannot block exit. */
+  const stopUI = async (summary?: string) => {
+    if (uiStopped) return
+    uiStopped = true
+    if (swapDone) await swapDone
+    await within(Promise.resolve().then(() => ui.stop(summary)), 3000)
+  }
+  /** Fatal before the session starts: restore the terminal, then explain on stderr. */
+  const fatal = async (text: string): Promise<never> => {
+    await stopUI()
+    process.stderr.write(text)
+    process.exit(2)
+  }
+  /** Dashboard pacing only (lets a frame render around the blocking benchmark); no-op for plain output. */
+  const pause = (ms: number) => (uiMode === 'tui' ? new Promise<void>((r) => setTimeout(r, ms)) : Promise.resolve())
+
+  // Until the session installs its own handlers: leave cleanly (terminal restored) on Ctrl-C or a crash.
+  const early = () => void stopUI().finally(() => process.exit(130))
+  process.on('SIGINT', early)
+  process.on('SIGTERM', early)
+  process.on('uncaughtException', (err) => {
+    void stopUI().finally(() => {
+      process.stderr.write(`${red('error')} ${(err as Error)?.stack ?? String(err)}\n`)
+      process.exit(1)
+    })
+  })
+
+  emit({ t: 'boot', build: BUILD_ID, cpu: model, threads, os: `${os.platform()} ${os.arch()}`, server: args.server, label })
+  if (uiNote) emit({ t: 'notice', level: 'warn', msg: uiNote })
+  await pause(600)
+  emit({ t: 'bench', phase: 'start' })
+  await pause(120)
+  const bench = benchmarkCpu()
+  const zone: Zone = zoneFor(bench.gflops)
+  const zinfo = ZONES.find((z) => z.zone === zone) ?? ZONES[0]
+  emit({ t: 'bench', phase: 'done', gflops: bench.gflops, zone, bonus: zinfo.bonus })
+  await pause(250)
+  if (args.train) {
+    let sc: ReturnType<typeof trainSelfCheck>
+    try {
+      sc = trainSelfCheck(128)
+    } catch (e) {
+      return fatal(`${red('error')} ${(e as Error).message} — run with --no-train for dedupe jobs only\n`)
+    }
+    emit({ t: 'selftest', batch: 128, ms: sc.ms, gflops: sc.gflops, codecCos: sc.codecCos })
+  } else {
+    emit({ t: 'notice', level: 'info', msg: 'training off (--no-train) · dedupe jobs only' })
+  }
+  await pause(250)
 
   // Wallet sign-in: --keypair signs the nonce message locally; --auth reuses a token.
   let authToken: string | null = args.auth
@@ -569,18 +643,16 @@ async function main() {
     try {
       kp = readKeypair(args.keypair)
     } catch (e) {
-      process.stderr.write(`${red('error')} ${(e as Error).message}\n`)
-      process.exit(2)
+      return fatal(`${red('error')} ${(e as Error).message}\n`)
     }
     if (wallet && wallet !== kp.address) {
       kp.seed.fill(0)
-      process.stderr.write(`${red('error')} --wallet ${shortAddr(wallet)} does not match the --keypair address ${shortAddr(kp.address)}\n`)
-      process.exit(2)
+      return fatal(`${red('error')} --wallet ${shortAddr(wallet)} does not match the --keypair address ${shortAddr(kp.address)}\n`)
     }
     wallet = kp.address
-    process.stdout.write(`  ${dim('wallet ')} ${kp.address} ${dim('· signing in (plain-text message, no transaction)…')}\n`)
-    // A wallet was asked for: never fall back to earning on the device account, where INK is not
-    // paid out. Network errors and timeouts are retried; anything else stops here.
+    emit({ t: 'wallet', state: 'signing', address: kp.address })
+    // A wallet was asked for: never fall back to earning on the device account, where credits are
+    // not paid out. Network errors and timeouts are retried; anything else stops here.
     let failure: string | null = null
     try {
       for (let tryNo = 1; ; tryNo++) {
@@ -588,7 +660,7 @@ async function main() {
           const s = await signIn(args.server, kp)
           if (s.wallet !== kp.address || typeof s.token !== 'string') throw new Error('the server returned a token for another wallet')
           authToken = s.token
-          process.stdout.write(`  ${dim('wallet ')} ${bone('verified')} ${dim(`· sign-in valid until ${new Date(s.expiresAt).toISOString().slice(0, 10)}`)}\n`)
+          emit({ t: 'wallet', state: 'verified', address: kp.address, until: s.expiresAt })
           break
         } catch (e) {
           const err = e as Error
@@ -598,7 +670,7 @@ async function main() {
             failure = why
             break
           }
-          process.stdout.write(`  ${hot('▲')} wallet sign-in: ${why} ${dim(`— retrying (${tryNo + 1}/${SIGN_IN_TRIES})`)}\n`)
+          emit({ t: 'notice', level: 'warn', msg: `wallet sign-in: ${why} — retrying (${tryNo + 1}/${SIGN_IN_TRIES})` })
           await new Promise((r) => setTimeout(r, SIGN_IN_RETRY_MS))
         }
       }
@@ -606,6 +678,8 @@ async function main() {
       kp.seed.fill(0)
     }
     if (failure !== null) {
+      emit({ t: 'wallet', state: 'failed', address: kp.address, reason: failure })
+      await stopUI()
       process.stderr.write(
         `  ${red('■')} wallet sign-in failed: ${failure}\n` +
           `  ${dim('         not starting: --keypair was given but no wallet is verified. Fix the sign-in and run again,')}\n` +
@@ -613,16 +687,17 @@ async function main() {
       )
       // Let the event loop drain instead of process.exit(): exiting while fetch's socket is still
       // closing trips a libuv assertion on Windows (exit status 127 instead of 2).
+      process.off('SIGINT', early)
+      process.off('SIGTERM', early)
       process.exitCode = 2
       return
     }
+  } else if (authToken) {
+    emit({ t: 'wallet', state: 'token', ...(wallet ? { address: wallet } : {}) })
+  } else {
+    emit({ t: 'wallet', state: 'none', ...(wallet ? { address: wallet } : {}) })
   }
-  // The device id works like a credential for the device ledger account: show only its ends.
-  const devShown = dev.length > 14 ? `${dev.slice(0, 8)}…${dev.slice(-4)}` : '…'
-  process.stdout.write(
-    `  ${dim('ink to ')} ${authToken ? `${wallet ? shortAddr(wallet) : 'signed-in wallet'} ${dim('(pending server check)')}` : `this device ${dim(`(${devShown})`)}`}\n`,
-  )
-  process.stdout.write(`  ${dim('─'.repeat(44))}\n\n`)
+  await pause(200)
 
   // session state
   const startedAt = Date.now()
@@ -633,19 +708,25 @@ async function main() {
   let jobs = 0
   let verified = 0
   let failed = 0
-  let ink = 0 // confirmed INK seen this session (dedupe jobs + released training escrow)
-  let forfeited = 0
+  let forfeited = 0 // credits the server reported forfeited during this session (sum of its events)
   let trainJobs = 0
   let flops = 0
-  // Training INK in escrow, per job id: released into `ink` when a full audit of this identity
-  // passes, forfeited when one fails. The server's ledger is authoritative; this mirrors its events.
-  const escrow = new Map<string, number>()
-  const released = new Map<string, number>() // audited train job id → escrow moved locally on that audit
-  const pendingInk = () => {
-    let s = 0
-    for (const v of escrow.values()) s += v
-    return s
-  }
+  // Credit totals come only from the server's ledger, exactly like the web panel: every registered
+  // socket sends account.watch, and each 'account' reply (pushed again whenever the account or its
+  // escrow changes) replaces the totals. Verdict events drive the per-job feed only; nothing here
+  // adds them up. null until the first reply: the front-ends show "—".
+  let account: { confirmed: number; pending: number; scope: 'wallet' | 'device' | null } | null = null
+  // Confirmed credits at the first reply of this run, per resolved scope (session gain = now − base).
+  let sessionBase: { scope: string; ink: number } | null = null
+  let sessionCarry = 0 // gain on an earlier scope of this run (the identity changed mid-run)
+  let watchedSock: WebSocket | null = null
+  let watchedAuth: string | null = null
+  let accountWaiters: (() => void)[] = []
+  // Feed classification only (no amounts): this session's escrowed and audited training job ids,
+  // and results sent that have no verdict yet (waited for briefly on shutdown).
+  const pendingIds = new Set<string>()
+  const auditedIds = new Set<string>()
+  const unsettled = new Set<string>()
   // SEPIA weights held by version, so the server can skip resending them (job.weights === null).
   let held: { version: number; params: Float32Array } | null = null
   let grad: Float32Array | null = null
@@ -655,9 +736,13 @@ async function main() {
   let watchdog: NodeJS.Timeout | null = null
   let reconnectTimer: NodeJS.Timeout | null = null
   let reRegisterTimer: NodeJS.Timeout | null = null
-  let lastNeuronsLog = 0
   let lastAuth: 'verified' | 'invalid' | 'none' | null = null
   const mine = new Set<string>() // job ids we answered (attribution across re-registers)
+
+  const notice = (level: 'info' | 'warn' | 'error', msg: string) => emit({ t: 'notice', level, msg })
+  const r2 = (x: number) => Math.round(x * 100) / 100
+  const totals = () => emit({ t: 'totals', jobs, verified, failed })
+  const sessionGain = () => (account && sessionBase ? r2(sessionCarry + account.confirmed - sessionBase.ink) : 0)
 
   const send = (msg: ClientMsg): boolean => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return false
@@ -665,10 +750,62 @@ async function main() {
       ws.send(JSON.stringify(msg))
       return true
     } catch (e) {
-      warn(`send failed: ${(e as Error).message}`)
+      notice('warn', `send failed: ${(e as Error).message}`)
       return false
     }
   }
+
+  /**
+   * Follow this neuron's ledger account on the current socket: { device, auth } resolve on the
+   * server like neuron.register (valid token → wallet:<w>, else device:<id>). One watch per
+   * connection; `force` re-sends it (the identity may have changed, or a fresh reply is wanted).
+   */
+  const watchAccount = (force = false): boolean => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false
+    if (!force && watchedSock === ws && watchedAuth === authToken) return true
+    if (!send({ t: 'account.watch', device: dev, auth: authToken })) return false
+    watchedSock = ws
+    watchedAuth = authToken
+    return true
+  }
+
+  const finite = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
+  /** A server 'account' message: the new credit totals (account null = no ledger entry yet = 0). */
+  const onAccount = (m: Extract<ServerMsg, { t: 'account' }>) => {
+    const scope = m.scope === 'wallet' || m.scope === 'device' ? m.scope : null
+    let confirmed = 0
+    let pending = 0
+    if (m.account !== null) {
+      const ink = m.account && typeof m.account === 'object' ? finite(m.account.ink) : null
+      if (ink === null) return // malformed: keep the last good totals
+      confirmed = ink
+      pending = Math.max(0, finite(m.account.pendingInk) ?? 0)
+    }
+    const key = scope ?? 'none'
+    if (!sessionBase || sessionBase.scope !== key) {
+      if (sessionBase && account) sessionCarry += account.confirmed - sessionBase.ink
+      sessionBase = { scope: key, ink: confirmed }
+    }
+    account = { confirmed, pending, scope }
+    emit({ t: 'account', confirmed, pending, session: sessionGain(), scope })
+    const waiting = accountWaiters
+    accountWaiters = []
+    for (const f of waiting) f()
+  }
+
+  /** Re-watch and wait for the server's reply (or `ms`): final totals straight from the ledger. */
+  const refreshAccount = (ms: number) =>
+    new Promise<void>((resolve) => {
+      if (!watchAccount(true)) return resolve()
+      const done = () => {
+        clearTimeout(timer)
+        accountWaiters = accountWaiters.filter((f) => f !== done)
+        resolve()
+      }
+      const timer = setTimeout(done, ms)
+      accountWaiters.push(done)
+    })
 
   const clearTimers = () => {
     if (requestTimer) clearTimeout(requestTimer)
@@ -703,7 +840,7 @@ async function main() {
 
   const scheduleRegister = (ms: number, why: string) => {
     if (reRegisterTimer || stopping) return
-    info(dim(`${why} — re-registering in ${Math.ceil(ms / 1000)} s`))
+    notice('info', `${why} — re-registering in ${Math.ceil(ms / 1000)} s`)
     reRegisterTimer = setTimeout(() => {
       reRegisterTimer = null
       if (!stopping) register()
@@ -722,24 +859,29 @@ async function main() {
       watchdog = setTimeout(() => {
         watchdog = null
         if (stopping || !neuronId) return
-        info(dim('no job for 30 s — asking again'))
+        notice('info', 'no job for 30 s — asking again')
         requestJob()
       }, 30_000)
     }, delay)
   }
 
-  const inkLine = () => {
-    const p = pendingInk()
-    return `${hot(`${fmtInk(ink)} credits confirmed`)}${p > 0 ? ` · ${fmtInk(p)} pending` : ''}${forfeited > 0 ? ` · ${red(`${fmtInk(forfeited)} forfeited`)}` : ''}`
+  /** The closing line; credit figures are the server ledger's ("—" if it never answered). */
+  const summary = () => {
+    const credits = account
+      ? `${fmtCredits(account.confirmed)} credits confirmed · ${fmtCredits(account.pending)} pending · +${fmtCredits(sessionGain())} confirmed this session`
+      : '— credits (no ledger reply)'
+    return (
+      `${fmtDur(Date.now() - startedAt)} · ${jobs} jobs (${trainJobs} train) · ${verified} verified · ${failed} failed · ${fmtFlop(flops)} · ` +
+      `${credits}${forfeited > 0 ? ` · ${fmtCredits(forfeited)} forfeited` : ''} · paid in SOL to verified wallets`
+    )
   }
 
-  const summary = () =>
-    `${fmtDur(Date.now() - startedAt)} · ${jobs} jobs (${trainJobs} train) · ${verified} verified · ${failed} failed · ${fmtFlop(flops)} · ${inkLine()}`
-
-  const remember = (id: string) => {
-    mine.add(id)
-    if (mine.size > 2000) mine.delete(mine.values().next().value as string)
+  /** Add to a bounded id set (oldest dropped first). */
+  const keep = (set: Set<string>, id: string, max = 2000) => {
+    set.add(id)
+    if (set.size > max) set.delete(set.values().next().value as string)
   }
+  const remember = (id: string) => keep(mine, id)
 
   /** SEPIA training step: gradient of the mean cross-entropy on the server's batch. */
   const handleTrainJob = (job: TrainJob) => {
@@ -767,17 +909,27 @@ async function main() {
     remember(job.id)
     const ok = send({ t: 'train.result', result: { id: job.id, kind: 'train', grad: bytesB64(encodeGrad(grad)), loss, ms: Math.round(ms * 100) / 100 } })
     if (!ok) {
-      warn(`train job ${shortId(job.id)} computed but the socket closed before sending`)
+      notice('warn', `train job ${shortId(job.id)} computed but the socket closed before sending`)
       return
     }
+    keep(unsettled, job.id, 64)
     jobs++
     trainJobs++
     flops += f
     errStreak = 0
-    info(
-      `train ${bone(shortId(job.id))} · SEPIA v${job.version}${job.weights !== null ? dim(' (new weights)') : ''} · B=${B} · loss ${loss.toFixed(3)} · ${fmtFlop(f)} · ${ms.toFixed(0)} ms · ${fmtG(f / (Math.max(ms, 0.001) * 1e6))} GFLOPS`,
-    )
+    emit({ t: 'computed', id: job.id, kind: 'train', ms, gflops: f / (Math.max(ms, 0.001) * 1e6), loss })
     if (!args.jobs || jobs - failed < args.jobs) requestJob(0)
+  }
+
+  /** The 'job' event: what arrived, before any work (the FLOPs the job is worth, as the server counts them). */
+  const announce = (job: SimJob | TrainJob) => {
+    const given = Number.isFinite(job.flops) && job.flops > 0 ? job.flops : 0
+    if (job.kind === 'train') {
+      const B = job.batch
+      emit({ t: 'job', id: String(job.id), kind: 'train', version: job.version, batch: B, flops: given || (Number.isInteger(B) && B > 0 ? trainFlops(B) : 0) })
+    } else {
+      emit({ t: 'job', id: String(job.id), kind: 'sim', flops: given || 2 * job.rows * job.cols * job.dim || 0 })
+    }
   }
 
   const handleJob = (job: SimJob | TrainJob) => {
@@ -785,6 +937,7 @@ async function main() {
       clearTimeout(watchdog)
       watchdog = null
     }
+    announce(job)
     try {
       if (job.kind === 'train') {
         handleTrainJob(job)
@@ -802,18 +955,27 @@ async function main() {
       const f = Number.isFinite(job.flops) && job.flops > 0 ? job.flops : 2 * rows * cols * d
       remember(job.id)
       if (!send({ t: 'job.result', result: { id: job.id, best: r.best, sim: r.sim, ms: Math.round(ms * 100) / 100 } })) {
-        warn(`job ${shortId(job.id)} computed but the socket closed before sending`)
+        notice('warn', `job ${shortId(job.id)} computed but the socket closed before sending`)
         return
       }
+      keep(unsettled, job.id, 64)
       jobs++
       flops += f
       errStreak = 0
-      info(`job ${bone(shortId(job.id))} · ${rows}×${cols}×${d} · ${fmtFlop(f)} · ${ms.toFixed(ms < 10 ? 1 : 0)} ms · ${fmtG(f / (Math.max(ms, 0.001) * 1e6))} GFLOPS eff.`)
+      emit({ t: 'computed', id: job.id, kind: 'sim', ms, gflops: f / (Math.max(ms, 0.001) * 1e6) })
       // One job at a time; the coordinator keeps one request queued, so ask right behind the result.
       if (!args.jobs || jobs - failed < args.jobs) requestJob(0)
     } catch (e) {
       errStreak++
-      bad(`job ${shortId(job.id)} rejected locally: ${(e as Error).message}`)
+      emit({
+        t: 'verdict',
+        id: String((job as { id?: unknown }).id ?? '—'),
+        kind: (job as { kind?: unknown }).kind === 'train' ? 'train' : 'sim',
+        status: 'failed',
+        credits: 0,
+        pending: false,
+        reason: (e as Error).message,
+      })
       requestJob(backoff())
     }
   }
@@ -822,86 +984,73 @@ async function main() {
     if (ev.neuronId !== neuronId && !mine.has(ev.jobId)) return
     const status = ev.status ?? (ev.verified ? 'confirmed' : undefined)
     const isTrain = ev.kind === 'train'
+    const kind = isTrain ? 'train' : 'sim'
+    const reason = credText(ev.reason ?? '')
+    const amount = Number.isFinite(ev.ink) && ev.ink > 0 ? ev.ink : 0
+    unsettled.delete(ev.jobId)
+    // Feed lines only, with the server's amounts. Totals are never added up here: the server
+    // releases escrow only up to the audited job and verdicts can arrive out of order, so they come
+    // from its ledger ('account' replies to account.watch).
     if (status === 'forfeited') {
-      // A failed full audit: every pending training INK of this identity is lost. The server's
-      // amount is authoritative (it can include escrow from earlier sessions); the job's own
-      // rejection arrives as a separate event.
-      const lost = ev.ink > 0 ? ev.ink : pendingInk()
-      forfeited += lost
-      escrow.clear()
-      bad(`${ev.reason} · ${fmtInk(lost)} pending credits forfeited`)
-    } else if (ev.verified && isTrain && status === 'confirmed' && released.has(ev.jobId)) {
-      // The escrow-release line that follows a passed full audit (same job id): its amount is
-      // authoritative; correct the local estimate moved into `ink` on the audit event.
-      const guessed = released.get(ev.jobId) ?? 0
-      released.set(ev.jobId, ev.ink)
-      ink += ev.ink - guessed
-      good(`${bone('audit passed')} · ${hot(`${fmtInk(ev.ink)} pending credits confirmed`)} ${dim(`· ${ev.reason}`)} · ${inkLine()}`)
+      // A failed full audit: the server forfeited this identity's escrow (its amount can include
+      // escrow from earlier sessions); the job's own rejection arrives as a separate event.
+      forfeited += amount
+      pendingIds.clear()
+      emit({ t: 'escrow', released: 0, forfeited: amount })
+    } else if (ev.verified && status === 'confirmed' && (auditedIds.has(ev.jobId) || pendingIds.has(ev.jobId))) {
+      // Escrow released: the line that follows a passed full audit (same job id, credits of
+      // earlier gradient jobs), or an escrowed job confirmed on its own (already counted).
+      pendingIds.delete(ev.jobId)
+      emit({ t: 'escrow', released: amount })
     } else if (ev.verified && status === 'pending') {
       verified++
-      escrow.set(ev.jobId, ev.ink)
-      good(`${bone('verified')} ${hot(`+${fmtInk(ev.ink)} credits`)} ${dim('pending')} ${dim(`· ${ev.reason}`)} · ${inkLine()} · ${verified}/${verified + failed}`)
-      if (QUIET && verified % 25 === 0) line(dim('·'), summary(), true)
+      keep(pendingIds, ev.jobId)
+      emit({ t: 'verdict', id: ev.jobId, kind, status: 'verified', credits: amount, pending: true, reason })
     } else if (ev.verified) {
-      const was = escrow.get(ev.jobId)
-      if (was !== undefined) {
-        // An escrowed job confirmed on its own (already counted as verified).
-        escrow.delete(ev.jobId)
-        ink += ev.ink || was
-        good(`${bone('confirmed')} ${hot(`+${fmtInk(ev.ink || was)} credits`)} ${dim(`· ${ev.reason}`)} · ${inkLine()}`)
-      } else {
-        verified++
-        ink += ev.ink
-        // A confirmed training job means this identity's full audit passed: the escrow is released
-        // (the server follows up with the exact released amount under the same job id).
-        const moved = isTrain ? pendingInk() : 0
-        if (moved > 0) {
-          ink += moved
-          escrow.clear()
-        }
-        if (isTrain) {
-          released.set(ev.jobId, moved)
-          if (released.size > 200) released.delete(released.keys().next().value as string)
-        }
-        good(`${bone(isTrain ? 'audited' : 'verified')} ${hot(`+${fmtInk(ev.ink)} credits`)} ${dim('confirmed')} ${dim(`· ${ev.reason}`)} · ${inkLine()} · ${verified}/${verified + failed}`)
-        if (QUIET && verified % 25 === 0) line(dim('·'), summary(), true)
-      }
+      verified++
+      // A confirmed training job passed a full audit (the server follows up with the escrow it
+      // released under the same job id).
+      if (isTrain) keep(auditedIds, ev.jobId, 200)
+      emit({ t: 'verdict', id: ev.jobId, kind, status: isTrain ? 'audited' : 'verified', credits: amount, pending: false, reason })
     } else {
       failed++
-      bad(`rejected · ${ev.reason}`)
+      // "gradient not scored … (no strike)": expired or unchecked, not a failed check.
+      emit({ t: 'verdict', id: ev.jobId, kind, status: /not scored/i.test(reason) ? 'stale' : 'rejected', credits: 0, pending: false, reason })
       if (!args.jobs || jobs - failed < args.jobs) requestJob(200) // harmless if one is already queued
     }
+    totals()
     if (args.jobs && verified >= args.jobs) void shutdown(`reached ${args.jobs} verified job${args.jobs === 1 ? '' : 's'}`)
   }
 
-  const handleError = (msg: string) => {
+  const handleError = (raw: string) => {
     errStreak++
+    const msg = credText(raw)
     const cool = /retry in (\d+)\s*s/i.exec(msg) ?? /re-register in (\d+)\s*s/i.exec(msg)
     if (/warming up/i.test(msg)) {
-      if (!warmupLogged) warn('corpus warming up — the request stays queued; the first job follows when pages arrive')
+      if (!warmupLogged) notice('warn', 'corpus warming up — the request stays queued; the first job follows when pages arrive')
       warmupLogged = true
       if (watchdog) clearTimeout(watchdog)
       watchdog = null
       requestJob(Math.max(backoff(), 5000)) // harmless re-ask in case the queued request was dropped
     } else if (/register as a neuron/i.test(msg)) {
-      warn('coordinator forgot this neuron — re-registering')
+      notice('warn', 'coordinator forgot this neuron — re-registering')
       neuronId = null
       register()
     } else if (/consecutive failed jobs|cooling down/i.test(msg)) {
-      bad(msg)
+      notice('error', msg)
       neuronId = null
       if (requestTimer) clearTimeout(requestTimer)
       if (watchdog) clearTimeout(watchdog)
       requestTimer = watchdog = null
       scheduleRegister(cool ? Number(cool[1]) * 1000 + 500 : 30_000, 'cooling down')
     } else if (/unknown or expired job/i.test(msg)) {
-      warn('result arrived after the job expired — requesting a fresh one')
+      notice('warn', 'result arrived after the job expired — requesting a fresh one')
       requestJob(200)
     } else if (/pool is full/i.test(msg)) {
       scheduleRegister(Math.max(backoff(), 15_000), 'neuron pool is full')
     } else {
       const wait = backoff()
-      warn(`coordinator: ${msg} — retry in ${Math.round(wait / 1000)} s`)
+      notice('warn', `coordinator: ${msg} — retry in ${Math.round(wait / 1000)} s`)
       if (neuronId) requestJob(wait)
       else scheduleRegister(wait, 'not registered')
     }
@@ -910,7 +1059,7 @@ async function main() {
   const connect = () => {
     if (stopping) return
     reconnectTimer = null
-    info(`connecting to ${args.server}${attempt ? dim(` (attempt ${attempt + 1})`) : ''}`)
+    emit({ t: 'conn', state: 'connecting', server: args.server })
     const sock = new WebSocket(args.server, { handshakeTimeout: 10_000, perMessageDeflate: false, maxPayload: 64 * 1024 * 1024 })
     ws = sock
     let registered = false
@@ -921,7 +1070,7 @@ async function main() {
     }
     sock.on('open', () => {
       attempt = 0
-      good('connected · registering')
+      emit({ t: 'conn', state: 'connected', server: args.server })
       join()
     })
     sock.on('message', (data, isBinary) => {
@@ -943,26 +1092,39 @@ async function main() {
             neuronId = n.id
             errStreak = 0
             warmupLogged = false
-            if (first) good(`registered neuron ${bone(shortId(n.id))} · ${hot(n.zone)} · ${fmtG(n.gflops)} GFLOPS · ${n.kind}${n.wallet ? ` · ${shortAddr(n.wallet)}` : ''}`)
             const auth = msg.auth ?? 'none'
-            if (authToken && auth !== 'verified') {
-              // A wallet was asked for: do not keep earning on the device account instead.
-              bad(
-                auth === 'invalid'
-                  ? 'sign-in token rejected (expired or issued by another server)'
-                  : 'the server did not confirm the wallet sign-in',
-              )
+            // A wallet was asked for: do not keep earning on the device account instead.
+            const authFailed = !!authToken && auth !== 'verified'
+            const authChanged = !authFailed && auth !== lastAuth
+            if (authChanged && auth === 'verified' && (n.wallet ?? wallet)) emit({ t: 'wallet', state: 'verified', address: (n.wallet ?? wallet) as string })
+            if (first || authChanged) {
+              emit({
+                t: 'conn',
+                state: 'registered',
+                server: args.server,
+                neuronId: n.id,
+                zone: n.zone,
+                gflops: n.gflops,
+                ...(authFailed ? {} : { linked: auth === 'verified' }),
+              })
+            }
+            if (authFailed) {
+              const why = auth === 'invalid' ? 'sign-in token rejected (expired or issued by another server)' : 'the server did not confirm the wallet sign-in'
+              emit({ t: 'wallet', state: 'failed', ...(wallet ? { address: wallet } : {}), reason: why })
+              notice('error', why)
               void shutdown(`stopping — run again with --keypair, or with a new --auth token from the Node page`, 2)
               return
             }
-            if (auth !== lastAuth) {
-              lastAuth = auth
-              if (auth === 'verified') good(`Credits linked to verified wallet ${bone(n.wallet ? shortAddr(n.wallet) : wallet ? shortAddr(wallet) : '')} · eligible for SOL payouts`)
-              else info(dim('Credits stay on this device account — sign in with --keypair or --auth to receive SOL payouts'))
-            }
+            if (authChanged) lastAuth = auth
+            // Credit totals: follow the ledger account credits now go to (every new socket, and
+            // again when the server's view of the sign-in changed).
+            watchAccount(authChanged && !first)
             requestJob(0)
             return
           }
+          case 'account':
+            onAccount(msg)
+            return
           case 'job':
             handleJob(msg.job)
             return
@@ -973,26 +1135,24 @@ async function main() {
             handleError(msg.msg || 'unknown error')
             return
           case 'neurons': {
-            const now = Date.now()
-            if (!neuronId || now - lastNeuronsLog < 60_000) return
-            lastNeuronsLog = now
+            if (!neuronId) return
             const ranked = msg.neurons.slice().sort((x, y) => y.ink - x.ink)
             const pos = ranked.findIndex((x) => x.id === neuronId)
             const pooled = ranked.reduce((s, x) => s + x.gflops, 0)
-            if (pos >= 0) info(dim(`rank #${pos + 1} of ${ranked.length} neurons · pool ${fmtG(pooled)} GFLOPS`))
+            emit({ t: 'network', ...(pos >= 0 ? { rank: pos + 1 } : {}), neurons: ranked.length, poolGflops: pooled })
             return
           }
           default:
             return // ingest firehose (agents, pages, traces, payouts…) — not ours
         }
       } catch (e) {
-        warn(`message handler failed: ${(e as Error)?.message ?? e}`)
+        notice('warn', `message handler failed: ${(e as Error)?.message ?? e}`)
       }
     })
     sock.on('error', (e: Error & { code?: string }) => {
       if (stopping) return
-      if (e.code === 'ECONNREFUSED') warn(`coordinator unreachable at ${args.server} — is the server running?${/\/\/(127\.0\.0\.1|localhost)[:/]/.test(args.server) ? ' (npm run server)' : ''}`)
-      else warn(`socket error: ${e.message}`)
+      if (e.code === 'ECONNREFUSED') notice('warn', `coordinator unreachable at ${args.server} — is the server running?${/\/\/(127\.0\.0\.1|localhost)[:/]/.test(args.server) ? ' (npm run server)' : ''}`)
+      else notice('warn', `socket error: ${e.message}`)
     })
     sock.on('close', (code) => {
       if (ws === sock) ws = null
@@ -1002,7 +1162,8 @@ async function main() {
       if (stopping) return
       attempt++
       const wait = Math.round(Math.min(30_000, 1000 * 2 ** Math.min(attempt - 1, 5) * (0.8 + Math.random() * 0.4)))
-      ;(had ? bad : warn)(`${had ? 'connection lost' : 'disconnected'}${code && code !== 1006 ? ` (code ${code})` : ''} — reconnecting in ${(wait / 1000).toFixed(1)} s`)
+      emit({ t: 'conn', state: 'reconnecting', server: args.server })
+      notice(had ? 'error' : 'warn', `${had ? 'connection lost' : 'disconnected'}${code && code !== 1006 ? ` (code ${code})` : ''} — reconnecting in ${(wait / 1000).toFixed(1)} s`)
       reconnectTimer = setTimeout(connect, wait)
     })
   }
@@ -1012,9 +1173,15 @@ async function main() {
     stopping = true
     clearTimers()
     if (reconnectTimer) clearTimeout(reconnectTimer)
-    line(dim('·'), why, true)
+    notice('info', why)
     const sock = ws
     if (sock && sock.readyState === WebSocket.OPEN) {
+      // Closing totals from the ledger: let verdicts for results already sent land (briefly), then
+      // ask the server for the account once more.
+      for (const until = Date.now() + 4000; unsettled.size > 0 && Date.now() < until && sock.readyState === WebSocket.OPEN; ) {
+        await new Promise((r) => setTimeout(r, 100))
+      }
+      if (sock.readyState === WebSocket.OPEN) await refreshAccount(2500)
       send({ t: 'neuron.leave' })
       await new Promise<void>((resolve) => {
         const done = setTimeout(resolve, 1500)
@@ -1027,14 +1194,31 @@ async function main() {
     } else if (sock) {
       sock.terminate()
     }
-    process.stdout.write(`\n  ${dim('session')} ${summary()}\n\n`)
+    emit({ t: 'conn', state: 'closed', server: args.server })
+    await stopUI(summary())
     process.exit(code)
   }
 
-  process.on('SIGINT', () => void shutdown('Ctrl-C — leaving the pool'))
-  process.on('SIGTERM', () => void shutdown('terminated — leaving the pool'))
-  process.on('unhandledRejection', (r) => warn(`unhandled rejection: ${String(r)}`))
+  process.off('SIGINT', early)
+  process.off('SIGTERM', early)
+  // A second Ctrl-C while leaving (it waits a few seconds for the closing totals) leaves at once.
+  const leaveNow = () => void stopUI().finally(() => process.exit(130))
+  process.on('SIGINT', () => (stopping ? leaveNow() : void shutdown('Ctrl-C — leaving the pool')))
+  process.on('SIGTERM', () => (stopping ? leaveNow() : void shutdown('terminated — leaving the pool')))
+  process.on('unhandledRejection', (r) => notice('warn', `unhandled rejection: ${String(r)}`))
   connect()
+}
+
+/** Resolve when `p` settles or after `ms`, whichever is first (never rejects). */
+function within(p: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, ms)
+    const done = () => {
+      clearTimeout(t)
+      resolve()
+    }
+    p.then(done, done)
+  })
 }
 
 void main()
