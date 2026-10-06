@@ -385,10 +385,14 @@ async function gpuMain() {
     else console.log(`   unexpected (B=${bs}): ${JSON.stringify(r)}`)
   }
   check('honest unforced → applied/audited', applied + audited === sizes.length, `${applied} applied, ${audited} audited (P=0.2) of ${sizes.length}`)
+  // the public counters are shown once they are on disk (progressFloor.ts: about 1 s after the worker reports them)
+  const counted = (s: ReturnType<typeof trainer.trainStats>) =>
+    s.gpuSteps >= st0.gpuSteps + 13 && s.gpuSamples >= st0.gpuSamples + 13 * 128 && s.contributors24h >= 1 && s.audits.ok >= 1 && s.gpuStepsPerMin >= 13
+  const tc = Date.now()
   await new Promise((r) => setTimeout(r, 1200))
+  while (Date.now() - tc < 6000 && !counted(trainer.trainStats())) await new Promise((r) => setTimeout(r, 200))
   const st2 = trainer.trainStats()
-  check('stats count GPU steps', st2.gpuSteps >= st0.gpuSteps + 13 && st2.gpuSamples >= st0.gpuSamples + 13 * 128 && st2.contributors24h >= 1 && st2.audits.ok >= 1 && st2.gpuStepsPerMin >= 13,
-    JSON.stringify(st2))
+  check('stats count GPU steps', counted(st2), `${JSON.stringify(st2)} (after ${Date.now() - tc} ms)`)
   const mi = trainer.info()
   check('ModelInfo carries train stats', mi.gpuSteps === st2.gpuSteps && typeof mi.version === 'number' && mi.version >= st1.version, `version ${mi.version}, gpuSteps ${mi.gpuSteps}, serverSteps ${mi.serverSteps}`)
 
@@ -492,7 +496,8 @@ async function gpuMain() {
   const t2 = createTrainer({ dataDir: dir, emit: () => {} })
   t2.start()
   const tr = Date.now()
-  while (Date.now() - tr < 30_000 && t2.trainStats().gpuSteps === 0) await new Promise((r) => setTimeout(r, 250))
+  // GPU/server counters are published from progress.json at once; contributors24h comes with the worker's first report
+  while (Date.now() - tr < 30_000 && (t2.trainStats().gpuSteps === 0 || t2.trainStats().contributors24h !== before.contributors24h)) await new Promise((r) => setTimeout(r, 250))
   const after = t2.trainStats()
   check('counters persisted in sepia.ckpt', after.gpuSteps === before.gpuSteps && after.audits.ok === before.audits.ok && after.audits.failed === before.audits.failed && after.contributors24h === before.contributors24h,
     `before ${JSON.stringify(before)} after ${JSON.stringify(after)}`)

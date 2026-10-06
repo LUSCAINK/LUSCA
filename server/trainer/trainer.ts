@@ -303,7 +303,7 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
   // Observable state (read synchronously by the rest of the server).
   let history: LossPoint[] = []
   let sampleList: Sample[] = []
-  let step = 0
+  let step = progress.floor().step // what was last shown (0 on a fresh data dir); the checkpoint load raises it
   let lastLoss = Math.log(VOCAB_SIZE) // the loss of the near-uniform initial softmax
   let lastVal: number | null = null
   let corpusChars = 0

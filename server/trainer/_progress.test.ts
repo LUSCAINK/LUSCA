@@ -171,6 +171,9 @@ async function hardKill() {
     // 3. a new trainer on the same directory: nothing below what was published, numbering continues above it
     const points: number[] = []
     const t = createTrainer({ dataDir: dir, emit: (m) => (m.t === 'loss' ? void points.push(m.point.step) : undefined) })
+    const pre = t.info() // before start(): nothing loaded yet, the floor is already shown
+    assert.ok(pre.step >= seen.step && pre.version >= seen.version, `step before the checkpoint loads ${pre.step} >= ${seen.step}`)
+    assert.ok(pre.serverSteps >= seen.serverSteps, `serverSteps before the checkpoint loads ${pre.serverSteps} >= ${seen.serverSteps}`)
     t.start()
     for (const d of corpus(80_000)) t.feed(d) // the corpus is not on disk in this test
     // first published values once the checkpoint is loaded (before the worker has reported anything)
