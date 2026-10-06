@@ -31,7 +31,7 @@ import './lens.css'
 
 const EVM_CHAINS: ChainId[] = ['ethereum', 'base', 'arbitrum']
 
-type Phase = { s: 'idle' } | { s: 'loading'; chain: ChainId; address: string } | { s: 'done'; a: LensAnswer } | { s: 'error'; msg: string; retry: number | null }
+type Phase = { s: 'idle' } | { s: 'loading'; chain: ChainId; address: string } | { s: 'done'; a: LensAnswer } | { s: 'error'; msg: string; retry: number | null; status: number | null }
 
 // ─── small parts ────────────────────────────────────────────────────────────
 
@@ -141,7 +141,7 @@ function Strip({ r }: { r: LensReport }) {
     {
       k: 'upgradeable',
       v: s.upgradeable === true ? 'yes' : s.upgradeable === false ? 'no' : 'unknown',
-      sub: s.upgradeable === false ? (sol ? 'no upgrade authority' : 'fixed code') : s.authority ? `by ${short(s.authority, 4)}` : s.upgradeable ? (sol ? 'authority not read' : 'admin not in a standard slot') : 'not determinable from storage',
+      sub: s.upgradeable === false ? (sol ? 'no upgrade authority' : 'fixed code') : r.kind === 'account' && !sol ? 'by the account key (EIP-7702)' : s.authority ? `by ${short(s.authority, 4)}` : s.upgradeable ? (sol ? 'authority not read' : 'admin not in a standard slot') : 'not determinable from storage',
       href: '#ln-code',
     },
     {
@@ -660,6 +660,7 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
 
       {isCode && (sol ? <SolanaSections r={r} /> : <EvmSections r={r} />)}
 
+      {isCode && (
       <Section n={sol ? '07' : '06'} title="Provenance" id="ln-prov" meta={<span className="mono">{sol ? (p.osecRepo ? repoSlug(p.osecRepo.repo) : '—') : `${p.matches.length}/${p.checked} files`}</span>}>
         <p className="dim ln-p">
           {p.index.files > 0 ? (
@@ -697,6 +698,7 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
         )}
         {!sol && p.checked > 0 && p.matches.length === 0 && p.index.files > 0 && <p className="dim ln-p">None of the verified files is in the code index.</p>}
       </Section>
+      )}
 
       <Section n={sol ? '08' : '07'} title="SEPIA-1 dataset" id="ln-data" meta={<span className={`ln-verdict ${VERDICT_CLASS[d.verdict] ?? ''}`}>{VERDICT_LABEL[d.verdict]}</span>}>
         <Row k="address judged">
@@ -811,12 +813,13 @@ export default function Lens() {
       .then((a) => setPhase({ s: 'done', a }))
       .catch((e: unknown) => {
         if (ac.signal.aborted) return
-        setPhase({ s: 'error', msg: e instanceof Error ? e.message : String(e), retry: e instanceof LensHttpError ? e.retryAfter : null })
+        setPhase({ s: 'error', msg: e instanceof Error ? e.message : String(e), retry: e instanceof LensHttpError ? e.retryAfter : null, status: e instanceof LensHttpError ? e.status : null })
       })
     return () => ac.abort()
   }, [routeChain, routeAddr, nonce])
 
   // recent reads (public strip): on load and after each report
+  const doneAt = phase.s === 'done' ? phase.a.report.readAt : 0
   useEffect(() => {
     const ac = new AbortController()
     fetchRecent(ac.signal)
@@ -826,7 +829,7 @@ export default function Lens() {
       })
       .catch(() => {})
     return () => ac.abort()
-  }, [phase.s === 'done' ? (phase as { a: LensAnswer }).a.report.readAt : 0])
+  }, [doneAt])
 
   // what this server can do right now: code index size, today's Lens budget (real counters)
   useEffect(() => {
@@ -981,9 +984,11 @@ export default function Lens() {
           <div className="ln-error">
             <span className="label">read failed</span>
             <p>{phase.msg}</p>
-            <button className="btn" onClick={() => setNonce((n) => n + 1)}>
-              retry{phase.retry ? ` (after ${phase.retry} s)` : ''}
-            </button>
+            {phase.status !== 400 && phase.status !== 404 && (
+              <button className="btn" onClick={() => setNonce((n) => n + 1)}>
+                retry{phase.retry ? ` (after ${phase.retry} s)` : ''}
+              </button>
+            )}
           </div>
         )}
         {phase.s === 'done' && <Report a={phase.a} onRetry={() => setNonce((n) => n + 1)} />}
