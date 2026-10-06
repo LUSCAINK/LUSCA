@@ -7,8 +7,8 @@
 // sets rebuilt on restart (a busy crawl writes ~15 GB/day). The crawler carries
 // the archived page / token totals forward in ingest-state.json so lifetime
 // counters stay monotonic across restarts.
-import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs'
-import { appendFile, readdir, rename, unlink, writeFile, readFile } from 'node:fs/promises'
+import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { appendFile, open as openFile, readdir, rename, unlink, writeFile, readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { basename, join } from 'node:path'
 
@@ -69,6 +69,24 @@ export function emptyArchived(sectors: number): ArchivedTotals {
   return { pages: 0, tokens: 0, bytes: 0, sectorPages: new Array<number>(sectors).fill(0), sectorTokens: new Array<number>(sectors).fill(0), files: 0 }
 }
 
+/** What is held on disk right now (dataset.jsonl + the archives still kept), as opposed to the lifetime totals. */
+export interface HeldCorpus {
+  pages: number
+  tokens: number
+  /** Bytes of dataset.jsonl plus the counted archives (the files pages / tokens describe). */
+  bytes: number
+  /** Archive files on disk. */
+  archives: number
+  /** Archive files on disk whose page / token totals were never recorded (rotated before this was tracked): not in pages / tokens / bytes. */
+  uncounted: number
+  /** Bytes of those uncounted archive files. */
+  uncountedBytes: number
+}
+
+/** Page / token totals per archive file still on disk (dataset-archives.json, written at rotation and pruning). */
+type ArchiveTotals = Record<string, { pages: number; tokens: number; bytes: number }>
+const ARCHIVES_FILE = 'dataset-archives.json'
+
 export interface RotateInfo {
   archive: string
   /** totals of the pages in the archived file (pages the crawler counted) */
@@ -104,6 +122,10 @@ export class DatasetWriter {
   private rotateBlockedUntil = 0
   /** totals of the counted pages currently in dataset.jsonl */
   private file: ArchivedTotals
+  /** totals of archives still on disk, by file name */
+  private archiveTotals: ArchiveTotals = {}
+  /** archive files on disk with their sizes (refreshed at start, rotation and pruning) */
+  private archivesOnDisk: { name: string; bytes: number }[] = []
 
   constructor(dir: string, opts: DatasetWriterOptions = {}) {
     this.dir = dir
@@ -119,6 +141,76 @@ export class DatasetWriter {
     } catch {
       this.size = 0
     }
+    try {
+      const raw = JSON.parse(readFileSync(join(dir, ARCHIVES_FILE), 'utf8')) as unknown
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        for (const [k, v] of Object.entries(raw as Record<string, { pages?: unknown; tokens?: unknown; bytes?: unknown }>)) {
+          if (ARCHIVE_RE.test(k) && v && typeof v === 'object') this.archiveTotals[k] = { pages: pos(v.pages), tokens: pos(v.tokens), bytes: pos(v.bytes) }
+        }
+      }
+    } catch {
+      /* none yet */
+    }
+    this.scanArchives()
+  }
+
+  private scanArchives(): void {
+    try {
+      this.archivesOnDisk = readdirSync(this.dir)
+        .filter((n) => ARCHIVE_RE.test(n))
+        .map((name) => {
+          let bytes = 0
+          try {
+            bytes = statSync(join(this.dir, name)).size
+          } catch {
+            bytes = 0
+          }
+          return { name, bytes }
+        })
+    } catch {
+      this.archivesOnDisk = []
+    }
+  }
+
+  private async saveArchiveTotals(): Promise<void> {
+    const on = new Set(this.archivesOnDisk.map((a) => a.name))
+    for (const k of Object.keys(this.archiveTotals)) if (!on.has(k)) delete this.archiveTotals[k]
+    const file = join(this.dir, ARCHIVES_FILE)
+    const tmp = `${file}.${process.pid}.tmp`
+    try {
+      // tmp → fsync → rename: a crash never leaves a torn or empty totals file (all archives would read as uncounted)
+      const fh = await openFile(tmp, 'w')
+      try {
+        await fh.writeFile(JSON.stringify(this.archiveTotals), 'utf8')
+        await fh.sync()
+      } finally {
+        await fh.close()
+      }
+      await rename(tmp, file)
+    } catch (e) {
+      console.warn('[crawler] could not save dataset-archives.json:', (e as Error)?.message ?? e)
+    }
+  }
+
+  /** Pages / tokens held on disk now: dataset.jsonl plus the archives still kept. */
+  held(): HeldCorpus {
+    let pages = this.file.pages
+    let tokens = this.file.tokens
+    let bytes = this.size
+    let uncounted = 0
+    let uncountedBytes = 0
+    for (const a of this.archivesOnDisk) {
+      const t = this.archiveTotals[a.name]
+      if (t) {
+        pages += t.pages
+        tokens += t.tokens
+        bytes += a.bytes
+      } else {
+        uncounted++
+        uncountedBytes += a.bytes
+      }
+    }
+    return { pages, tokens, bytes, archives: this.archivesOnDisk.length, uncounted, uncountedBytes }
   }
 
   /** Account for a page that was already in dataset.jsonl at start-up (reload path). */
@@ -180,6 +272,9 @@ export class DatasetWriter {
     const totals = this.file
     this.file = emptyArchived(this.sectors)
     this.size = 0
+    this.archiveTotals[basename(archive)] = { pages: totals.pages, tokens: totals.tokens, bytes: totals.bytes }
+    this.scanArchives()
+    await this.saveArchiveTotals()
     console.log(`[crawler] dataset.jsonl rotated → ${basename(archive)} (${totals.pages.toLocaleString('en-US')} pages)`)
     try {
       await this.onRotate?.({ archive, totals })
@@ -200,6 +295,8 @@ export class DatasetWriter {
     } catch (e) {
       console.warn('[crawler] archive pruning failed:', (e as Error)?.message ?? e)
     }
+    this.scanArchives()
+    await this.saveArchiveTotals()
   }
 
   flush(): Promise<void> {

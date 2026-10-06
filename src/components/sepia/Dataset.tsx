@@ -137,8 +137,17 @@ export function Dataset() {
           <span>fetch → corpus</span>
         </div>
         <dl className="ds-grid">
-          <Tot k="pages kept" v={fmtInt(stats.pages)} />
-          <Tot k="tokens" v={fmtC(stats.tokens)} />
+          <Tot k="pages accepted" v={fmtInt(stats.pages)} sub="lifetime" />
+          <Tot k="tokens accepted" v={fmtC(stats.tokens)} sub="lifetime" />
+          <Tot
+            k="held on disk"
+            v={stats.heldPages == null ? '—' : `${fmtInt(stats.heldPages)} pg`}
+            sub={
+              stats.heldPages == null
+                ? 'not reported by this server'
+                : `${fmtC(stats.heldTokens ?? 0)} tok · ${fmtBytes(stats.heldBytes ?? 0)}${stats.heldUncounted ? ` · +${stats.heldUncounted} older archive file${stats.heldUncounted === 1 ? '' : 's'}${stats.heldUncountedBytes ? ` (${fmtBytes(stats.heldUncountedBytes)})` : ''} not counted` : ''}`
+            }
+          />
           <Tot k="raw html" v={fmtBytes(stats.bytes)} />
           <Tot k="hosts" v={fmtInt(stats.domains)} />
           <Tot k="rejected" v={fmtInt(stats.rejected)} />

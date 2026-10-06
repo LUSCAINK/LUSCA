@@ -22,6 +22,8 @@ import type { ChainEvent, ChainId, ChainIndexItem, ChainRead, ChainStats } from 
 import { isSolanaAddress } from '../shared/base58.ts'
 import type { Auth } from './auth/auth.ts'
 import { handleModelRoute, type WeightsExporter } from './model/export.ts'
+import { handleProofRoute, type PreviewSource } from './proofs/http.ts'
+import type { ProofsApi } from './proofs/index.ts'
 import { SPAWN_TTL_MS, type CoordinatorApi, type CrawlerApi, type Emit, type NeuronConn, type TrainerApi } from './contracts.ts'
 import type { LuscaCoordinator } from './neurons/coordinator.ts'
 import { parseV6 } from './ingest/netguard.ts'
@@ -95,6 +97,8 @@ export interface Modules {
   chain?: HubChain
   /** SEPIA-0 weights export (server/model). Without it /api/model/* answers 503. */
   model?: WeightsExporter
+  /** Contribution epochs (server/proofs). Without it /api/proofs* answers 503. */
+  proofs?: { api: ProofsApi; preview: PreviewSource | null }
 }
 
 /** Read side of the chain agents (server/chain/index.ts): every answer comes from stored data, no RPC. */
@@ -583,7 +587,8 @@ export function createHub(opts: HubOptions): Hub {
   const readLimit = createLimiter(60_000, Math.max(1, Math.floor(L.readsPerMin)))
   const modelLimit = createLimiter(60_000, 30) // /api/model/* per address (responses are cacheable for 10 min)
   const authLimit = createLimiter(60_000, 30) // /api/auth/* per address (server/auth adds its own per-route caps)
-  const limiters = [spawnLimit, spawnLiveLimit, spawnGlobalLimit, generateLimit, pagesLimit, helloLimit, statsLimit, wsConnectLimit, readLimit, authLimit]
+  const proofLimit = createLimiter(60_000, 30) // POST /api/proofs/* lookups per address (apart from sign-in)
+  const limiters = [spawnLimit, spawnLiveLimit, spawnGlobalLimit, generateLimit, pagesLimit, helloLimit, statsLimit, wsConnectLimit, readLimit, authLimit, proofLimit]
   let generating = 0
   let shuttingDown = false
   let statsTimer: NodeJS.Timeout | null = null
@@ -1186,6 +1191,36 @@ export function createHub(opts: HubOptions): Hub {
     res.end(data)
   }
 
+  /** Immutable JSON (closed proof epochs): gzipped once per ETag, then served from memory. */
+  const immutableGz = new Map<string, Promise<Buffer>>()
+  function sendImmutableJson(req: http.IncomingMessage, res: http.ServerResponse, text: string, etag: string, headers: Record<string, string>) {
+    const base: Record<string, string | number> = { 'Content-Type': 'application/json; charset=utf-8', 'X-Content-Type-Options': 'nosniff', ETag: etag, ...headers }
+    if (text.length <= 8192 || !acceptsGzip(req)) {
+      res.writeHead(200, { ...base, 'Content-Length': Buffer.byteLength(text) })
+      res.end(text)
+      return
+    }
+    let gz = immutableGz.get(etag)
+    if (!gz) {
+      gz = new Promise<Buffer>((resolve, reject) => zlib.gzip(text, { level: 6 }, (err, out) => (err ? reject(err) : resolve(out))))
+      immutableGz.set(etag, gz)
+      gz.catch(() => immutableGz.delete(etag))
+      while (immutableGz.size > 4) immutableGz.delete(immutableGz.keys().next().value as string)
+    }
+    gz.then(
+      (buf) => {
+        if (res.writableEnded || res.destroyed) return
+        res.writeHead(200, { ...base, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding', 'Content-Length': buf.length })
+        res.end(buf)
+      },
+      () => {
+        if (res.writableEnded || res.destroyed) return
+        res.writeHead(200, { ...base, 'Content-Length': Buffer.byteLength(text) })
+        res.end(text)
+      },
+    )
+  }
+
   function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
     return new Promise((resolve, reject) => {
       // Oversized bodies are rejected with 413 but still drained (so the client
@@ -1543,6 +1578,29 @@ export function createHub(opts: HubOptions): Hub {
         throw new HttpError(404, 'not in the kept index')
       }
       return sendJsonText(req, res, 200, json, { 'Cache-Control': 'public, max-age=30' })
+    }
+
+    // ── proof of contribution: epoch headers, public leaves, your own Merkle paths (server/proofs) ──
+    if (p === '/api/proofs' || p.startsWith('/api/proofs/')) {
+      const m = requireModules()
+      if (!m.proofs) throw new HttpError(503, 'contribution proofs are not available on this server')
+      const post = method === 'POST'
+      limit(post ? proofLimit : readLimit, req, post ? 'proof lookup' : 'read')
+      if (post) requireJson(req)
+      const body = post ? await readJsonBody(req) : null
+      const proofs = m.proofs
+      const out = authCall(() => handleProofRoute(proofs.api, proofs.preview, p, method, url.searchParams, body))
+      if (out) {
+        const cache: Record<string, string> = out.maxAge ? { 'Cache-Control': `public, max-age=${out.maxAge}` } : {}
+        if (out.text !== undefined && out.etag) {
+          if (req.headers['if-none-match'] === out.etag) {
+            res.writeHead(304, { ...cache, ETag: out.etag })
+            return res.end()
+          }
+          return sendImmutableJson(req, res, out.text, out.etag, cache)
+        }
+        return sendJson(req, res, out.status, out.body, cache)
+      }
     }
 
     // ── SEPIA-0 weights export: newest checkpoint as safetensors + manifest (server/model/export.ts) ──

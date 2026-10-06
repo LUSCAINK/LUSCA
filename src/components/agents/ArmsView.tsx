@@ -157,7 +157,7 @@ export function ArmsView() {
         <div className="ag-stats">
           <Stat label="agents" value={v(agents.length)} sub={live ? `${agents.length - spawnedN} core · ${spawnedN} added` : `${DASH} core · ${DASH} added`} />
           <Stat label="working now" value={v(active)} hot sub={`${live ? tasting : DASH} scoring a page`} />
-          <Stat label="pages kept" value={v(stats.pages)} sub={`${fmtInt(v(stats.pagesPerMin))} / min`} />
+          <Stat label="pages accepted" value={v(stats.pages)} sub={`${fmtInt(v(stats.pagesPerMin))} / min`} />
           <Stat label="kept rate" value={accept} suffix="%" sub={`${fmtInt(v(stats.rejected))} dropped`} />
           <Stat label="websites" value={v(stats.domains)} sub={`${fmtCompact(v(stats.frontier))} links queued`} />
         </div>

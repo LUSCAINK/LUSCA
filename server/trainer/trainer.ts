@@ -26,6 +26,7 @@ import { performance } from 'node:perf_hooks'
 import type { LossPoint, ModelInfo, TrainJob } from '../../shared/protocol.ts'
 import type { TrainerApi, TrainerOptions, TrainStats } from '../contracts.ts'
 import { CTX, EMB, HIDDEN, VOCAB_SIZE, SepiaModel, generateText, mulberry32, paramCount } from './model.mjs'
+import { createAuditCounter } from './auditCounter.ts'
 
 const NAME = 'SEPIA-0'
 const ARCH = `char-MLP · ctx ${CTX} · emb ${EMB} · hidden ${HIDDEN} · tanh`
@@ -280,6 +281,10 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
   const dataDir = path.resolve(opts.dataDir)
   const ckptPath = path.join(dataDir, CKPT_FILE)
   const datasetPath = path.join(dataDir, DATASET_FILE)
+  // Published audit counts never go backwards (the checkpoint only carries them every 90 s).
+  const auditCounter = createAuditCounter(dataDir, (m) => warn(m))
+  // Added to the worker's own counts: the floor it could not restore (no checkpoint to patch).
+  let auditBase = { ok: 0, failed: 0 }
 
   const emit = (msg: Parameters<TrainerOptions['emit']>[0]) => {
     try {
@@ -465,7 +470,7 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
       serverSteps: num(x.serverSteps),
       gpuSamples: num(x.gpuSamples),
       contributors24h: num(x.contributors24h),
-      audits: { ok: num(a.ok), failed: num(a.failed) },
+      audits: auditCounter.observe({ ok: num(a.ok) + auditBase.ok, failed: num(a.failed) + auditBase.failed }),
       gpuStepsPerMin: num(x.gpuStepsPerMin),
     }
     tstatsAt = Date.now()
@@ -584,8 +589,17 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
     // usable for fallback sampling and for restarts).
     let ckpt: Snapshot | undefined
     const transfer: ArrayBuffer[] = []
+    const floor = auditCounter.floor()
+    auditBase = { ok: floor.ok, failed: floor.failed }
     if (lastSnap) {
-      ckpt = { step: lastSnap.step, adamT: lastSnap.adamT, params: lastSnap.params.slice(), m: lastSnap.m.slice(), v: lastSnap.v.slice(), train: lastSnap.train }
+      // Raise the checkpoint's audit counts to the persisted floor, so the worker resumes from it.
+      const t = lastSnap.train && typeof lastSnap.train === 'object' ? { ...(lastSnap.train as Record<string, unknown>) } : null
+      if (t) {
+        t.auditsOk = Math.max(num(t.auditsOk), floor.ok)
+        t.auditsFailed = Math.max(num(t.auditsFailed), floor.failed)
+        auditBase = { ok: 0, failed: 0 }
+      }
+      ckpt = { step: lastSnap.step, adamT: lastSnap.adamT, params: lastSnap.params.slice(), m: lastSnap.m.slice(), v: lastSnap.v.slice(), train: t ?? lastSnap.train }
       transfer.push(ckpt.params.buffer as ArrayBuffer, ckpt.m.buffer as ArrayBuffer, ckpt.v.buffer as ArrayBuffer)
     }
     try {
@@ -795,7 +809,7 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
       serverSteps: tstats.serverSteps,
       gpuSamples: tstats.gpuSamples,
       contributors24h: tstats.contributors24h,
-      audits: { ok: tstats.audits.ok, failed: tstats.audits.failed },
+      audits: auditCounter.observe(tstats.audits),
       gpuStepsPerMin: fresh && worker && ready ? tstats.gpuStepsPerMin : 0,
     }
   }
@@ -835,6 +849,7 @@ export function createTrainer(opts: TrainerOptions): TrainerApi {
 
     stop() {
       if (stopP) return stopP
+      auditCounter.flushSync()
       if (!running && !worker) return Promise.resolve()
       stopping = true
       const p = (async () => {

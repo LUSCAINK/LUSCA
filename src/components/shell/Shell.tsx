@@ -240,7 +240,7 @@ function StatusBar() {
       {/* widest-first drop order keeps the legal links and the clock on screen:
           hide-lg ≤1300 · hide-md ≤1100 · hide-tab ≤720 · hide-sm ≤600 · hide-xs ≤400 */}
       <span className="sb-seg hide-lg">{fmtInt(live && arms > 0 ? arms : null)} arms</span>
-      <span className="sb-seg">
+      <span className="sb-seg" title="pages accepted into the corpus, lifetime">
         <b>{fmtInt(v(stats.pages))}</b> pages
       </span>
       <span className="sb-seg hide-sm hide-tab">

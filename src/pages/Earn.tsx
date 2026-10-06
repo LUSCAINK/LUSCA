@@ -8,6 +8,7 @@ import { shortAddr } from '@/lib/wallet'
 import { usePayouts } from '@/lib/payouts'
 import { Kicker, NextStep, OnThisPage, Terms } from '@/components/docs/pagekit'
 import { TreasuryPayouts } from '@/components/treasury/TreasuryPayouts'
+import { ProofOfContribution } from '@/components/proofs/ProofOfContribution'
 import '@/components/obs/parts.css'
 import './earn.css'
 
@@ -291,6 +292,7 @@ export default function Earn() {
           links={[
             { id: 'ep-how', label: 'How you earn' },
             { id: 'ep-treasury', label: 'Treasury & payouts' },
+            { id: 'ep-proofs', label: 'Proof of contribution' },
             { id: 'ep-estimate', label: 'Estimate your earnings' },
             { id: 'ep-board', label: 'Who’s earning now' },
           ]}
@@ -394,6 +396,7 @@ export default function Earn() {
           </p>
         </div>
         <TreasuryPayouts />
+        <ProofOfContribution />
       </section>
 
       <section id="ep-money" className="ep-sec pk-anchor" aria-labelledby="ep-money-h">

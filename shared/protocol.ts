@@ -125,8 +125,19 @@ export interface ModelInfo {
 }
 
 export interface Stats {
+  /** Pages accepted into the corpus, lifetime (includes rotated archives that were since deleted). */
   pages: number;
+  /** Tokens of those pages, lifetime. */
   tokens: number;
+  /** Pages held on disk now: dataset.jsonl + kept archives (absent on older servers). */
+  heldPages?: number;
+  heldTokens?: number;
+  heldBytes?: number;
+  /** Bytes of dataset.jsonl + the counted archives (what heldPages / heldTokens describe). */
+  /** Kept archive files whose totals were never recorded (not in heldPages / heldTokens / heldBytes). */
+  heldUncounted?: number;
+  /** Bytes of those uncounted archive files. */
+  heldUncountedBytes?: number;
   bytes: number;
   domains: number;
   frontier: number;

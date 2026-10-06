@@ -39,8 +39,8 @@ function Telemetry() {
   const conn = useConn(600)
   const live = conn === 'live'
   const rows: [string, number, boolean?][] = [
-    ['pages kept', s.pages],
-    ['tokens collected', s.tokens, true],
+    ['pages accepted', s.pages],
+    ['tokens accepted', s.tokens, true],
     ['websites', s.domains],
     ['agents working', s.agentsActive],
     ['gpus connected', s.neurons],
@@ -172,7 +172,7 @@ function HowItWorks() {
       k: 'ingest',
       t: 'Agents fetch the crypto web',
       d: 'Agents visit governance forums, research, developer docs and standards. Each page gets a taste score from 0 to 1. Only crypto-relevant pages are kept.',
-      live: live ? `${fmtInt(s.pages)} pages kept · ${fmtInt(s.domains)} websites` : `${DASH} pages kept · ${DASH} websites`,
+      live: live ? `${fmtInt(s.pages)} pages accepted · ${fmtInt(s.domains)} websites` : `${DASH} pages accepted · ${DASH} websites`,
       to: '/live',
       cta: 'open the live view',
     },
