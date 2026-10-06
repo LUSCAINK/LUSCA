@@ -552,6 +552,13 @@ button.poc-blk-b:hover {
   .poc-vbtn {
     width: 100%;
   }
+  .poc-seen > span:nth-child(2) {
+    flex-basis: 100%;
+    order: 3;
+  }
+  .poc-seen .poc-x {
+    margin-left: auto;
+  }
   .poc-chain {
     flex-direction: column;
     overflow-x: visible;

@@ -143,7 +143,7 @@ function OpenBlock({ open, now }: { open: NonNullable<ProofChainPage['open']>; n
         </span>
         <span className="poc-kv">
           <span>closes in</span>
-          <span className="num hot">{fmtCountdown(open.closesAt - now)}</span>
+          <span className="num hot">{now >= open.closesAt ? 'closing…' : fmtCountdown(open.closesAt - now)}</span>
         </span>
         <span className="poc-hash num">root set at close</span>
       </div>
@@ -592,14 +592,14 @@ export function ProofOfContribution() {
   // the open epoch closed: fetch the new head soon after, then back off (a stalled close must not
   // turn every open tab into a once-a-second poller)
   useEffect(() => {
-    if (!page?.open || now <= page.open.closesAt + 20_000) return
+    if (!page?.open || now <= page.open.closesAt + 2_500) return
     const r = refetchFor.current
     if (r.closesAt !== page.open.closesAt) {
       r.closesAt = page.open.closesAt
       r.tries = 0
       r.at = 0
     }
-    const wait = r.tries === 0 ? 0 : Math.min(300_000, 30_000 * 2 ** (r.tries - 1))
+    const wait = r.tries === 0 ? 0 : r.tries < 3 ? 5_000 : Math.min(300_000, 30_000 * 2 ** (r.tries - 3))
     if (now - r.at < wait) return
     r.tries++
     r.at = now
@@ -798,7 +798,7 @@ export function ProofOfContribution() {
         </div>
         <div>
           <dt className="label">next epoch closes in</dt>
-          <dd className="num hot">{page?.open ? fmtCountdown(page.open.closesAt - now) : DASH}</dd>
+          <dd className="num hot">{page?.open ? (now >= page.open.closesAt ? 'closing…' : fmtCountdown(page.open.closesAt - now)) : DASH}</dd>
         </div>
       </dl>
 

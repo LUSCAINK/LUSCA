@@ -302,6 +302,7 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
   let pendingWrite: ClosingRecord | null = null
   let timer: NodeJS.Timeout | null = null
   let retry: NodeJS.Timeout | null = null
+  let due: NodeJS.Timeout | null = null
   let ready = false
   let savingWarned = false
   const committed = { credits: 0, leaves: 0 } // Σ over every stored header (genesis included)
@@ -321,6 +322,20 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
       list.push(index)
       if (list.length > IDENT_EPOCHS) list.splice(0, list.length - IDENT_EPOCHS)
     }
+  }
+
+  /** Also close right at the boundary (the 15 s interval is the fallback), so a new epoch shows up on time. */
+  function armDue() {
+    if (due || !ready) return
+    const open = epochs.open()
+    if (!open) return
+    const wait = closesAt(open.startedAt) - now()
+    if (wait > TICK_MS || wait < 0) return
+    due = setTimeout(() => {
+      due = null
+      tick()
+    }, wait + 50)
+    due.unref?.()
   }
 
   function isStalled(): boolean {
@@ -714,14 +729,20 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
     start() {
       init()
       tick()
-      timer = setInterval(() => tick(), TICK_MS)
+      timer = setInterval(() => {
+        tick()
+        armDue()
+      }, TICK_MS)
+      armDue()
       timer.unref?.()
     },
     stop() {
       if (timer) clearInterval(timer)
       if (retry) clearTimeout(retry)
+      if (due) clearTimeout(due)
       timer = null
       retry = null
+      due = null
     },
   }
 }
