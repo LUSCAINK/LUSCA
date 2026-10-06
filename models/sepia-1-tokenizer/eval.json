@@ -1,0 +1,482 @@
+{
+ "tokenizer": {
+  "name": "SEPIA-1 tokenizer",
+  "version": "v1",
+  "vocabSize": 32768,
+  "sha256": "4b2ec96ed69a7c9fe7a7c01bd01e4d4c95f527384d6ee3862e43e850ed54d04f"
+ },
+ "created": "2026-10-06T08:44:49.851Z",
+ "heldOut": "Files and pages chosen by hash before training and never trained on (scripts/tokenizer/prepare.py). Code: sha256(repo\\npath) mod 1000 < 80, up to 1.5 MB per language. Web: sha256(id) mod 1000 < 20, mostly-ASCII pages, up to 1.5 MB.",
+ "definitions": {
+  "bytesPerToken": "UTF-8 bytes of the held-out text divided by its token count (higher is better)",
+  "tokensPer1kLines": "tokens per 1,000 lines of the same text (lower is better)",
+  "linesPer2048": "2,048 × lines ÷ tokens: lines that fit in one SEPIA-1 context window at the measured rate"
+ },
+ "compare": {
+  "sepia1": {
+   "name": "SEPIA-1 tokenizer",
+   "vocab": 32768
+  },
+  "r50k": {
+   "name": "r50k_base (GPT-2)",
+   "vocab": 50257
+  },
+  "cl100k": {
+   "name": "cl100k_base",
+   "vocab": 100264
+  },
+  "o200k": {
+   "name": "o200k_base",
+   "vocab": 200006
+  }
+ },
+ "languages": [
+  {
+   "id": "solidity",
+   "label": "Solidity",
+   "docs": 239,
+   "sources": 49,
+   "bytes": 1515837,
+   "lines": 37460,
+   "tokenizers": {
+    "sepia1": {
+     "tokens": 341123,
+     "bytesPerToken": 4.444,
+     "tokensPer1kLines": 9106,
+     "linesPer2048": 225
+    },
+    "r50k": {
+     "tokens": 608961,
+     "bytesPerToken": 2.489,
+     "tokensPer1kLines": 16256,
+     "linesPer2048": 126
+    },
+    "cl100k": {
+     "tokens": 358011,
+     "bytesPerToken": 4.234,
+     "tokensPer1kLines": 9557,
+     "linesPer2048": 214
+    },
+    "o200k": {
+     "tokens": 354796,
+     "bytesPerToken": 4.272,
+     "tokensPer1kLines": 9471,
+     "linesPer2048": 216
+    }
+   }
+  },
+  {
+   "id": "vyper",
+   "label": "Vyper",
+   "docs": 15,
+   "sources": 4,
+   "bytes": 279482,
+   "lines": 8686,
+   "tokenizers": {
+    "sepia1": {
+     "tokens": 64324,
+     "bytesPerToken": 4.345,
+     "tokensPer1kLines": 7405,
+     "linesPer2048": 277
+    },
+    "r50k": {
+     "tokens": 109078,
+     "bytesPerToken": 2.562,
+     "tokensPer1kLines": 12558,
+     "linesPer2048": 163
+    },
+    "cl100k": {
+     "tokens": 71154,
+     "bytesPerToken": 3.928,
+     "tokensPer1kLines": 8192,
+     "linesPer2048": 250
+    },
+    "o200k": {
+     "tokens": 71116,
+     "bytesPerToken": 3.93,
+     "tokensPer1kLines": 8187,
+     "linesPer2048": 250
+    }
+   }
+  },
+  {
+   "id": "rust",
+   "label": "Rust / Anchor",
+   "docs": 167,
+   "sources": 39,
+   "bytes": 1682532,
+   "lines": 47751,
+   "tokenizers": {
+    "sepia1": {
+     "tokens": 378926,
+     "bytesPerToken": 4.44,
+     "tokensPer1kLines": 7935,
+     "linesPer2048": 258
+    },
+    "r50k": {
+     "tokens": 771416,
+     "bytesPerToken": 2.181,
+     "tokensPer1kLines": 16155,
+     "linesPer2048": 127
+    },
+    "cl100k": {
+     "tokens": 400726,
+     "bytesPerToken": 4.199,
+     "tokensPer1kLines": 8392,
+     "linesPer2048": 244
+    },
+    "o200k": {
+     "tokens": 399934,
+     "bytesPerToken": 4.207,
+     "tokensPer1kLines": 8375,
+     "linesPer2048": 245
+    }
+   }
+  },
+  {
+   "id": "move",
+   "label": "Move",
+   "docs": 59,
+   "sources": 5,
+   "bytes": 625547,
+   "lines": 16901,
+   "tokenizers": {
+    "sepia1": {
+     "tokens": 148846,
+     "bytesPerToken": 4.203,
+     "tokensPer1kLines": 8807,
+     "linesPer2048": 233
+    },
+    "r50k": {
+     "tokens": 255787,
+     "bytesPerToken": 2.446,
+     "tokensPer1kLines": 15134,
+     "linesPer2048": 135
+    },
+    "cl100k": {
+     "tokens": 152652,
+     "bytesPerToken": 4.098,
+     "tokensPer1kLines": 9032,
+     "linesPer2048": 227
+    },
+    "o200k": {
+     "tokens": 152943,
+     "bytesPerToken": 4.09,
+     "tokensPer1kLines": 9049,
+     "linesPer2048": 226
+    }
+   }
+  },
+  {
+   "id": "cairo",
+   "label": "Cairo",
+   "docs": 51,
+   "sources": 4,
+   "bytes": 321628,
+   "lines": 9439,
+   "tokenizers": {
+    "sepia1": {
+     "tokens": 84080,
+     "bytesPerToken": 3.825,
+     "tokensPer1kLines": 8908,
+     "linesPer2048": 230
+    },
+    "r50k": {
+     "tokens": 131901,
+     "bytesPerToken": 2.438,
+     "tokensPer1kLines": 13974,
+     "linesPer2048": 147
+    },
+    "cl100k": {
+     "tokens": 85959,
+     "bytesPerToken": 3.742,
+     "tokensPer1kLines": 9107,
+     "linesPer2048": 225
+    },
+    "o200k": {
+     "tokens": 85590,
+     "bytesPerToken": 3.758,
+     "tokensPer1kLines": 9068,
+     "linesPer2048": 226
+    }
+   }
+  },
+  {
+   "id": "go",
+   "label": "Go",
+   "docs": 138,
+   "sources": 5,
+   "bytes": 1267014,
+   "lines": 36639,
+   "tokenizers": {
+    "sepia1": {
+     "tokens": 327078,
+     "bytesPerToken": 3.874,
+     "tokensPer1kLines": 8927,
+     "linesPer2048": 229
+    },
+    "r50k": {
+     "tokens": 480096,
+     "bytesPerToken": 2.639,
+     "tokensPer1kLines": 13103,
+     "linesPer2048": 156
+    },
+    "cl100k": {
+     "tokens": 349609,
+     "bytesPerToken": 3.624,
+     "tokensPer1kLines": 9542,
+     "linesPer2048": 215
+    },
+    "o200k": {
+     "tokens": 345540,
+     "bytesPerToken": 3.667,
+     "tokensPer1kLines": 9431,
+     "linesPer2048": 217
+    }
+   }
+  },
+  {
+   "id": "cpp",
+   "label": "C / C++",
+   "docs": 9,
+   "sources": 1,
+   "bytes": 228857,
+   "lines": 5779,
+   "tokenizers": {
+    "sepia1": {
+     "tokens": 60614,
+     "bytesPerToken": 3.776,
+     "tokensPer1kLines": 10489,
+     "linesPer2048": 195
+    },
+    "r50k": {
+     "tokens": 103705,
+     "bytesPerToken": 2.207,
+     "tokensPer1kLines": 17945,
+     "linesPer2048": 114
+    },
+    "cl100k": {
+     "tokens": 60133,
+     "bytesPerToken": 3.806,
+     "tokensPer1kLines": 10405,
+     "linesPer2048": 197
+    },
+    "o200k": {
+     "tokens": 60221,
+     "bytesPerToken": 3.8,
+     "tokensPer1kLines": 10421,
+     "linesPer2048": 197
+    }
+   }
+  },
+  {
+   "id": "typescript",
+   "label": "TypeScript",
+   "docs": 16,
+   "sources": 9,
+   "bytes": 108535,
+   "lines": 3017,
+   "tokenizers": {
+    "sepia1": {
+     "tokens": 25237,
+     "bytesPerToken": 4.301,
+     "tokensPer1kLines": 8365,
+     "linesPer2048": 245
+    },
+    "r50k": {
+     "tokens": 44613,
+     "bytesPerToken": 2.433,
+     "tokensPer1kLines": 14787,
+     "linesPer2048": 138
+    },
+    "cl100k": {
+     "tokens": 27883,
+     "bytesPerToken": 3.893,
+     "tokensPer1kLines": 9242,
+     "linesPer2048": 222
+    },
+    "o200k": {
+     "tokens": 27776,
+     "bytesPerToken": 3.908,
+     "tokensPer1kLines": 9206,
+     "linesPer2048": 222
+    }
+   }
+  },
+  {
+   "id": "python",
+   "label": "Python",
+   "docs": 15,
+   "sources": 1,
+   "bytes": 158774,
+   "lines": 5704,
+   "tokenizers": {
+    "sepia1": {
+     "tokens": 34455,
+     "bytesPerToken": 4.608,
+     "tokensPer1kLines": 6040,
+     "linesPer2048": 339
+    },
+    "r50k": {
+     "tokens": 63640,
+     "bytesPerToken": 2.495,
+     "tokensPer1kLines": 11157,
+     "linesPer2048": 184
+    },
+    "cl100k": {
+     "tokens": 37173,
+     "bytesPerToken": 4.271,
+     "tokensPer1kLines": 6517,
+     "linesPer2048": 314
+    },
+    "o200k": {
+     "tokens": 37449,
+     "bytesPerToken": 4.24,
+     "tokensPer1kLines": 6565,
+     "linesPer2048": 312
+    }
+   }
+  },
+  {
+   "id": "markdown",
+   "label": "Markdown (EIPs, docs)",
+   "docs": 141,
+   "sources": 30,
+   "bytes": 1507345,
+   "lines": 27140,
+   "tokenizers": {
+    "sepia1": {
+     "tokens": 426190,
+     "bytesPerToken": 3.537,
+     "tokensPer1kLines": 15703,
+     "linesPer2048": 130
+    },
+    "r50k": {
+     "tokens": 504774,
+     "bytesPerToken": 2.986,
+     "tokensPer1kLines": 18599,
+     "linesPer2048": 110
+    },
+    "cl100k": {
+     "tokens": 413248,
+     "bytesPerToken": 3.648,
+     "tokensPer1kLines": 15227,
+     "linesPer2048": 135
+    },
+    "o200k": {
+     "tokens": 410526,
+     "bytesPerToken": 3.672,
+     "tokensPer1kLines": 15126,
+     "linesPer2048": 135
+    }
+   }
+  },
+  {
+   "id": "web",
+   "label": "Web text (English, crypto)",
+   "docs": 202,
+   "sources": 64,
+   "bytes": 1505150,
+   "lines": 21348,
+   "tokenizers": {
+    "sepia1": {
+     "tokens": 396628,
+     "bytesPerToken": 3.795,
+     "tokensPer1kLines": 18579,
+     "linesPer2048": 110
+    },
+    "r50k": {
+     "tokens": 395844,
+     "bytesPerToken": 3.802,
+     "tokensPer1kLines": 18542,
+     "linesPer2048": 110
+    },
+    "cl100k": {
+     "tokens": 362283,
+     "bytesPerToken": 4.155,
+     "tokensPer1kLines": 16970,
+     "linesPer2048": 121
+    },
+    "o200k": {
+     "tokens": 353533,
+     "bytesPerToken": 4.257,
+     "tokensPer1kLines": 16560,
+     "linesPer2048": 124
+    }
+   }
+  }
+ ],
+ "totals": {
+  "code": {
+   "languages": [
+    "solidity",
+    "vyper",
+    "rust",
+    "move",
+    "cairo",
+    "go",
+    "cpp",
+    "typescript",
+    "python"
+   ],
+   "bytes": 6188206,
+   "lines": 171376,
+   "tokenizers": {
+    "sepia1": {
+     "tokens": 1464683,
+     "bytesPerToken": 4.225,
+     "tokensPer1kLines": 8547
+    },
+    "r50k": {
+     "tokens": 2569197,
+     "bytesPerToken": 2.409,
+     "tokensPer1kLines": 14992
+    },
+    "cl100k": {
+     "tokens": 1543300,
+     "bytesPerToken": 4.01,
+     "tokensPer1kLines": 9005
+    },
+    "o200k": {
+     "tokens": 1535365,
+     "bytesPerToken": 4.03,
+     "tokensPer1kLines": 8959
+    }
+   },
+   "relative": {
+    "r50k": 0.57,
+    "cl100k": 0.949,
+    "o200k": 0.954
+   }
+  }
+ },
+ "roundTrip": {
+  "docs": 1052,
+  "exact": 1052,
+  "bytes": 9200701
+ },
+ "parity": {
+  "docs": 1052,
+  "tokens": 2287501,
+  "mismatches": 0,
+  "against": "Hugging Face tokenizers 0.20.3 (Python)"
+ },
+ "speed": {
+  "encoderMBps": 6.82,
+  "note": "shared/sepia1/tokenizer.ts on Node, one core, cold piece cache per process"
+ },
+ "evalSha256": {
+  "solidity": "9bbed13844815ca2942aadffd7c97ed864f7cfe3b43bd50c6045692370c6ce74",
+  "vyper": "3042348fdb2b769b27b0d2b190007821be4eedcb920495e212b26a102a83c976",
+  "rust": "e562b1a0a2fd27f83cb10366acc716213e5f5a3e8b37fb72420c8250693fa9d4",
+  "move": "d932704a0344661bfdc77d20589c75ff163f1ca0fcc8ea4d85207afbd526dba0",
+  "cairo": "59c4a6f054494260e26f3971657e9d6bb83b441baf4a19dbd15561c5d03d8f29",
+  "go": "c170c8b4e985bce96402980f98f747084e98b5b69d77fdc261de7bb8664871d0",
+  "cpp": "0685af88a007fb1f70753af91f719d3e1d9e937bba29718a776adbac513a2cb9",
+  "typescript": "fc71caefea1e99ebfcfcee2f447e8e120912555215ae042338b0dad89433a22b",
+  "python": "d0bd7b40ec635d9d7f06e9295f1d1e45c5576cf113f165508d6e6d43be161f43",
+  "markdown": "1e79145667d329305a81ea0f7a13ca4bb942c2b4f8f67758ba5f9f67467c0fd1",
+  "idl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "web": "1fe3af303b50cd690ae85c356338cce5fc0c3e012938a3c79b50ae44845bdd89"
+ }
+}

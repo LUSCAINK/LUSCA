@@ -1,0 +1,93 @@
+{
+ "name": "SEPIA-1 tokenizer",
+ "milestone": "M1",
+ "model_trained": false,
+ "vocab_size": 32768,
+ "merges": 32473,
+ "special_tokens": {
+  "<|endoftext|>": 0,
+  "<|pad|>": 1,
+  "<|repo|>": 2,
+  "<|file|>": 3,
+  "<|fim_prefix|>": 4,
+  "<|fim_suffix|>": 5,
+  "<|fim_middle|>": 6,
+  "<|reserved_0|>": 7,
+  "<|reserved_1|>": 8,
+  "<|reserved_2|>": 9,
+  "<|reserved_3|>": 10,
+  "<|reserved_4|>": 11,
+  "<|reserved_5|>": 12,
+  "<|reserved_6|>": 13,
+  "<|reserved_7|>": 14,
+  "<|reserved_8|>": 15,
+  "<|reserved_9|>": 16,
+  "<|reserved_10|>": 17,
+  "<|reserved_11|>": 18,
+  "<|reserved_12|>": 19,
+  "<|reserved_13|>": 20,
+  "<|reserved_14|>": 21,
+  "<|reserved_15|>": 22,
+  "<|reserved_16|>": 23,
+  "<|reserved_17|>": 24,
+  "<|reserved_18|>": 25,
+  "<|reserved_19|>": 26,
+  "<|reserved_20|>": 27,
+  "<|reserved_21|>": 28,
+  "<|reserved_22|>": 29,
+  "<|reserved_23|>": 30,
+  "<|reserved_24|>": 31,
+  "<|reserved_25|>": 32,
+  "<|reserved_26|>": 33,
+  "<|reserved_27|>": 34,
+  "<|reserved_28|>": 35,
+  "<|reserved_29|>": 36,
+  "<|reserved_30|>": 37,
+  "<|reserved_31|>": 38
+ },
+ "training": {
+  "tokenizers_version": "0.20.3",
+  "python": "3.12.10",
+  "seed": 1,
+  "min_frequency": 2,
+  "train_docs": 26411,
+  "train_sha256": "aa6d94144c63528609ee107cab3b2a97871eca28615a2c037da8ae120268a6aa",
+  "train_seconds": 24.6,
+  "deterministic_check": true
+ },
+ "pre_tokenizer": {
+  "stage1": "(?:\\r?\\n)+[\\t ]*| ?(?:\\.\\.=|///|=>|->|::|==|!=|<=|>=|&&|\\|\\||<<|>>|\\+=|-=|\\*\\*|//|/\\*|\\*/|#\\[)| ?0[xX][0-9a-fA-F]{9,}(?![\\p{L}\\p{N}_])| ?0[xX][0-9a-fA-F]{1,8}(?![\\p{L}\\p{N}_])| ?[\\p{L}_][\\p{L}\\p{N}_]*(?:\\.[\\p{L}_][\\p{L}\\p{N}_]*)*| ?\\p{N}| ?(?:(?!\\.\\.=|///|=>|->|::|==|!=|<=|>=|&&|\\|\\||<<|>>|\\+=|-=|\\*\\*|//|/\\*|\\*/|#\\[)[^\\t\\n\\x0B\\x0C\\r \\p{L}\\p{N}_])+|[\\t\\x0B\\x0C ]+(?![^\\t\\n\\x0B\\x0C\\r ])|[\\t\\x0B\\x0C\\r ]+",
+  "stage2": "\\A ?0[xX](?=[0-9a-fA-F]{9,}\\z)|\\G(?<=[0-9a-fA-FxX])[0-9a-fA-F]{1,4}"
+ },
+ "data_manifest": {
+  "path": "scripts/tokenizer/data-manifest.json",
+  "sha256": "4071d041d497312ce8be4f8737ffdbef307bbe997644b8b3a6378cffc158b39d",
+  "bytes": 341997
+ },
+ "files": {
+  "tokenizer.json": {
+   "bytes": 1030939,
+   "sha256": "4b2ec96ed69a7c9fe7a7c01bd01e4d4c95f527384d6ee3862e43e850ed54d04f"
+  },
+  "vocab.json": {
+   "bytes": 525001,
+   "sha256": "0c40871ff46b238fd612277b601a11d7a6212e80ccfaf17017b447c0a904058e"
+  },
+  "merges.txt": {
+   "bytes": 305034,
+   "sha256": "88c0792e4496dc94ced370a558bc9af0e5f397021727386028b71945e5d4e6d9"
+  },
+  "eval.json": {
+   "bytes": 10466,
+   "sha256": "05335d31ff39b3f9fd16fc08e42d1c05abee121e7a090c7aa9d1e6139167b5b7"
+  },
+  "eval.md": {
+   "bytes": 2418,
+   "sha256": "3aa62d3251eeebd0e404d1597de550d8768e854f5b8d4ecbf099768e276a0c6f"
+  },
+  "MODEL_CARD.md": {
+   "bytes": 8220,
+   "sha256": "eb2c11ee288c5927eb89e0ad0cb220ec1c3b98bc2505e6b4c4494fc9b0ea604d"
+  }
+ }
+}

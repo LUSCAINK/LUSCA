@@ -117,7 +117,7 @@ Why these shapes:
 
 ### 2.2 Why 2,048 tokens
 
-A typical contract file or Anchor module is 5–30 KB. At an expected ~3.5 bytes per token (measured in M1), 2,048 tokens hold about 7 KB, or roughly 200 lines. That fits a contract's storage layout, its modifiers and several functions together. Longer files are split into windows. Repo-level packing ([§3.2](#32-document-format)) keeps related files next to each other. Extending to 4,096 with RoPE position interpolation is an option for M5, not for the base run.
+A typical contract file or Anchor module is 5–30 KB. The M1 tokenizer measures 4.23 bytes per token on held-out code (§2.3), so 2,048 tokens hold about 8.7 KB: 225 lines of Solidity, 258 of Rust, 233 of Move. That fits a contract's storage layout, its modifiers and several functions together. Longer files are split into windows. Repo-level packing ([§3.2](#32-document-format)) keeps related files next to each other. Extending to 4,096 with RoPE position interpolation is an option for M5, not for the base run.
 
 ### 2.3 Tokenizer
 
@@ -132,6 +132,14 @@ A typical contract file or Anchor module is 5–30 KB. At an expected ~3.5 bytes
 - **Training sample**: balanced so each language gets merges (Move and Cairo are small and are upsampled for tokenizer training only), plus crypto web text. It is trained once with a published, deterministic script.
 - **Artifacts**: `tokenizer.json` (Hugging Face format), merges, and sha256. One JavaScript encoder serves the server, the browser and the desktop CLI, the same pattern as `shared/sepia/` today.
 - **M1 reports**: bytes per token per language, compared with the GPT tokenizer used at ingest on the same held-out files.
+
+**Status (M1, 2026-10-06): trained and evaluated.** Artifacts in [`models/sepia-1-tokenizer/`](../models/sepia-1-tokenizer/) (tokenizer.json sha256 `4b2ec96e…`, model card, eval.json, manifest), scripts in [`scripts/tokenizer/`](../scripts/tokenizer/), TypeScript encoder in `shared/sepia1/tokenizer.ts`, playground on lusca.ink/sepia.
+
+- Sample: 209.2 MB, 61.8% code (all 110 code-index repositories, 18,239 files at the commits in `scripts/tokenizer/data-manifest.json`) and 80.0 MB of crypto web text from the corpus. Verified on-chain sources were not used: the public chain API exposes source paths and sizes, not source text. Expert analysis is not collected yet.
+- Held out before training, by hash: 1,052 documents (8% of code files per language up to 1.5 MB each, plus 1.5 MB of English web pages).
+- Held-out code: 4.23 bytes per token, against 4.03 for o200k_base (the encoding used at ingest), 4.01 for cl100k_base and 2.41 for GPT-2 r50k_base: 4.6%, 5.1% and 43% fewer tokens for the same code. Web text: 3.80 bytes per token against 4.26 for o200k_base, the expected cost of a 32k vocabulary on prose.
+- Exact round trip on all 1,052 held-out documents. The TypeScript encoder matches Hugging Face `tokenizers` 0.20.3 on all 2,287,501 held-out tokens and on 2,518 edge-case fixtures. Training twice gives a byte-identical tokenizer.json.
+- Where this section left room (blank-line runs, dotted chains such as `msg.sender`, leading spaces on operators, punctuation runs), the choices and reasons are in the model card.
 
 ### 2.4 Precision and determinism
 
@@ -167,7 +175,7 @@ The sources, the held-out protocol set and the expert-analysis policy are specif
 | Source | What | Volume | Notes |
 |---|---|---|---|
 | Web corpus | Crypto technical text from the 8 arms: specs, EIPs, docs, research, governance | ≈250–300M tokens on disk at any time | Production rotates `dataset.jsonl` at 350 MB and keeps 3 archives, so at most ≈1.4 GB of JSONL (text plus metadata) exists at once. The lifetime counter (325M) includes pages in archives that were already rotated out. **Export to tokenized shards before more pages rotate out.** |
-| Protocol code index | 110 allowlisted repositories, all licenses (`server/codebase`, `GET /api/code/stats`) | Allowlist estimate: ≈ 35–46M tokens (≈ 40M at 3.5 bytes per token) | Filled in allowlist priority order up to a cap of 150 MB of gzip shards (`LUSCA_CODE_MAX_MB`); whatever does not fit is skipped with a note. Running `filters.ts` over the file list of every allowlisted archive (2026-10-05) gives ≈ 18.5k files, ≈ 139 MB of text and ≈ 29 MB of gzip shards with the allowlist's path limits; the same method matched real ingest exactly on 5 repositories. The earlier survey of 92 candidate archives, without path limits, found ≈ 400 MB. At 3.5–5× gzip the cap holds ≈ 525–750 MB of text, so the allowlist sets the size, not the cap. Replace the estimate with measured `bytes` ÷ measured bytes per token |
+| Protocol code index | 110 allowlisted repositories, all licenses (`server/codebase`, `GET /api/code/stats`) | Allowlist estimate: ≈ 35–46M tokens (≈ 40M at 3.5 bytes per token) | Filled in allowlist priority order up to a cap of 150 MB of gzip shards (`LUSCA_CODE_MAX_MB`); whatever does not fit is skipped with a note. Running `filters.ts` over the file list of every allowlisted archive (2026-10-05) gives ≈ 18.5k files, ≈ 139 MB of text and ≈ 29 MB of gzip shards with the allowlist's path limits; the same method matched real ingest exactly on 5 repositories. The earlier survey of 92 candidate archives, without path limits, found ≈ 400 MB. At 3.5–5× gzip the cap holds ≈ 525–750 MB of text, so the allowlist sets the size, not the cap. Measured 2026-10-06 (M1): all 110 entries indexed, 18,239 files, 147.7 MB of text, ≈ 35.7M tokens with the M1 tokenizer (each language's bytes ÷ its measured bytes per token) |
 | Expert analysis | Vulnerability guides, incident index and exploit PoCs, advisories, wargames, audit reports | Guides, advisories, wargames and incidents: ≈ 8–15 MB (≈ 2.3–4.3M tokens). Audit-report repositories: more than 1,400 PDFs, text not yet measured; ≈ 60–140 MB (≈ 15–40M tokens) if a report averages 40–100 KB of text | Per [SEPIA-1-data.md §5](./SEPIA-1-data.md), all licenses. Code4rena-derived text is excluded because its terms forbid ML training. Reports that describe evaluation items stay out ([§3.5](#35-eval-contamination-control)). PDF-to-text conversion runs off the Render box |
 
 The code index is a separate data source, not an arm. The arms stay at 8.
@@ -620,7 +628,7 @@ The `server/codebase` priority-ordered allowlist (all licenses), license recordi
 
 ### M1 · Tokenizer and reference implementation — 2–3 weeks
 
-- The tokenizer trained and published (vocab, merges, sha256), with a bytes-per-token report per language.
+- **Done (2026-10-06):** the tokenizer trained (vocab, merges, sha256), with a bytes-per-token report per language (§2.3). Publishing it to the Hugging Face Hub is prepared (`scripts/hf/build-tokenizer-release.mjs`), not yet uploaded.
 - `shared/sepia1/`: a plain-JavaScript reference forward and backward for the transformer, with a float64 option for gradient checks, used as ground truth for kernels at small shapes. Same role as `shared/sepia/` today.
 - The shard builder and manifest format. Web text exported before it rotates out, then scanned for held-out material (§3.5) and frozen at a recorded date.
 - An offline reference run of a small config on the same shards (PyTorch, owner's machine), to know what a correct loss curve looks like before trusting the distributed run.

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, type ReactNode } from 'react'
+import { Suspense, lazy, useEffect, useMemo, type ReactNode } from 'react'
 import { LossChart } from '@/components/sepia/LossChart'
 import { Talk } from '@/components/sepia/Talk'
 import { Samples } from '@/components/sepia/Samples'
@@ -14,6 +14,9 @@ import { fmtCompact, fmtInt } from '@/lib/format'
 import { Kicker, NextStep, OnThisPage, Terms } from '@/components/docs/pagekit'
 import '@/components/obs/parts.css'
 import './sepia.css'
+
+// SEPIA-1 tokenizer playground (milestone M1): its own chunk; the tokenizer loads near the viewport.
+const TokenizerLab = lazy(() => import('@/components/sepia/tokenizer/Tokenizer'))
 
 export default function Sepia() {
   useEffect(() => {
@@ -74,6 +77,7 @@ export default function Sepia() {
                 { id: 'sp-try', label: 'Try it' },
                 { id: 'sp-data', label: 'What it has read' },
                 { id: 'sp-arch', label: 'How it’s built' },
+                { id: 'sp-tok', label: 'SEPIA-1 tokenizer' },
                 { id: 'sp-code', label: 'What SEPIA-1 will read' },
               ]}
             />
@@ -140,6 +144,16 @@ export default function Sepia() {
 
       <Section id="sp-road" title="Roadmap" kicker="Three stages, each with its current status. No dates.">
         <Roadmap />
+      </Section>
+
+      <Section
+        id="sp-tok"
+        title="SEPIA-1 tokenizer"
+        kicker="Milestone M1 of SEPIA-1: a 32,768-entry byte-level BPE trained on protocol code and crypto web text, evaluated on files it never saw. The tokenizer runs in this tab. SEPIA-1 itself is not trained yet."
+      >
+        <Suspense fallback={<div className="tk-loading mono">loading tokenizer…</div>}>
+          <TokenizerLab />
+        </Suspense>
       </Section>
 
       <Section
