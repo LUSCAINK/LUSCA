@@ -72,9 +72,9 @@ Bytes per token (higher is better):
 | Go | 138 | 1.27 | **3.87** | 2.64 | 3.62 | 3.67 |
 | C / C++ | 9 | 0.23 | **3.78** | 2.21 | 3.81 | 3.80 |
 | TypeScript | 16 | 0.11 | **4.30** | 2.43 | 3.89 | 3.91 |
-| Python | 15 | 0.16 | **4.61** | 2.50 | 4.27 | 4.24 |
+| Python | 15 | 0.16 | **4.61** | 2.49 | 4.27 | 4.24 |
 | Markdown (EIPs, docs) | 141 | 1.51 | **3.54** | 2.99 | 3.65 | 3.67 |
-| Web text (English, crypto) | 202 | 1.51 | **3.79** | 3.80 | 4.16 | 4.26 |
+| Web text (English, crypto) | 202 | 1.51 | **3.79** | 3.80 | 4.15 | 4.26 |
 | **All code** (no Markdown) | | 6.19 | **4.22** | 2.41 | 4.01 | 4.03 |
 
 Lines of code in one 2,048-token window (2,048 × lines ÷ tokens):

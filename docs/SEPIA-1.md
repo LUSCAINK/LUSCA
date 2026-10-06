@@ -117,7 +117,7 @@ Why these shapes:
 
 ### 2.2 Why 2,048 tokens
 
-A typical contract file or Anchor module is 5–30 KB. The M1 tokenizer measures 4.23 bytes per token on held-out code (§2.3), so 2,048 tokens hold about 8.7 KB: 225 lines of Solidity, 258 of Rust, 233 of Move. That fits a contract's storage layout, its modifiers and several functions together. Longer files are split into windows. Repo-level packing ([§3.2](#32-document-format)) keeps related files next to each other. Extending to 4,096 with RoPE position interpolation is an option for M5, not for the base run.
+A typical contract file or Anchor module is 5–30 KB. The M1 tokenizer measures 4.22 bytes per token on held-out code (§2.3), so 2,048 tokens hold about 8.7 KB: 225 lines of Solidity, 258 of Rust, 233 of Move. That fits a contract's storage layout, its modifiers and several functions together. Longer files are split into windows. Repo-level packing ([§3.2](#32-document-format)) keeps related files next to each other. Extending to 4,096 with RoPE position interpolation is an option for M5, not for the base run.
 
 ### 2.3 Tokenizer
 
@@ -137,7 +137,7 @@ A typical contract file or Anchor module is 5–30 KB. The M1 tokenizer measures
 
 - Sample: 209.2 MB, 61.8% code (all 110 code-index repositories, 18,239 files at the commits in `scripts/tokenizer/data-manifest.json`) and 80.0 MB of crypto web text from the corpus. Verified on-chain sources were not used: the public chain API exposes source paths and sizes, not source text. Expert analysis is not collected yet.
 - Held out before training, by hash: 1,052 documents (8% of code files per language up to 1.5 MB each, plus 1.5 MB of English web pages).
-- Held-out code: 4.23 bytes per token, against 4.03 for o200k_base (the encoding used at ingest), 4.01 for cl100k_base and 2.41 for GPT-2 r50k_base: 4.6%, 5.1% and 43% fewer tokens for the same code. Web text: 3.80 bytes per token against 4.26 for o200k_base, the expected cost of a 32k vocabulary on prose.
+- Held-out code: 4.22 bytes per token, against 4.03 for o200k_base (the encoding used at ingest), 4.01 for cl100k_base and 2.41 for GPT-2 r50k_base: 4.6%, 5.1% and 43% fewer tokens for the same code. Web text: 3.79 bytes per token against 4.26 for o200k_base, the expected cost of a 32k vocabulary on prose.
 - Exact round trip on all 1,052 held-out documents. The TypeScript encoder matches Hugging Face `tokenizers` 0.20.3 on all 2,287,501 held-out tokens and on 2,518 edge-case fixtures. Training twice gives a byte-identical tokenizer.json.
 - Where this section left room (blank-line runs, dotted chains such as `msg.sender`, leading spaces on operators, punctuation runs), the choices and reasons are in the model card.
 

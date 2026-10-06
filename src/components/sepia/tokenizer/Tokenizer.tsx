@@ -92,6 +92,7 @@ export default function TokenizerLab() {
   const [heat, setHeat] = useState(false)
   const [hover, setHover] = useState<Chip | null>(null)
   const deferred = useDeferredValue(text)
+  const taRef = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(() => {
     if (!near) return
@@ -156,56 +157,68 @@ export default function TokenizerLab() {
   const pct = (r: number) => `${r < 1 ? '−' : '+'}${Math.abs((1 - r) * 100).toFixed(1)}%`
 
   return (
-    <div className="tk" ref={rootRef}>
+    <div className="s1k" ref={rootRef}>
       {/* milestone strip */}
-      <div className="tk-ms mono" role="list" aria-label="SEPIA-1 milestones">
-        <span className="tk-ms-i on" role="listitem">
+      <div className="s1k-ms mono" role="list" aria-label="SEPIA-1 milestones">
+        <span className="s1k-ms-i on" role="listitem">
           <span className="led on" />
           <b>M1</b> tokenizer · trained and evaluated
         </span>
-        <span className="tk-ms-i" role="listitem">
+        <span className="s1k-ms-i" role="listitem">
           <span className="led" />
           <b>M2</b> WebGPU transformer kernels · not started
         </span>
-        <span className="tk-ms-i" role="listitem">
+        <span className="s1k-ms-i" role="listitem">
           <span className="led" />
           <b>SEPIA-1</b> model · not trained yet
         </span>
       </div>
 
       {/* measured headline numbers */}
-      <div className="tk-stats">
+      <div className="s1k-stats">
         <Stat k="vocabulary" v={fmt(EVAL.tokenizer.vocabSize)} s="byte-level BPE · 39 special" />
         <Stat k="held-out code · bytes / token" v={code.tokenizers.sepia1.bytesPerToken.toFixed(2)} s={`o200k ${code.tokenizers.o200k.bytesPerToken.toFixed(2)} · cl100k ${code.tokenizers.cl100k.bytesPerToken.toFixed(2)}`} hot />
         <Stat k="tokens for the same code" v={pct(code.relative.o200k)} s={`vs o200k (200k vocab) · ${pct(code.relative.cl100k)} vs cl100k`} />
         <Stat k="vs GPT-2 r50k" v={pct(code.relative.r50k)} s="tokens on held-out code" />
-        <Stat k="exact round trip" v={`${fmt(EVAL.roundTrip.exact)}/${fmt(EVAL.roundTrip.docs)}`} s="held-out files decode byte for byte" />
+        <Stat k="exact round trip" v={`${Math.floor((EVAL.roundTrip.exact / EVAL.roundTrip.docs) * 1000) / 10}%`} s={`${fmt(EVAL.roundTrip.exact)} of ${fmt(EVAL.roundTrip.docs)} held-out files, byte for byte`} />
         <Stat k="browser encoder vs python" v={`${EVAL.parity.mismatches} diff`} s={`${fmt(EVAL.parity.tokens)} tokens compared`} />
       </div>
 
       {/* playground */}
-      <div className="tk-play">
-        <div className="tk-src panel">
+      <div className="s1k-play">
+        <div className="s1k-src panel">
           <div className="panel-head">
             <span>
               source · <b>{exId === 'custom' ? 'your code' : example?.label}</b>
             </span>
-            <span className="tk-src-n num">{fmt(stats.bytes)} B · {fmt(stats.lines)} lines</span>
+            <span className="s1k-src-n num">{fmt(stats.bytes)} B · {fmt(stats.lines)} lines</span>
           </div>
-          <div className="tk-ex" role="tablist" aria-label="examples">
+          <div className="s1k-ex" role="tablist" aria-label="examples">
             {EXAMPLES.map((e) => (
-              <button key={e.id} type="button" role="tab" aria-selected={exId === e.id} className={`tk-ex-b ${exId === e.id ? 'on' : ''}`} onClick={() => pick(e.id)}>
-                <span className="tk-ex-l">{e.lang}</span>
+              <button key={e.id} type="button" role="tab" aria-selected={exId === e.id} className={`s1k-ex-b ${exId === e.id ? 'on' : ''}`} onClick={() => pick(e.id)}>
+                <span className="s1k-ex-l">{e.lang}</span>
                 {e.label}
               </button>
             ))}
-            <button type="button" role="tab" aria-selected={exId === 'custom'} className={`tk-ex-b ${exId === 'custom' ? 'on' : ''}`} onClick={() => setExId('custom')}>
-              <span className="tk-ex-l">paste</span>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={exId === 'custom'}
+              className={`s1k-ex-b ${exId === 'custom' ? 'on' : ''}`}
+              onClick={() => {
+                if (exId !== 'custom') setText('')
+                setExId('custom')
+                setHover(null)
+                taRef.current?.focus()
+              }}
+            >
+              <span className="s1k-ex-l">paste</span>
               your code
             </button>
           </div>
           <textarea
-            className="tk-ta mono"
+            ref={taRef}
+            className="s1k-ta mono"
             value={text}
             spellCheck={false}
             autoCapitalize="off"
@@ -214,13 +227,13 @@ export default function TokenizerLab() {
             onChange={(e) => onEdit(e.target.value)}
             placeholder="Paste a contract, a program or any text."
           />
-          <div className="tk-attr mono">
+          <div className="s1k-attr mono">
             {exId !== 'custom' && example ? (
               <>
                 <a href={`https://github.com/${example.repo}/blob/${example.commit}/${example.path}#L${example.lines[0]}-L${example.lines[1]}`} target="_blank" rel="noreferrer">
                   {example.repo}@{example.commit.slice(0, 7)} · {example.path} · L{example.lines[0]}–{example.lines[1]}
                 </a>
-                <span className="tk-attr-l">{example.license}</span>
+                <span className="s1k-attr-l">{example.license}</span>
               </>
             ) : (
               <span>Your text stays in this browser tab. Nothing is sent to the server.</span>
@@ -228,9 +241,9 @@ export default function TokenizerLab() {
           </div>
         </div>
 
-        <div className="tk-out panel">
-          <div className="panel-head tk-out-h">
-            <div className="tk-seg" role="tablist" aria-label="tokenizer">
+        <div className="s1k-out panel">
+          <div className="panel-head s1k-out-h">
+            <div className="s1k-seg" role="tablist" aria-label="tokenizer">
               {(['sepia1', 'o200k', 'cl100k'] as View[]).map((v) => (
                 <button key={v} type="button" role="tab" aria-selected={view === v} className={view === v ? 'on' : ''} onClick={() => setView(v)} disabled={v !== 'sepia1' && !gpt}>
                   {SHORT[v]}
@@ -238,18 +251,18 @@ export default function TokenizerLab() {
                 </button>
               ))}
             </div>
-            <button type="button" className={`tk-heat ${heat ? 'on' : ''}`} onClick={() => setHeat((h) => !h)} aria-pressed={heat} title="Color tokens by length in bytes">
-              {heat ? 'length' : 'boundaries'}
+            <button type="button" className={`s1k-heat ${heat ? 'on' : ''}`} onClick={() => setHeat((h) => !h)} aria-pressed={heat} title="Color tokens by length in bytes">
+              color · {heat ? 'length' : 'tokens'}
             </button>
           </div>
-          <div className="tk-chips-wrap">
+          <div className="s1k-chips-wrap">
             {chips === null ? (
-              <div className="tk-loading mono">{tokErr ? `tokenizer did not load: ${tokErr}` : near ? 'loading tokenizer…' : ''}</div>
+              <div className="s1k-loading mono">{tokErr ? `tokenizer did not load: ${tokErr}` : near ? 'loading tokenizer…' : ''}</div>
             ) : (
               <ChipView chips={chips} heat={heat} onHover={setHover} />
             )}
           </div>
-          <div className="tk-insp mono" aria-live="polite">
+          <div className="s1k-insp mono" aria-live="polite">
             {hover ? (
               <>
                 <span>
@@ -258,7 +271,7 @@ export default function TokenizerLab() {
                 <span>
                   <b className="num">{hover.bytes}</b> {hover.bytes === 1 ? 'byte' : 'bytes'}
                 </span>
-                <span className="tk-insp-t">{JSON.stringify(hover.text)}</span>
+                <span className="s1k-insp-t">{JSON.stringify(hover.text)}</span>
               </>
             ) : (
               <span className="dim">
@@ -277,7 +290,7 @@ export default function TokenizerLab() {
 
       <Rules />
 
-      <div className="tk-foot mono">
+      <div className="s1k-foot mono">
         <span>
           tokenizer.json sha256 <b>{EVAL.tokenizer.sha256.slice(0, 16)}…</b>
         </span>
@@ -297,10 +310,10 @@ export default function TokenizerLab() {
 
 function Stat({ k, v, s, hot }: { k: string; v: string; s: string; hot?: boolean }) {
   return (
-    <div className={`tk-stat ${hot ? 'hot-stat' : ''}`}>
+    <div className={`s1k-stat ${hot ? 'hot-stat' : ''}`}>
       <span className="label">{k}</span>
-      <span className="tk-stat-v num">{v}</span>
-      <span className="tk-stat-s mono">{s}</span>
+      <span className="s1k-stat-v num">{v}</span>
+      <span className="s1k-stat-s mono">{s}</span>
     </div>
   )
 }
@@ -342,9 +355,9 @@ const ChipView = memo(function ChipView({ chips, heat, onHover }: { chips: Chip[
     [shown, onHover],
   )
   return (
-    <div className={`tk-chips mono ${heat ? 'heat' : ''}`} onMouseOver={over} onMouseLeave={() => onHover(null)}>
+    <div className={`s1k-chips mono ${heat ? 'heat' : ''}`} onMouseOver={over} onMouseLeave={() => onHover(null)}>
       {shown.map((c, i) => (
-        <span key={i} data-i={i} className={c.special ? 'tk-c sp' : `tk-c c${i % 4}`} style={heat ? { ['--h' as string]: Math.min(1, (c.bytes - 1) / 9) } : undefined}>
+        <span key={i} data-i={i} className={c.special ? 's1k-c s1k-sp' : `s1k-c c${i % 4}`} style={heat ? { ['--h' as string]: Math.min(1, (c.bytes - 1) / 9) } : undefined}>
           {visual(c.text)}
         </span>
       ))}
@@ -356,30 +369,30 @@ function Compare({ counts, bytes, lines }: { counts: Record<View, number | null>
   const max = Math.max(1, ...Object.values(counts).map((v) => v ?? 0))
   const s = counts.sepia1
   return (
-    <div className="tk-cmp panel">
+    <div className="s1k-cmp panel">
       <div className="panel-head">
         <span>
           this text · <b>tokens</b>
         </span>
         <span>fewer is better</span>
       </div>
-      <div className="tk-cmp-rows">
+      <div className="s1k-cmp-rows">
         {(['sepia1', 'o200k', 'cl100k'] as View[]).map((k) => {
           const v = counts[k]
           const d = v !== null && s !== null && k !== 'sepia1' && v > 0 ? (s - v) / v : null
           return (
-            <div key={k} className={`tk-cmp-r ${k === 'sepia1' ? 'me' : ''}`}>
-              <span className="tk-cmp-k mono">{SHORT[k]}</span>
-              <span className="tk-cmp-bar">
+            <div key={k} className={`s1k-cmp-r ${k === 'sepia1' ? 'me' : ''}`}>
+              <span className="s1k-cmp-k mono">{SHORT[k]}</span>
+              <span className="s1k-cmp-bar">
                 <span style={{ width: `${v === null ? 0 : (v / max) * 100}%` }} />
               </span>
-              <span className="tk-cmp-v num">{v === null ? '…' : fmt(v)}</span>
-              <span className="tk-cmp-d num">{d === null ? (k === 'sepia1' && s !== null && s > 0 ? `${(bytes / s).toFixed(2)} B/tok` : '') : `${d <= 0 ? '−' : '+'}${Math.abs(d * 100).toFixed(1)}%`}</span>
+              <span className="s1k-cmp-v num">{v === null ? '…' : fmt(v)}</span>
+              <span className="s1k-cmp-d num">{d === null ? (k === 'sepia1' && s !== null && s > 0 ? `${(bytes / s).toFixed(2)} B/tok` : '') : `${d <= 0 ? '−' : '+'}${Math.abs(d * 100).toFixed(1)}%`}</span>
             </div>
           )
         })}
       </div>
-      <div className="tk-cmp-f mono">
+      <div className="s1k-cmp-f mono">
         {s !== null && s > 0 && lines > 0 ? (
           <>
             At this rate a 2,048-token SEPIA-1 window holds <b className="num">{fmt(Math.floor((2048 * lines) / s))}</b> lines like these.
@@ -404,12 +417,12 @@ function EvalTable() {
   const meta = METRICS.find((x) => x.k === m) as (typeof METRICS)[number]
   const rows = EVAL.languages.filter((l) => m !== 'linesPer2048' || l.id !== 'web')
   return (
-    <div className="tk-eval panel">
-      <div className="panel-head tk-eval-h">
+    <div className="s1k-eval panel">
+      <div className="panel-head s1k-eval-h">
         <span>
           held-out evaluation · <b>{meta.label}</b> · {meta.better === 'high' ? 'higher' : 'lower'} is better
         </span>
-        <div className="tk-seg" role="tablist" aria-label="metric">
+        <div className="s1k-seg" role="tablist" aria-label="metric">
           {METRICS.map((x) => (
             <button key={x.k} type="button" role="tab" aria-selected={m === x.k} className={m === x.k ? 'on' : ''} onClick={() => setM(x.k)}>
               {x.label}
@@ -417,8 +430,8 @@ function EvalTable() {
           ))}
         </div>
       </div>
-      <div className="tk-tbl-scroll">
-        <table className="tk-tbl">
+      <div className="s1k-tbl-scroll">
+        <table className="s1k-tbl">
           <thead>
             <tr>
               <th>language</th>
@@ -426,7 +439,7 @@ function EvalTable() {
               {KEYS.map((k) => (
                 <th key={k} className={`r ${k === 'sepia1' ? 'me' : ''}`}>
                   {SHORT[k]}
-                  <span className="tk-th-v">{fmt(EVAL.compare[k].vocab)}</span>
+                  <span className="s1k-th-v">{fmt(EVAL.compare[k].vocab)}</span>
                 </th>
               ))}
             </tr>
@@ -438,14 +451,14 @@ function EvalTable() {
               const top = Math.max(...vals)
               return (
                 <tr key={l.id}>
-                  <td className="tk-tbl-l">{l.label}</td>
+                  <td className="s1k-tbl-l">{l.label}</td>
                   <td className="r num dim">
                     {l.docs} · {(l.bytes / 1e6).toFixed(2)}
                   </td>
                   {KEYS.map((k, i) => (
                     <td key={k} className={`r num ${k === 'sepia1' ? 'me' : ''} ${vals[i] === best ? 'best' : ''}`}>
-                      <span className="tk-cell-bar" style={{ width: `${(vals[i] / top) * 100}%` }} />
-                      <span className="tk-cell-v">{meta.d ? vals[i].toFixed(meta.d) : fmt(vals[i])}</span>
+                      <span className="s1k-cell-bar" style={{ width: `${(vals[i] / top) * 100}%` }} />
+                      <span className="s1k-cell-v">{meta.d ? vals[i].toFixed(meta.d) : fmt(vals[i])}</span>
                     </td>
                   ))}
                 </tr>
@@ -454,7 +467,7 @@ function EvalTable() {
           </tbody>
         </table>
       </div>
-      <p className="tk-eval-f">
+      <p className="s1k-eval-f">
         {EVAL.heldOut} Lines per window = 2,048 × lines ÷ tokens. GPT counts from <span className="mono">gpt-tokenizer</span>; o200k_base is the encoding the corpus counts tokens with at
         ingest. SEPIA-1 has a 32,768-entry vocabulary, 3–6× smaller than cl100k and o200k, so it gives up some ground on English prose and keeps the
         embedding table small for volunteer GPUs.
@@ -474,13 +487,13 @@ const RULES: { k: string; ex: string[]; d: string }[] = [
 
 function Rules() {
   return (
-    <div className="tk-rules">
+    <div className="s1k-rules">
       {RULES.map((r) => (
-        <div key={r.k} className="tk-rule">
+        <div key={r.k} className="s1k-rule">
           <span className="label">{r.k}</span>
-          <div className="tk-rule-ex mono">
+          <div className="s1k-rule-ex mono">
             {r.ex.map((x, i) => (
-              <span key={i} className={`tk-c c${i % 4}`}>
+              <span key={i} className={`s1k-c c${i % 4}`}>
                 {x}
               </span>
             ))}

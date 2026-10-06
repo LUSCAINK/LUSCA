@@ -5,7 +5,7 @@
   "vocabSize": 32768,
   "sha256": "4b2ec96ed69a7c9fe7a7c01bd01e4d4c95f527384d6ee3862e43e850ed54d04f"
  },
- "created": "2026-10-06T08:44:49.851Z",
+ "created": "2026-10-06T08:49:05.998Z",
  "heldOut": "Files and pages chosen by hash before training and never trained on (scripts/tokenizer/prepare.py). Code: sha256(repo\\npath) mod 1000 < 80, up to 1.5 MB per language. Web: sha256(id) mod 1000 < 20, mostly-ASCII pages, up to 1.5 MB.",
  "definitions": {
   "bytesPerToken": "UTF-8 bytes of the held-out text divided by its token count (higher is better)",
@@ -41,25 +41,25 @@
    "tokenizers": {
     "sepia1": {
      "tokens": 341123,
-     "bytesPerToken": 4.444,
+     "bytesPerToken": 4.4437,
      "tokensPer1kLines": 9106,
      "linesPer2048": 225
     },
     "r50k": {
      "tokens": 608961,
-     "bytesPerToken": 2.489,
+     "bytesPerToken": 2.4892,
      "tokensPer1kLines": 16256,
      "linesPer2048": 126
     },
     "cl100k": {
      "tokens": 358011,
-     "bytesPerToken": 4.234,
+     "bytesPerToken": 4.2341,
      "tokensPer1kLines": 9557,
      "linesPer2048": 214
     },
     "o200k": {
      "tokens": 354796,
-     "bytesPerToken": 4.272,
+     "bytesPerToken": 4.2724,
      "tokensPer1kLines": 9471,
      "linesPer2048": 216
     }
@@ -75,25 +75,25 @@
    "tokenizers": {
     "sepia1": {
      "tokens": 64324,
-     "bytesPerToken": 4.345,
+     "bytesPerToken": 4.3449,
      "tokensPer1kLines": 7405,
      "linesPer2048": 277
     },
     "r50k": {
      "tokens": 109078,
-     "bytesPerToken": 2.562,
+     "bytesPerToken": 2.5622,
      "tokensPer1kLines": 12558,
      "linesPer2048": 163
     },
     "cl100k": {
      "tokens": 71154,
-     "bytesPerToken": 3.928,
+     "bytesPerToken": 3.9278,
      "tokensPer1kLines": 8192,
      "linesPer2048": 250
     },
     "o200k": {
      "tokens": 71116,
-     "bytesPerToken": 3.93,
+     "bytesPerToken": 3.9299,
      "tokensPer1kLines": 8187,
      "linesPer2048": 250
     }
@@ -109,19 +109,19 @@
    "tokenizers": {
     "sepia1": {
      "tokens": 378926,
-     "bytesPerToken": 4.44,
+     "bytesPerToken": 4.4403,
      "tokensPer1kLines": 7935,
      "linesPer2048": 258
     },
     "r50k": {
      "tokens": 771416,
-     "bytesPerToken": 2.181,
+     "bytesPerToken": 2.1811,
      "tokensPer1kLines": 16155,
      "linesPer2048": 127
     },
     "cl100k": {
      "tokens": 400726,
-     "bytesPerToken": 4.199,
+     "bytesPerToken": 4.1987,
      "tokensPer1kLines": 8392,
      "linesPer2048": 244
     },
@@ -143,25 +143,25 @@
    "tokenizers": {
     "sepia1": {
      "tokens": 148846,
-     "bytesPerToken": 4.203,
+     "bytesPerToken": 4.2026,
      "tokensPer1kLines": 8807,
      "linesPer2048": 233
     },
     "r50k": {
      "tokens": 255787,
-     "bytesPerToken": 2.446,
+     "bytesPerToken": 2.4456,
      "tokensPer1kLines": 15134,
      "linesPer2048": 135
     },
     "cl100k": {
      "tokens": 152652,
-     "bytesPerToken": 4.098,
+     "bytesPerToken": 4.0979,
      "tokensPer1kLines": 9032,
      "linesPer2048": 227
     },
     "o200k": {
      "tokens": 152943,
-     "bytesPerToken": 4.09,
+     "bytesPerToken": 4.0901,
      "tokensPer1kLines": 9049,
      "linesPer2048": 226
     }
@@ -177,25 +177,25 @@
    "tokenizers": {
     "sepia1": {
      "tokens": 84080,
-     "bytesPerToken": 3.825,
+     "bytesPerToken": 3.8253,
      "tokensPer1kLines": 8908,
      "linesPer2048": 230
     },
     "r50k": {
      "tokens": 131901,
-     "bytesPerToken": 2.438,
+     "bytesPerToken": 2.4384,
      "tokensPer1kLines": 13974,
      "linesPer2048": 147
     },
     "cl100k": {
      "tokens": 85959,
-     "bytesPerToken": 3.742,
+     "bytesPerToken": 3.7416,
      "tokensPer1kLines": 9107,
      "linesPer2048": 225
     },
     "o200k": {
      "tokens": 85590,
-     "bytesPerToken": 3.758,
+     "bytesPerToken": 3.7578,
      "tokensPer1kLines": 9068,
      "linesPer2048": 226
     }
@@ -211,25 +211,25 @@
    "tokenizers": {
     "sepia1": {
      "tokens": 327078,
-     "bytesPerToken": 3.874,
+     "bytesPerToken": 3.8737,
      "tokensPer1kLines": 8927,
      "linesPer2048": 229
     },
     "r50k": {
      "tokens": 480096,
-     "bytesPerToken": 2.639,
+     "bytesPerToken": 2.6391,
      "tokensPer1kLines": 13103,
      "linesPer2048": 156
     },
     "cl100k": {
      "tokens": 349609,
-     "bytesPerToken": 3.624,
+     "bytesPerToken": 3.6241,
      "tokensPer1kLines": 9542,
      "linesPer2048": 215
     },
     "o200k": {
      "tokens": 345540,
-     "bytesPerToken": 3.667,
+     "bytesPerToken": 3.6668,
      "tokensPer1kLines": 9431,
      "linesPer2048": 217
     }
@@ -245,25 +245,25 @@
    "tokenizers": {
     "sepia1": {
      "tokens": 60614,
-     "bytesPerToken": 3.776,
+     "bytesPerToken": 3.7756,
      "tokensPer1kLines": 10489,
      "linesPer2048": 195
     },
     "r50k": {
      "tokens": 103705,
-     "bytesPerToken": 2.207,
+     "bytesPerToken": 2.2068,
      "tokensPer1kLines": 17945,
      "linesPer2048": 114
     },
     "cl100k": {
      "tokens": 60133,
-     "bytesPerToken": 3.806,
+     "bytesPerToken": 3.8058,
      "tokensPer1kLines": 10405,
      "linesPer2048": 197
     },
     "o200k": {
      "tokens": 60221,
-     "bytesPerToken": 3.8,
+     "bytesPerToken": 3.8003,
      "tokensPer1kLines": 10421,
      "linesPer2048": 197
     }
@@ -279,25 +279,25 @@
    "tokenizers": {
     "sepia1": {
      "tokens": 25237,
-     "bytesPerToken": 4.301,
+     "bytesPerToken": 4.3006,
      "tokensPer1kLines": 8365,
      "linesPer2048": 245
     },
     "r50k": {
      "tokens": 44613,
-     "bytesPerToken": 2.433,
+     "bytesPerToken": 2.4328,
      "tokensPer1kLines": 14787,
      "linesPer2048": 138
     },
     "cl100k": {
      "tokens": 27883,
-     "bytesPerToken": 3.893,
+     "bytesPerToken": 3.8925,
      "tokensPer1kLines": 9242,
      "linesPer2048": 222
     },
     "o200k": {
      "tokens": 27776,
-     "bytesPerToken": 3.908,
+     "bytesPerToken": 3.9075,
      "tokensPer1kLines": 9206,
      "linesPer2048": 222
     }
@@ -313,25 +313,25 @@
    "tokenizers": {
     "sepia1": {
      "tokens": 34455,
-     "bytesPerToken": 4.608,
+     "bytesPerToken": 4.6082,
      "tokensPer1kLines": 6040,
      "linesPer2048": 339
     },
     "r50k": {
      "tokens": 63640,
-     "bytesPerToken": 2.495,
+     "bytesPerToken": 2.4949,
      "tokensPer1kLines": 11157,
      "linesPer2048": 184
     },
     "cl100k": {
      "tokens": 37173,
-     "bytesPerToken": 4.271,
+     "bytesPerToken": 4.2712,
      "tokensPer1kLines": 6517,
      "linesPer2048": 314
     },
     "o200k": {
      "tokens": 37449,
-     "bytesPerToken": 4.24,
+     "bytesPerToken": 4.2397,
      "tokensPer1kLines": 6565,
      "linesPer2048": 312
     }
@@ -347,25 +347,25 @@
    "tokenizers": {
     "sepia1": {
      "tokens": 426190,
-     "bytesPerToken": 3.537,
+     "bytesPerToken": 3.5368,
      "tokensPer1kLines": 15703,
      "linesPer2048": 130
     },
     "r50k": {
      "tokens": 504774,
-     "bytesPerToken": 2.986,
+     "bytesPerToken": 2.9862,
      "tokensPer1kLines": 18599,
      "linesPer2048": 110
     },
     "cl100k": {
      "tokens": 413248,
-     "bytesPerToken": 3.648,
+     "bytesPerToken": 3.6476,
      "tokensPer1kLines": 15227,
      "linesPer2048": 135
     },
     "o200k": {
      "tokens": 410526,
-     "bytesPerToken": 3.672,
+     "bytesPerToken": 3.6717,
      "tokensPer1kLines": 15126,
      "linesPer2048": 135
     }
@@ -381,25 +381,25 @@
    "tokenizers": {
     "sepia1": {
      "tokens": 396628,
-     "bytesPerToken": 3.795,
+     "bytesPerToken": 3.7949,
      "tokensPer1kLines": 18579,
      "linesPer2048": 110
     },
     "r50k": {
      "tokens": 395844,
-     "bytesPerToken": 3.802,
+     "bytesPerToken": 3.8024,
      "tokensPer1kLines": 18542,
      "linesPer2048": 110
     },
     "cl100k": {
      "tokens": 362283,
-     "bytesPerToken": 4.155,
+     "bytesPerToken": 4.1546,
      "tokensPer1kLines": 16970,
      "linesPer2048": 121
     },
     "o200k": {
      "tokens": 353533,
-     "bytesPerToken": 4.257,
+     "bytesPerToken": 4.2575,
      "tokensPer1kLines": 16560,
      "linesPer2048": 124
     }
@@ -424,28 +424,28 @@
    "tokenizers": {
     "sepia1": {
      "tokens": 1464683,
-     "bytesPerToken": 4.225,
+     "bytesPerToken": 4.2249,
      "tokensPer1kLines": 8547
     },
     "r50k": {
      "tokens": 2569197,
-     "bytesPerToken": 2.409,
+     "bytesPerToken": 2.4086,
      "tokensPer1kLines": 14992
     },
     "cl100k": {
      "tokens": 1543300,
-     "bytesPerToken": 4.01,
+     "bytesPerToken": 4.0097,
      "tokensPer1kLines": 9005
     },
     "o200k": {
      "tokens": 1535365,
-     "bytesPerToken": 4.03,
+     "bytesPerToken": 4.0304,
      "tokensPer1kLines": 8959
     }
    },
    "relative": {
-    "r50k": 0.57,
-    "cl100k": 0.949,
+    "r50k": 0.5701,
+    "cl100k": 0.9491,
     "o200k": 0.954
    }
   }
@@ -462,7 +462,7 @@
   "against": "Hugging Face tokenizers 0.20.3 (Python)"
  },
  "speed": {
-  "encoderMBps": 6.82,
+  "encoderMBps": 6.71,
   "note": "shared/sepia1/tokenizer.ts on Node, one core, cold piece cache per process"
  },
  "evalSha256": {

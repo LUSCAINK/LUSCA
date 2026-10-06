@@ -1,6 +1,6 @@
 /* ─── SEPIA-1 tokenizer (milestone M1) ─────────────────────────────────── */
 
-.tk {
+.s1k {
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -8,15 +8,15 @@
   background: var(--line-2);
   border: 1px solid var(--line-2);
 }
-.tk > * {
+.s1k > * {
   min-width: 0;
 }
-.tk .panel {
+.s1k .panel {
   border: 0;
 }
 
 /* milestone strip */
-.tk-ms {
+.s1k-ms {
   display: flex;
   flex-wrap: wrap;
   gap: 0;
@@ -26,7 +26,7 @@
   text-transform: uppercase;
   color: var(--fg-3);
 }
-.tk-ms-i {
+.s1k-ms-i {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -34,26 +34,26 @@
   border-right: 1px solid var(--line-2);
   white-space: nowrap;
 }
-.tk-ms-i b {
+.s1k-ms-i b {
   color: var(--fg-2);
   font-weight: 500;
 }
-.tk-ms-i.on {
+.s1k-ms-i.on {
   color: var(--fg);
   background: var(--hot-a10);
 }
-.tk-ms-i.on b {
+.s1k-ms-i.on b {
   color: var(--hot);
 }
 
 /* headline stats */
-.tk-stats {
+.s1k-stats {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 1px;
   background: var(--line-2);
 }
-.tk-stat {
+.s1k-stat {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -61,28 +61,28 @@
   background: var(--bg-1);
   min-width: 0;
 }
-.tk-stat-v {
+.s1k-stat-v {
   font-size: clamp(24px, 2.4vw, 36px);
   line-height: 1;
   letter-spacing: -0.03em;
   color: var(--fg);
 }
-.tk-stat.hot-stat {
+.s1k-stat.hot-stat {
   background: var(--hot);
 }
-.tk-stat.hot-stat .label,
-.tk-stat.hot-stat .tk-stat-v,
-.tk-stat.hot-stat .tk-stat-s {
+.s1k-stat.hot-stat .label,
+.s1k-stat.hot-stat .s1k-stat-v,
+.s1k-stat.hot-stat .s1k-stat-s {
   color: var(--ink);
 }
-.tk-stat-s {
+.s1k-stat-s {
   font-size: var(--t-2xs);
   color: var(--fg-2);
   line-height: 1.4;
 }
 
 /* playground: source | tokens, then the comparison */
-.tk-play {
+.s1k-play {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
   grid-template-areas:
@@ -92,33 +92,33 @@
   gap: 1px;
   background: var(--line-2);
 }
-.tk-src {
+.s1k-src {
   grid-area: src;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
-.tk-out {
+.s1k-out {
   grid-area: out;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
-.tk-cmp {
+.s1k-cmp {
   grid-area: cmp;
 }
-.tk-src-n {
+.s1k-src-n {
   color: var(--fg-2);
 }
 
-.tk-ex {
+.s1k-ex {
   display: flex;
   flex-wrap: wrap;
   gap: 1px;
   background: var(--line-2);
   border-bottom: 1px solid var(--line-2);
 }
-.tk-ex-b {
+.s1k-ex-b {
   flex: 1 1 auto;
   display: inline-flex;
   flex-direction: column;
@@ -134,25 +134,25 @@
   cursor: pointer;
   transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
 }
-.tk-ex-b:hover {
+.s1k-ex-b:hover {
   background: var(--bg-3);
   color: var(--fg);
 }
-.tk-ex-b.on {
+.s1k-ex-b.on {
   background: var(--fg);
   color: var(--ink);
 }
-.tk-ex-l {
+.s1k-ex-l {
   font-size: var(--t-3xs);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--fg-3);
 }
-.tk-ex-b.on .tk-ex-l {
+.s1k-ex-b.on .s1k-ex-l {
   color: var(--hot);
 }
 
-.tk-ta {
+.s1k-ta {
   flex: 1;
   min-height: 300px;
   width: 100%;
@@ -168,11 +168,11 @@
   white-space: pre;
   overflow: auto;
 }
-.tk-ta:focus {
+.s1k-ta:focus {
   color: var(--fg);
   box-shadow: inset 0 0 0 1px var(--hot-a40);
 }
-.tk-attr {
+.s1k-attr {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -183,38 +183,38 @@
   font-size: var(--t-2xs);
   color: var(--fg-2);
 }
-.tk-attr a {
+.s1k-attr a {
   color: var(--fg-1);
   text-decoration: none;
   border-bottom: 1px solid var(--line-3);
   overflow-wrap: anywhere;
 }
-.tk-attr a:hover {
+.s1k-attr a:hover {
   color: var(--hot);
   border-color: var(--hot);
 }
-.tk-attr-l {
+.s1k-attr-l {
   color: var(--fg-3);
   letter-spacing: 0.08em;
 }
 
 /* segmented switch (tokenizer / metric) */
-.tk-out-h,
-.tk-eval-h {
+.s1k-out-h,
+.s1k-eval-h {
   height: auto;
   min-height: 40px;
   padding: 0 0 0 12px;
   flex-wrap: wrap;
   white-space: normal;
 }
-.tk-out-h {
+.s1k-out-h {
   padding: 0;
 }
-.tk-seg {
+.s1k-seg {
   display: flex;
   align-self: stretch;
 }
-.tk-seg button {
+.s1k-seg button {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -231,36 +231,36 @@
   cursor: pointer;
   white-space: nowrap;
 }
-.tk-out-h .tk-seg button:first-child {
+.s1k-out-h .s1k-seg button:first-child {
   border-left: 0;
 }
-.tk-seg button .num {
+.s1k-seg button .num {
   color: var(--fg-1);
   font-size: var(--t-xs);
   letter-spacing: 0;
 }
-.tk-seg button:hover {
+.s1k-seg button:hover {
   color: var(--fg);
   background: var(--bg-3);
 }
-.tk-seg button.on {
+.s1k-seg button.on {
   color: var(--ink);
   background: var(--fg);
 }
-.tk-seg button.on .num {
+.s1k-seg button.on .num {
   color: var(--ink);
 }
-.tk-seg button:first-child.on {
+.s1k-seg button:first-child.on {
   background: var(--hot);
 }
-.tk-eval-h .tk-seg button:first-child.on {
+.s1k-eval-h .s1k-seg button:first-child.on {
   background: var(--fg);
 }
-.tk-seg button[disabled] {
+.s1k-seg button[disabled] {
   opacity: 0.4;
   cursor: default;
 }
-.tk-heat {
+.s1k-heat {
   align-self: stretch;
   padding: 0 14px;
   min-height: 40px;
@@ -274,13 +274,13 @@
   text-transform: uppercase;
   cursor: pointer;
 }
-.tk-heat:hover,
-.tk-heat.on {
+.s1k-heat:hover,
+.s1k-heat.on {
   color: var(--hot);
 }
 
 /* token chips */
-.tk-chips-wrap {
+.s1k-chips-wrap {
   flex: 1;
   min-height: 360px;
   max-height: 620px;
@@ -288,63 +288,64 @@
   background: var(--bg);
   overscroll-behavior: contain;
 }
-.tk-loading {
+.s1k-loading {
   padding: 18px 14px;
   font-size: var(--t-xs);
   color: var(--fg-2);
 }
-.tk-chips {
+.s1k-chips {
   padding: 14px;
   font-size: var(--t-sm);
-  line-height: 1.95;
+  line-height: 1.8;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--fg);
 }
-.tk-c {
+.s1k-c {
   padding: 2px 0;
   margin-right: 1px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
   transition: background var(--dur-1) var(--ease);
 }
-.tk-c.c0 {
+.s1k-c.c0 {
   background: rgba(255, 77, 0, 0.2);
 }
-.tk-c.c1 {
+.s1k-c.c1 {
   background: rgba(236, 235, 230, 0.13);
 }
-.tk-c.c2 {
+.s1k-c.c2 {
   background: rgba(255, 176, 0, 0.17);
 }
-.tk-c.c3 {
+.s1k-c.c3 {
   background: rgba(236, 235, 230, 0.06);
   box-shadow: inset 0 -1px 0 rgba(236, 235, 230, 0.25);
 }
-.tk-c.sp {
+.s1k-c.s1k-sp {
   background: var(--fg);
   color: var(--ink);
 }
-.tk-chips.heat .tk-c:not(.sp) {
+.s1k-chips.heat .s1k-c:not(.s1k-sp) {
   background: rgba(255, 77, 0, calc(0.05 + var(--h, 0) * 0.75));
   box-shadow: inset 1px 0 0 rgba(5, 5, 5, 0.9);
 }
-.tk-chips .tk-c:hover {
+.s1k-chips .s1k-c:hover {
   background: var(--hot);
   color: var(--ink);
 }
-.tk-chips .tk-c:hover .ws {
+.s1k-chips .s1k-c:hover .ws {
   color: var(--ink);
 }
-.tk-c .ws {
+.s1k-c .ws {
   font-style: normal;
-  color: var(--fg-3);
+  color: var(--fg-2);
+  opacity: 0.55;
 }
-.tk-chips.heat .tk-c .ws {
+.s1k-chips.heat .s1k-c .ws {
   color: rgba(236, 235, 230, 0.35);
 }
 
-.tk-insp {
+.s1k-insp {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -355,83 +356,83 @@
   font-size: var(--t-2xs);
   color: var(--fg-1);
 }
-.tk-insp b {
+.s1k-insp b {
   color: var(--hot);
   font-weight: 500;
 }
-.tk-insp-t {
+.s1k-insp-t {
   color: var(--fg);
   overflow-wrap: anywhere;
 }
 
 /* comparison bars */
-.tk-cmp-rows {
+.s1k-cmp-rows {
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 14px 12px 6px;
 }
-.tk-cmp-r {
+.s1k-cmp-r {
   display: grid;
   grid-template-columns: 88px minmax(0, 1fr) 64px 76px;
   align-items: center;
   gap: 10px;
 }
-.tk-cmp-k {
+.s1k-cmp-k {
   font-size: var(--t-2xs);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--fg-2);
 }
-.tk-cmp-r.me .tk-cmp-k {
+.s1k-cmp-r.me .s1k-cmp-k {
   color: var(--hot);
 }
-.tk-cmp-bar {
+.s1k-cmp-bar {
   height: 14px;
   background: var(--bg-3);
   position: relative;
 }
-.tk-cmp-bar > span {
+.s1k-cmp-bar > span {
   position: absolute;
   inset: 0 auto 0 0;
   background: var(--fg-3);
   transition: width var(--dur-3) var(--ease-expo);
 }
-.tk-cmp-r.me .tk-cmp-bar > span {
+.s1k-cmp-r.me .s1k-cmp-bar > span {
   background: var(--hot);
 }
-.tk-cmp-v {
+.s1k-cmp-v {
   text-align: right;
   font-size: var(--t-md);
   color: var(--fg);
 }
-.tk-cmp-d {
+.s1k-cmp-d {
   text-align: right;
   font-size: var(--t-xs);
   color: var(--fg-2);
 }
-.tk-cmp-f {
+.s1k-cmp-f {
   padding: 8px 12px 14px;
   font-size: var(--t-xs);
   color: var(--fg-2);
   line-height: 1.5;
 }
-.tk-cmp-f b {
+.s1k-cmp-f b {
   color: var(--fg);
   font-weight: 500;
 }
 
 /* eval table */
-.tk-tbl-scroll {
+.s1k-tbl-scroll {
   overflow-x: auto;
 }
-.tk-tbl {
+.s1k-tbl {
   width: 100%;
   border-collapse: collapse;
   font-size: var(--t-xs);
   min-width: 620px;
 }
-.tk-tbl th {
+.s1k-tbl th {
   padding: 10px 12px;
   text-align: left;
   font-family: var(--f-mono);
@@ -443,57 +444,57 @@
   border-bottom: 1px solid var(--line-2);
   white-space: nowrap;
 }
-.tk-tbl th.me {
+.s1k-tbl th.me {
   color: var(--hot);
 }
-.tk-th-v {
+.s1k-th-v {
   display: block;
   margin-top: 3px;
   color: var(--fg-3);
   letter-spacing: 0.04em;
 }
-.tk-tbl td {
+.s1k-tbl td {
   position: relative;
   padding: 9px 12px;
   border-bottom: 1px dashed var(--line-2);
   white-space: nowrap;
 }
-.tk-tbl .r {
+.s1k-tbl .r {
   text-align: right;
 }
-.tk-tbl-l {
+.s1k-tbl-l {
   font-family: var(--f-sans);
   font-size: var(--t-sm);
   color: var(--fg);
 }
-.tk-cell-bar {
+.s1k-cell-bar {
   position: absolute;
   right: 0;
   bottom: 0;
   height: 2px;
   background: var(--line-4);
 }
-.tk-tbl td.me .tk-cell-bar {
+.s1k-tbl td.me .s1k-cell-bar {
   background: var(--hot);
 }
-.tk-cell-v {
+.s1k-cell-v {
   position: relative;
   color: var(--fg-1);
 }
-.tk-tbl td.me {
+.s1k-tbl td.me {
   background: var(--hot-a10);
 }
-.tk-tbl td.me .tk-cell-v {
+.s1k-tbl td.me .s1k-cell-v {
   color: var(--fg);
 }
-.tk-tbl td.best .tk-cell-v {
+.s1k-tbl td.best .s1k-cell-v {
   color: var(--hot);
   font-weight: 600;
 }
-.tk-tbl tbody tr:hover td {
+.s1k-tbl tbody tr:hover td {
   background: var(--bg-3);
 }
-.tk-eval-f {
+.s1k-eval-f {
   padding: 12px;
   margin: 0;
   font-size: var(--t-xs);
@@ -503,37 +504,37 @@
 }
 
 /* pre-tokenizer rules */
-.tk-rules {
+.s1k-rules {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1px;
   background: var(--line-2);
 }
-.tk-rule {
+.s1k-rule {
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 16px 14px;
   background: var(--bg-1);
 }
-.tk-rule-ex {
+.s1k-rule-ex {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   font-size: var(--t-sm);
   color: var(--fg);
 }
-.tk-rule-ex .tk-c {
+.s1k-rule-ex .s1k-c {
   padding: 2px 5px;
 }
-.tk-rule p {
+.s1k-rule p {
   margin: 0;
   font-size: var(--t-xs);
   line-height: 1.55;
   color: var(--fg-1);
 }
 
-.tk-foot {
+.s1k-foot {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 20px;
@@ -543,62 +544,62 @@
   color: var(--fg-2);
   letter-spacing: 0.04em;
 }
-.tk-foot b {
+.s1k-foot b {
   color: var(--fg-1);
   font-weight: 500;
 }
-.tk-foot a {
+.s1k-foot a {
   color: var(--fg-1);
   text-decoration: none;
   border-bottom: 1px solid var(--line-3);
   text-transform: uppercase;
   letter-spacing: 0.1em;
 }
-.tk-foot a:hover {
+.s1k-foot a:hover {
   color: var(--hot);
   border-color: var(--hot);
 }
 
 @media (max-width: 1100px) {
-  .tk-stats {
+  .s1k-stats {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-  .tk-play {
+  .s1k-play {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: 'src' 'out' 'cmp';
   }
-  .tk-rules {
+  .s1k-rules {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 720px) {
-  .tk-stats {
+  .s1k-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .tk-rules {
+  .s1k-rules {
     grid-template-columns: minmax(0, 1fr);
   }
-  .tk-ta {
+  .s1k-ta {
     min-height: 220px;
     font-size: var(--t-xs);
   }
-  .tk-chips-wrap {
+  .s1k-chips-wrap {
     min-height: 260px;
     max-height: 460px;
   }
-  .tk-chips {
+  .s1k-chips {
     font-size: var(--t-xs);
   }
-  .tk-cmp-r {
+  .s1k-cmp-r {
     grid-template-columns: 72px minmax(0, 1fr) 52px 64px;
     gap: 8px;
   }
-  .tk-ms-i {
+  .s1k-ms-i {
     flex: 1 1 100%;
     border-right: 0;
     border-bottom: 1px solid var(--line-2);
   }
-  .tk-seg button {
+  .s1k-seg button {
     padding: 0 10px;
   }
 }

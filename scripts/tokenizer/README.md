@@ -42,7 +42,7 @@ third-party code and pages); the manifest lists them by repository, commit, path
 
 ```sh
 node scripts/hf/build-tokenizer-release.mjs --out /tmp/lusca-hf/SEPIA-1-tokenizer
-node scripts/hf/verify-tokenizer-release.mjs --dir /tmp/lusca-hf/SEPIA-1-tokenizer
+npx tsx scripts/hf/verify-tokenizer-release.mjs --dir /tmp/lusca-hf/SEPIA-1-tokenizer
 ```
 
 The folder is ready for `LUSCAINK/SEPIA-1-tokenizer`; see the build script's header for the upload command.

@@ -49,7 +49,7 @@ type Key = 'sepia1' | keyof typeof OTHERS
 const KEYS: Key[] = ['sepia1', 'r50k', 'cl100k', 'o200k']
 
 const lineCount = (t: string) => (t.length === 0 ? 0 : t.split('\n').length - (t.endsWith('\n') ? 1 : 0))
-const round = (x: number, d = 3) => Math.round(x * 10 ** d) / 10 ** d
+const round = (x: number, d = 4) => Math.round(x * 10 ** d) / 10 ** d
 
 let parityDocs = 0
 let parityTokens = 0

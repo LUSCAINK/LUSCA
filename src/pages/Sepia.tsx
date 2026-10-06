@@ -151,7 +151,7 @@ export default function Sepia() {
         title="SEPIA-1 tokenizer"
         kicker="Milestone M1 of SEPIA-1: a 32,768-entry byte-level BPE trained on protocol code and crypto web text, evaluated on files it never saw. The tokenizer runs in this tab. SEPIA-1 itself is not trained yet."
       >
-        <Suspense fallback={<div className="tk-loading mono">loading tokenizer…</div>}>
+        <Suspense fallback={<div className="s1k-loading mono">loading tokenizer…</div>}>
           <TokenizerLab />
         </Suspense>
       </Section>

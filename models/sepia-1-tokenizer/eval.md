@@ -14,9 +14,9 @@ Tokenizer sha256 `4b2ec96ed69a7c9fe7a7c01bd01e4d4c95f527384d6ee3862e43e850ed54d0
 | Go | 138 | 1.27 | **3.87** | 2.64 | 3.62 | 3.67 |
 | C / C++ | 9 | 0.23 | **3.78** | 2.21 | 3.81 | 3.80 |
 | TypeScript | 16 | 0.11 | **4.30** | 2.43 | 3.89 | 3.91 |
-| Python | 15 | 0.16 | **4.61** | 2.50 | 4.27 | 4.24 |
+| Python | 15 | 0.16 | **4.61** | 2.49 | 4.27 | 4.24 |
 | Markdown (EIPs, docs) | 141 | 1.51 | **3.54** | 2.99 | 3.65 | 3.67 |
-| Web text (English, crypto) | 202 | 1.51 | **3.79** | 3.80 | 4.16 | 4.26 |
+| Web text (English, crypto) | 202 | 1.51 | **3.79** | 3.80 | 4.15 | 4.26 |
 | **All code** (no Markdown) | | 6.19 | **4.22** | 2.41 | 4.01 | 4.03 |
 
 ## Tokens per 1,000 lines (lower is better)
@@ -50,4 +50,4 @@ Tokenizer sha256 `4b2ec96ed69a7c9fe7a7c01bd01e4d4c95f527384d6ee3862e43e850ed54d0
 | Python | **339** | 184 | 314 | 312 |
 | Markdown (EIPs, docs) | **130** | 110 | 135 | 135 |
 
-Encoder speed (TypeScript, Node, one core): 6.82 MB/s.
+Encoder speed (TypeScript, Node, one core): 6.71 MB/s.
