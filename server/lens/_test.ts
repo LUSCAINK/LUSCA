@@ -505,7 +505,7 @@ await test('budget slice: Lens stops at its own daily limit; reads served and re
   const dir = tmp()
   const sh = sharedRpc()
   let t = Date.UTC(2026, 9, 6, 10)
-  const one = makeLens(dir, { rpc: sh.rpc, limits: { budget: { solana: 0, 'solana-discovery': 0, ethereum: 4, base: 4, arbitrum: 4, sourcify: 10, osec: 10 } }, now: () => t })
+  const one = makeLens(dir, { rpc: sh.rpc, limits: { hourShare: 1, budget: { solana: 0, 'solana-discovery': 0, ethereum: 4, base: 4, arbitrum: 4, sourcify: 10, osec: 10 } }, now: () => t })
   await one.lens.read('ethereum', IMPL, '1.1.1.1') // 1 RPC call
   const second = await one.lens.route(`/api/lens/ethereum/${PROXY}`, '1.1.1.2') // needs ≥ 3 left: 3 left → runs (proxy 2 + impl 1)
   assert.equal(second.status, 200)
@@ -808,6 +808,23 @@ await test('repoCommitUrl: GitHub tree links; other https hosts as given; anythi
   assert.equal(repoCommitUrl('acme/vaults', null), 'https://github.com/acme/vaults')
   assert.equal(repoCommitUrl('https://gitlab.com/acme/vaults', 'abcdef1'), 'https://gitlab.com/acme/vaults')
   assert.equal(repoCommitUrl('javascript:alert(1)', null), null)
+})
+
+await test('budget slice: at most a fair share of the day per clock hour, then a 503 that names the hour', async () => {
+  let t = Date.UTC(2026, 9, 6, 10, 5)
+  const sh = sharedRpc()
+  const { lens, store } = makeLens(tmp(), { rpc: sh.rpc, now: () => t, limits: { hourShare: 0.5, budget: { solana: 10, 'solana-discovery': 0, ethereum: 8, base: 8, arbitrum: 8, sourcify: 100, osec: 100 } } })
+  assert.equal((await lens.route(`/api/lens/ethereum/${IMPL}`, '1.1.1.1')).status, 200) // 1 call of the hour's 4
+  const r = await lens.route(`/api/lens/ethereum/${PROXY}`, '1.1.1.2') // 3 calls: 4 of 4
+  assert.equal(r.status, 200)
+  const over = await lens.route(`/api/lens/ethereum/0x${'12'.repeat(20)}`, '1.1.1.3')
+  assert.equal(over.status, 503)
+  assert.match(JSON.parse(over.json).error, /this hour's share/)
+  assert.ok(Number(over.headers?.['Retry-After']) <= 3600)
+  t += 3_600_000 // next hour: the share is back, the day's count is not
+  assert.equal((await lens.route(`/api/lens/ethereum/0x${'12'.repeat(20)}`, '1.1.1.3')).status, 200)
+  assert.equal(lens.status().budget.ethereum.used, 5)
+  await store.close()
 })
 
 console.log(`\n${passed} lens tests passed${process.exitCode ? ' — SOME FAILED' : ''}`)

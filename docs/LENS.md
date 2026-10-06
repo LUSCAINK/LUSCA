@@ -66,7 +66,11 @@ endpoint did not answer usably: nothing is guessed), 504 (read over 60 s).
   the registry limits: Solana 1 200 calls (of 8 000), each EVM chain 2 250 (of 15 000), Sourcify and
   OtterSec 2 000 each (of 5 000, LUSCA's own politeness cap; the registries are free public services).
   A read checks every slice it needs (chain RPC and its registry) before its first call, and a call
-  the shared layer would refuse is not charged to the slice.
+  the shared layer would refuse is not charged to the slice. At most a quarter of each daily slice can
+  be spent in one clock hour (memory only), so many clients together cannot drain the day in an hour;
+  over it Lens answers 503 with the seconds to the next hour. At most a quarter of each daily slice can
+  be spent in one clock hour (memory only), so many clients together cannot drain the day in an hour;
+  over it Lens answers 503 with the seconds to the next hour.
   Lens can therefore never take more than its slice from the chain agents (who pace themselves to
   what is left), and the shared limit, the Helius budget in production, is never exceeded.
 - A Solana read costs 1 RPC call + 1 OtterSec request; an EVM read 1–6 RPC calls + 1 Sourcify

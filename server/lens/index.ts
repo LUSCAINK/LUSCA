@@ -46,6 +46,8 @@ export interface LensLimits {
   freshPerHour: number
   /** Fresh reads per IP (IPv6: per /64) per UTC day: no single client can drain the day's slice. */
   freshPerDay: number
+  /** Share of each daily slice that may be spent in one clock hour (many clients together cannot drain the day in an hour). */
+  hourShare: number
   cachedPerMin: number
   detectPerMin: number
   detectPerHour: number
@@ -74,6 +76,7 @@ export const DEFAULT_LENS_LIMITS: LensLimits = {
   freshPerMin: 5,
   freshPerHour: 40,
   freshPerDay: 100,
+  hourShare: 0.25,
   cachedPerMin: 60,
   detectPerMin: 12,
   detectPerHour: 60,
@@ -196,8 +199,19 @@ const RESERVE = 16
  * file always holds at least the calls charged (a block of RESERVE is written before the calls in it
  * are made), so after a hard kill the restored count is ≥ the last one shown, never lower.
  */
-function createSlice(limits: Record<BudgetKey, number>, file: string, now: () => number) {
+/** This hour's fair share of a Lens slice is used up (a BudgetError, so the readers stop the read the same way). */
+export class SliceHourError extends BudgetError {
+  readonly hourly = true
+}
+
+const HOUR = 3_600_000
+
+function createSlice(limits: Record<BudgetKey, number>, file: string, now: () => number, hourShare = 1) {
   let day = Math.floor(now() / DAY)
+  // fair share per clock hour (memory only: a restart can only lower what was spent this hour)
+  let hour = Math.floor(now() / HOUR)
+  let hourUsed: Partial<Record<BudgetKey, number>> = {}
+  const hourCap = (k: BudgetKey) => Math.max(1, Math.ceil(limits[k] * hourShare))
   let used: Partial<Record<BudgetKey, number>> = {}
   try {
     const j = JSON.parse(fs.readFileSync(file, 'utf8')) as { day?: number; used?: Record<string, number> }
@@ -219,18 +233,30 @@ function createSlice(limits: Record<BudgetKey, number>, file: string, now: () =>
       onDisk = {}
       dirty = true
     }
+    const h = Math.floor(now() / HOUR)
+    if (h !== hour) {
+      hour = h
+      hourUsed = {}
+    }
+  }
+  /** Why `n` more calls of `k` cannot be made now: the day's slice, this hour's share, or null. */
+  const why = (k: BudgetKey, n = 1): 'day' | 'hour' | null => {
+    roll()
+    if ((used[k] ?? 0) + n > limits[k]) return 'day'
+    if ((hourUsed[k] ?? 0) + n > hourCap(k)) return 'hour'
+    return null
   }
   return {
-    can(k: BudgetKey, n = 1) {
-      roll()
-      return (used[k] ?? 0) + n <= limits[k]
-    },
+    why,
+    can: (k: BudgetKey, n = 1) => why(k, n) === null,
     charge(k: BudgetKey) {
-      roll()
-      if ((used[k] ?? 0) + 1 > limits[k]) throw new BudgetError(k)
+      const w = why(k, 1)
+      if (w === 'day') throw new BudgetError(k)
+      if (w === 'hour') throw new SliceHourError(k)
       const next = (used[k] ?? 0) + 1
       if (next > (onDisk[k] ?? 0)) write({ ...used, ...onDisk, [k]: Math.min(limits[k], next + RESERVE - 1) }) // throws: the call is not made
       used[k] = next
+      hourUsed[k] = (hourUsed[k] ?? 0) + 1
       dirty = true
     },
     usage() {
@@ -307,7 +333,7 @@ export function createLens(d: LensDeps): Lens {
   const dir = path.join(d.dataDir, 'lens')
   const cacheDir = path.join(dir, 'cache')
   const recentFile = path.join(dir, 'recent.json')
-  const slice = createSlice(L.budget, path.join(dir, 'budget.json'), now)
+  const slice = createSlice(L.budget, path.join(dir, 'budget.json'), now, L.hourShare)
   const keeps = createDayCounter(path.join(dir, 'keeps.json'), now)
 
   const freshMin = createWindow(60_000, L.freshPerMin, now)
@@ -609,6 +635,8 @@ export function createLens(d: LensDeps): Lens {
 
   function errorOf(e: unknown): LensError {
     if (e instanceof LensError) return e
+    if (e instanceof SliceHourError)
+      return new LensError(503, `Lens has used this hour's share of its daily ${e.key} budget; it frees up at the next full hour (UTC)`, Math.ceil((HOUR - (now() % HOUR)) / 1000))
     if (e instanceof BudgetError) return new LensError(503, `the daily ${e.key} read budget is used up; it resets at 00:00 UTC`, Math.ceil((DAY - (now() % DAY)) / 1000))
     if (e instanceof RpcError) {
       const what = /^sourcify/.test(e.message) ? 'Sourcify' : /^osec/.test(e.message) ? 'the OtterSec registry' : 'the chain RPC'
@@ -664,9 +692,10 @@ export function createLens(d: LensDeps): Lens {
     const need = chain === 'solana' ? 1 : 3
     const registry: BudgetKey = chain === 'solana' ? 'osec' : 'sourcify'
     const ru = d.rpc.usage()[registry]
-    if (!slice.can(budgetKey, need) || !d.rpc.canSpend(chain, need) || !slice.can(registry, 1) || (ru && ru.used >= ru.limit)) {
+    const short = slice.why(budgetKey, need) ? budgetKey : !d.rpc.canSpend(chain, need) ? budgetKey : slice.why(registry, 1) || (ru && ru.used >= ru.limit) ? registry : null
+    if (short) {
       refundFresh(ip)
-      throw errorOf(new BudgetError(slice.can(budgetKey, need) && d.rpc.canSpend(chain, need) ? registry : budgetKey))
+      throw errorOf(slice.why(short, short === budgetKey ? need : 1) === 'hour' ? new SliceHourError(short) : new BudgetError(short))
     }
     const cnt: Counter = { rpc: 0, http: 0, dead: false }
     const p = (async () => {
