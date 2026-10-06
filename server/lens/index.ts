@@ -356,7 +356,7 @@ export function createLens(d: LensDeps): Lens {
         .filter((r) => r && typeof r.address === 'string')
         .slice(0, L.recent)
         // the same rule as remember(): a name only for verified code, and only a plain one
-        .map((r) => ({ ...r, name: r.verified && r.verified !== 'unknown' ? safeName(r.name) : null }))
+        .map((r) => ({ ...r, name: r.chain === 'solana' || (r.verified && r.verified !== 'unknown') ? safeName(r.name) : null }))
     if (Number.isFinite(j.reads)) reads = Math.max(0, Math.floor(j.reads!))
   } catch {
     /* none yet */
@@ -622,11 +622,13 @@ export function createLens(d: LensDeps): Lens {
   function remember(rep: LensReport) {
     reads++
     if (rep.kind === 'program' || rep.kind === 'contract') {
-      // the public strip names only verified code that the SEPIA-1 rules kept (or already hold), and
-      // only a plain name: anything else shows its address (a chosen name is not a public billboard)
+      // the public strip names only code the SEPIA-1 rules kept (or already hold) — on EVM it must also
+      // be verified on Sourcify; on Solana the rules keep only an OtterSec build or an on-chain IDL, whose
+      // name the upgrade authority wrote — and only a plain name: anything else shows its address (a
+      // name chosen by whoever deploys is not a public billboard)
       const v = rep.summary.verified
       const okVerdict = rep.dataset.verdict === 'kept' || rep.dataset.verdict === 'duplicate' || rep.dataset.before?.verdict === 'kept'
-      const name = v && v !== 'unknown' && okVerdict ? safeName(rep.name) : null
+      const name = okVerdict && (rep.chain === 'solana' || (v && v !== 'unknown')) ? safeName(rep.name) : null
       recent = [
         { chain: rep.chain, address: rep.address, name, kind: rep.kind, verified: v, at: rep.readAt || now() },
         ...recent.filter((r) => !(r.chain === rep.chain && r.address === rep.address)),
