@@ -37,7 +37,7 @@
     { "id": "hostile-input", "fact": "Source analysis on hostile input", "value": "a verified file with a 50,000-character whitespace run is analysed in milliseconds; each contract's analysis has a fixed work budget (400 M characters) and stops a hostile nested input in about 0.3 s, reporting 'analysis not completed' instead of a partial list", "source": "server/lens/_test.ts ('source analysis: …' tests), docs/LENS.md", "at": "2026-10-06T09:50:00Z", "scope": "engineering QA" },
     { "id": "guards", "fact": "Limits that protect the chain agents' budget", "value": "per IP: 5 fresh reads a minute, 40 an hour, 100 a day; 3 reads at once; one read per address however many people ask; 15-minute cache; Lens's own daily share: Solana 1,200 RPC calls, 2,250 per EVM chain, 2,000 Sourcify and 2,000 OtterSec lookups, at most a quarter of each in one hour; at most 50 new SEPIA-1 items a day from Lens", "source": "server/lens/index.ts DEFAULT_LENS_LIMITS, server/chain/index.ts", "at": "2026-10-06T10:00:00Z", "scope": "code" },
     { "id": "sepia1", "fact": "What Lens does for SEPIA-1", "value": "each read is judged by the same function the chain agents use; a new verified program or contract the rules keep is added to the SEPIA-1 chain index with discovery source 'lens'; memecoins, token mints and template contracts stay rejected", "source": "server/lens/index.ts judge(), server/chain/store.ts evaluate", "at": "2026-10-06T10:00:00Z", "scope": "code" },
-    { "id": "persistence", "fact": "Restart check", "value": "server hard-killed (taskkill /F) and restarted: 'reads served' 55 before and 55 after, budget counters identical", "source": "GET /api/lens/recent and /api/lens/status before and after", "at": "2026-10-06T09:57:00Z", "scope": "local QA server" }
+    { "id": "persistence", "fact": "Restart check", "value": "server hard-killed (taskkill /F) and restarted twice: 'reads served' 55 before / 55 after, then 77 before / 77 after; every budget counter and the Lens-kept count identical", "source": "GET /api/lens/recent and /api/lens/status before and after", "at": "2026-10-06T09:57:00Z", "scope": "local QA server" }
   ],
   "filming": {
     "start": "cd C:/Users/PC/lw/lens && npm run build && PORT=8803 LUSCA_DATA=C:/Users/PC/lw/data-lens LUSCA_AGENTS=2 npx tsx server/index.ts   then open http://127.0.0.1:8803/lens (needs internet: reports older than 15 minutes are read again live, 0.3–2 s each)",
@@ -68,5 +68,5 @@
     "'live on lusca.ink' before the deploy",
     "hype slogans; keep copy technical and plain"
   ],
-  "screenshots": "C:/Users/PC/lw/qa/v2-desk-usdc.png, v2-desk-lido.png, v2-desk-light.png, v2-mob-lido-top.png (plus older ones from the build session in the same folder)"
+  "screenshots": "C:/Users/PC/lw/qa/v3-desk-home.png, v3-mob-home.png, v3-desk-univ3-prov.png, v2-desk-usdc.png, v2-desk-lido.png, v2-desk-light.png, v2-mob-lido-top.png (plus older ones from the build session in the same folder)"
 }

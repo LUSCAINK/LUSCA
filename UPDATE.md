@@ -71,7 +71,7 @@ Results tonight:
 - `npm run typecheck`, `npm test` (exit 0, all suites; the Lens suite now has 27 tests and passes after the last change) and `npm run build` all pass.
 - 41 real addresses were read end to end over public RPCs: 15 on Ethereum, 5 on Base, 5 on Arbitrum and 16 on Solana, including all 13 example chips, proxies of every kind, a Vyper pool, an EIP-7702 account, a token mint, an empty address and built-in programs. All 41 returned reports (`C:/Users/PC/lw/qa/lens-live-after-fixes.log`).
 - In headless Chrome there is no horizontal scroll at 360 and 375 px, and desktop looks right at 1440 px. Screenshots are in `C:/Users/PC/lw/qa/v2-*.png`.
-- I hard-killed the server (`taskkill /F`) and restarted it: "reads served" was 55 before and 55 after, and every budget counter was the same.
+- I hard-killed the server (`taskkill /F`) and restarted it twice. "Reads served" was 55 before and 55 after, then 77 before and 77 after. Every budget counter and the count of Lens-kept items were the same after each restart.
 
 ## Deploy notes
 
@@ -104,3 +104,14 @@ Results tonight:
 - The code index keeps one holder per deduplicated file, so provenance cannot list every repository that holds a file.
 - There are no per-file Sourcify links (Sourcify removed those URLs), and no keccak EXTCODEHASH.
 - Links to Lens from the Landing page, `/chain`, the README and the CHANGELOG were not added, to avoid merge conflicts. These are one-line additions after merging.
+
+## For filming
+
+```bash
+cd C:/Users/PC/lw/lens && PORT=8803 LUSCA_DATA=C:/Users/PC/lw/data-lens LUSCA_AGENTS=2 npx tsx server/index.ts
+# then open http://127.0.0.1:8803/lens (dist/ is already built from the last commit; run npm run build first if you change anything)
+```
+
+- `C:/Users/PC/lw/data-lens` holds real reads from tonight: 77 reads served, and a recent strip of 24 programs and contracts across the four chains.
+- Reports older than 15 minutes are read again live (0.3–2 s each), so filming needs internet.
+- The shot list and the numbers that can be quoted are in `MEDIA_FACTS.json`. Those numbers come from a local server, not from lusca.ink usage.
