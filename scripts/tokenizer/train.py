@@ -84,7 +84,8 @@ def main():
         "pre_tokenizer": {"stage1": STAGE1, "stage2": STAGE2},
         "tokenizer_json_sha256": hashlib.sha256(tj.encode("utf-8")).hexdigest(),
     }
-    json.dump(info, open(os.path.join(a.work, "training.json"), "w", encoding="utf-8"), indent=1)
+    with open(os.path.join(a.work, "training.json"), "w", encoding="utf-8", newline="\n") as f:
+        json.dump(info, f, indent=1)
     print(json.dumps({k: v for k, v in info.items() if k not in ("special_tokens", "pre_tokenizer")}, indent=1))
 
 

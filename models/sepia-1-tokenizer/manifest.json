@@ -61,8 +61,8 @@
  },
  "data_manifest": {
   "path": "scripts/tokenizer/data-manifest.json",
-  "sha256": "4071d041d497312ce8be4f8737ffdbef307bbe997644b8b3a6378cffc158b39d",
-  "bytes": 341997
+  "sha256": "6653f8d4c81b3dd9f377742d77ae99de05747a541f5a16fb2aae2f1f870aa748",
+  "bytes": 332730
  },
  "files": {
   "tokenizer.json": {

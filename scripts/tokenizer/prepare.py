@@ -271,7 +271,8 @@ def main():
         "eval": eval_manifest,
         "inputs": inputs,
     }
-    json.dump(manifest, open(os.path.join(a.out, "manifest.json"), "w", encoding="utf-8"), indent=1)
+    with open(os.path.join(a.out, "manifest.json"), "w", encoding="utf-8", newline="\n") as f:
+        json.dump(manifest, f, indent=1)
     print(json.dumps({k: manifest[k] for k in ("train",)}, indent=1)[:3000])
     print({l: (v["docs"], v["bytes"]) for l, v in eval_manifest.items()})
     print(f"done in {time.time() - t0:.1f}s", file=sys.stderr)
