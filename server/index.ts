@@ -501,7 +501,7 @@ async function main() {
     license: process.env.LUSCA_WEIGHTS_LICENSE?.trim() || 'MIT',
     log: (level, msg) => log[level]('model', msg),
   })
-  const modules = { crawler, trainer, coordinator, auth, payouts, code: codeIndex, chain: chainAgents, model: modelExport }
+  const modules = { crawler, trainer, coordinator, auth, payouts, code: codeIndex, chain: chainAgents, model: modelExport, lens: chainAgents?.lens }
   hub.bind(modules)
 
   let port: number

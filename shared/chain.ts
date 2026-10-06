@@ -6,7 +6,7 @@
 export type ChainId = 'solana' | 'ethereum' | 'base' | 'arbitrum'
 export type ReadKind = 'program' | 'contract' | 'token-mint' | 'account' | 'empty'
 export type Verdict = 'kept' | 'duplicate' | 'boilerplate' | 'unverified' | 'token-mint' | 'not-code' | 'error'
-export type FoundVia = 'block' | 'registry' | 'web' | 'link'
+export type FoundVia = 'block' | 'registry' | 'web' | 'link' | 'lens'
 export interface SourceFileInfo { path: string; lang: string; bytes: number }
 export interface IdlSummary { name: string | null; version: string | null; instructions: { name: string; args: number; accounts: number }[]; accounts: string[]; types: number; errors: number; events: number }
 export interface ChainRead { chain: ChainId; address: string; kind: ReadKind; name: string | null; codeHash: string | null;

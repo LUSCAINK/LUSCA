@@ -95,6 +95,8 @@ export interface Modules {
   chain?: HubChain
   /** SEPIA-0 weights export (server/model). Without it /api/model/* answers 503. */
   model?: WeightsExporter
+  /** LUSCA Lens (server/lens): validates, limits, caches and answers /api/lens/* itself. Without it 503. */
+  lens?: { route(p: string, ip: string): Promise<{ status: number; json: string; headers?: Record<string, string> }> } | null
 }
 
 /** Read side of the chain agents (server/chain/index.ts): every answer comes from stored data, no RPC. */
@@ -1545,6 +1547,15 @@ export function createHub(opts: HubOptions): Hub {
       return sendJsonText(req, res, 200, json, { 'Cache-Control': 'public, max-age=30' })
     }
 
+    // ── LUSCA Lens: on-demand reads of one program / contract (server/lens; its own limits and budget) ──
+    if (p.startsWith('/api/lens/')) {
+      allow(['GET', 'HEAD'])
+      const m = requireModules()
+      if (!m.lens) throw new HttpError(503, 'LUSCA Lens is not available on this server')
+      const r = await m.lens.route(p, clientIp(req))
+      return sendJsonText(req, res, r.status, r.json, r.headers)
+    }
+
     // ── SEPIA-0 weights export: newest checkpoint as safetensors + manifest (server/model/export.ts) ──
     if (p.startsWith('/api/model/')) {
       const m = requireModules()
@@ -1556,7 +1567,7 @@ export function createHub(opts: HubOptions): Hub {
   }
 
   /** Client routes as declared in src/App.tsx (first segment → allowed extra segments). */
-  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, agents: 1, docs: 1, chain: 2 }
+  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, agents: 1, docs: 1, chain: 2, lens: 2 }
   function isClientRoute(segs: string[]): boolean {
     if (segs.length === 0) return true
     const first = segs[0].toLowerCase() // react-router matches case-insensitively

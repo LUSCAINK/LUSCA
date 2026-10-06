@@ -46,7 +46,8 @@ export interface FrontierConfig {
 const HOUR = 3_600_000
 const DAY = 24 * HOUR
 
-export const PART_CAP: Readonly<Record<FoundVia, number>> = { block: 8, registry: 8, web: 8, link: 12 }
+// 'lens' reads never enter the frontier (Lens reads on request, server/lens)
+export const PART_CAP: Readonly<Record<FoundVia, number>> = { block: 8, registry: 8, web: 8, link: 12, lens: 0 }
 
 export const DEFAULT_FRONTIER: FrontierConfig = {
   cap: 5000,
