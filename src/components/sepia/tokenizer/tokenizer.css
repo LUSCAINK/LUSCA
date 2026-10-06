@@ -408,6 +408,7 @@
 }
 .s1k-cmp-d {
   text-align: right;
+  white-space: nowrap;
   font-size: var(--t-xs);
   color: var(--fg-2);
 }
@@ -591,7 +592,7 @@
     font-size: var(--t-xs);
   }
   .s1k-cmp-r {
-    grid-template-columns: 72px minmax(0, 1fr) 52px 64px;
+    grid-template-columns: 64px minmax(0, 1fr) 44px 72px;
     gap: 8px;
   }
   .s1k-ms-i {

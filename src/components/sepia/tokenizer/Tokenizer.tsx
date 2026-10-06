@@ -66,14 +66,10 @@ function loadGpt() {
 
 function useNearViewport<T extends Element>(margin = '600px'): [RefObject<T | null>, boolean] {
   const ref = useRef<T | null>(null)
-  const [near, setNear] = useState(false)
+  const [near, setNear] = useState(() => typeof IntersectionObserver === 'undefined')
   useEffect(() => {
     const el = ref.current
     if (!el || near) return
-    if (typeof IntersectionObserver === 'undefined') {
-      setNear(true)
-      return
-    }
     const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && setNear(true), { rootMargin: margin })
     io.observe(el)
     return () => io.disconnect()

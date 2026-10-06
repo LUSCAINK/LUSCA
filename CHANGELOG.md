@@ -26,6 +26,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Sepia page: "What SEPIA-1 will read".** Live totals, code by ecosystem and the repository list
   with each license, from `GET /api/code/stats`.
 - **SEPIA-1 design notes** in `docs/SEPIA-1.md` and `docs/SEPIA-1-data.md`.
+- **SEPIA-1 tokenizer (milestone M1).** A 32,768-entry code-aware byte-level BPE trained on all 110
+  code-index repositories and crypto web text (`models/sepia-1-tokenizer/`, scripts in
+  `scripts/tokenizer/`). On held-out code it averages 4.22 bytes per token (o200k_base 4.03,
+  cl100k_base 4.01, GPT-2 r50k_base 2.41) and every held-out file round-trips exactly. A
+  dependency-free TypeScript encoder (`shared/sepia1/tokenizer.ts`) matches Hugging Face `tokenizers`
+  token for token. The SEPIA-1 model itself is not trained yet.
+- **Sepia page: "SEPIA-1 tokenizer".** Tokenize real protocol code (Uniswap V2, an Anchor
+  instruction, Sui Move, Cairo) or your own text in the browser and compare token counts with
+  o200k_base and cl100k_base, next to the measured held-out evaluation.
 
 ### Changed
 
