@@ -650,6 +650,8 @@ export interface EpochLedger {
   close(endedAt: number, build: (index: number, startedAt: number, rows: Map<string, EpochRow>) => unknown): boolean
   /** Is ledger.json being saved at all (false after an unreadable ledger)? */
   saving(): boolean
+  /** An async ledger save is in flight: close() waits for it (the proofs tick retries shortly). */
+  busy?(): boolean
 }
 
 const num = (v: unknown, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d)
@@ -1014,6 +1016,11 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
   let ledgerDirty = false
   let loadFailed = false // ledger.json exists but could not be loaded: never overwrite it
   let saving: Promise<void> | null = null
+  // Write generations: every serialized ledger gets the next number; `landedGen` is the newest one
+  // renamed into place. An async save that serialized before a later synchronous save (epoch close,
+  // payout period) must never rename its older snapshot over the newer file.
+  let ledgerGen = 0
+  let landedGen = 0
   let saveTimer: NodeJS.Timeout | null = null
   loadLedger()
 
@@ -1241,7 +1248,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
   }
 
   /** tmp (fsync'd) → copy current to .bak → rename over ledger.json (retrying locks). Never writes ledger.json in place. */
-  async function writeLedgerAsync(data: string): Promise<void> {
+  async function writeLedgerAsync(data: string, gen: number): Promise<void> {
     await fs.promises.mkdir(dataDir, { recursive: true })
     const tmp = `${ledgerPath}.${process.pid}.tmp`
     const fh = await fs.promises.open(tmp, 'w')
@@ -1251,12 +1258,22 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     } finally {
       await fh.close()
     }
+    const stale = () => landedGen > gen
+    if (stale()) {
+      // a newer synchronous save already landed while this one was writing: drop this snapshot
+      await fs.promises.rm(tmp, { force: true }).catch(() => undefined)
+      return
+    }
     try {
       await fs.promises.copyFile(ledgerPath, ledgerBak)
     } catch (e) {
       if (errCode(e) !== 'ENOENT') log('warn', `ledger backup failed: ${(e as Error).message}`)
     }
     for (let i = 0; ; i++) {
+      if (stale()) {
+        await fs.promises.rm(tmp, { force: true }).catch(() => undefined)
+        return
+      }
       try {
         await fs.promises.rename(tmp, ledgerPath)
         break
@@ -1269,6 +1286,18 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       }
     }
     fsyncDirSync()
+    if (landedGen > gen) {
+      // A synchronous save landed while this rename was in flight, so the order on disk is unknown:
+      // write the current (newest) state synchronously so ledger.json can never end up older.
+      writeLedgerNow()
+    } else landedGen = gen
+  }
+
+  /** Serialize the current state and write it synchronously (newest generation). */
+  function writeLedgerNow() {
+    const gen = ++ledgerGen
+    writeLedgerSync(serializeLedger())
+    landedGen = Math.max(landedGen, gen)
   }
 
   function writeLedgerSync(data: string) {
@@ -1320,10 +1349,11 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     if (!ledgerDirty && !force) return
     if (saving) return saving
     ledgerDirty = false
+    const gen = ++ledgerGen
     const data = serializeLedger()
     saving = (async () => {
       try {
-        await writeLedgerAsync(data)
+        await writeLedgerAsync(data, gen)
       } catch (e) {
         ledgerDirty = true // retry on the next tick
         log('error', `ledger save failed: ${(e as Error).message}`)
@@ -1339,7 +1369,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     issuance.flushSync()
     if (!ledgerDirty || loadFailed) return
     try {
-      writeLedgerSync(serializeLedger())
+      writeLedgerNow()
       ledgerDirty = false
     } catch (e) {
       log('error', `ledger flush failed: ${(e as Error).message}`)
@@ -1386,8 +1416,9 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
   function saveNowSync(why: string): boolean {
     if (loadFailed) return false
     try {
-      writeLedgerSync(serializeLedger())
-      // An async save that serialized earlier may still land after this one: write again then.
+      writeLedgerNow()
+      // An in-flight async save serialized earlier skips its rename (write generations); if its
+      // rename was already under way it rewrites the newest state itself. Save again to be sure.
       if (saving) markDirty()
       else ledgerDirty = false
       return true
@@ -2503,6 +2534,9 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     close(endedAt, build) {
       if (!epochAcc) throw new Error('no open epoch')
       if (loadFailed) throw new Error('the ledger is not being saved (unreadable ledger.json); refusing to close an epoch')
+      // Never close while an async save is in flight: its older snapshot must not be able to land
+      // after the close's synchronous save (see write generations above).
+      if (saving) return false
       const prev = epochAcc
       const record = build(prev.index, prev.startedAt, prev.rows) // throws → nothing changes
       epochAcc = { index: prev.index + 1, startedAt: endedAt, rows: new Map() }
@@ -2515,6 +2549,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       return false
     },
     saving: () => !loadFailed,
+    busy: () => saving !== null,
   }
 
   /** Bound an escrow record's item count: merge per account (merged seq = newest, so release stays conservative). */

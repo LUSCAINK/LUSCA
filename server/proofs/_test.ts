@@ -34,7 +34,9 @@ import {
   merklePath,
   merkleRoot,
   orderLeaves,
+  pathFromLevels,
   rootFromPath,
+  treeLevels,
   walletIdentity,
 } from './index.ts'
 import { handleProofRoute, ProofRouteError } from './http.ts'
@@ -136,7 +138,7 @@ await test('a built chain verifies in node and in the browser code; tampering is
   const chain = chainOf(6)
   for (let i = 0; i < chain.length; i++) assert.equal(checkEpoch(chain[i].header, chain[i].leaves, i ? chain[i - 1].header : null), null)
   const headers = chain.map((c) => c.header)
-  assert.deepEqual(await verifyHeadersAsync(subtle, headers), { ok: true, checked: 6, bad: null })
+  assert.deepEqual(await verifyHeadersAsync(subtle, headers), { ok: true, checked: 6, bad: null, warnings: [] })
   // a subrange verifies against its anchor
   assert.equal((await verifyHeadersAsync(subtle, headers.slice(3), headers[2])).ok, true)
 
@@ -328,7 +330,10 @@ await test('genesis backfills balances; epochs commit confirmed credits only (es
   const other = route('/api/proofs/2/proof', 'POST', { device: 'someoneelse1' })!.body as { proofs: { leaf: ProofLeaf | null }[] }
   assert.equal(other.proofs[0].leaf, null, 'another device sees no leaf, never someone else’s path')
   assert.throws(() => route('/api/proofs/99/proof', 'POST', { device: DEV }), (e: ProofRouteError) => e.status === 404)
-  const pub = route('/api/proofs/2/leaves.json', 'GET')!.body as { leaves: ProofLeaf[]; treeRoot: string }
+  const pubRes = route('/api/proofs/2/leaves.json', 'GET')!
+  assert.equal(pubRes.etag, `"${h2.headerHash.slice(0, 32)}"`, 'immutable leaves carry a validator')
+  assert.equal(route('/api/proofs/2/leaves.json', 'GET')!.text, pubRes.text, 'serialized once, served from the cache')
+  const pub = JSON.parse(pubRes.text!) as { leaves: ProofLeaf[]; treeRoot: string }
   assert.equal(await merkleRootAsync(subtle, 2, pub.leaves), pub.treeRoot, 'anyone can recompute the root from leaves.json')
   const page = route('/api/proofs', 'GET', null, 'limit=2')!.body as { headers: EpochHeader[]; next: number | null; status: { ok: boolean } }
   assert.deepEqual(page.headers.map((h) => h.index), [3, 2])
@@ -402,6 +407,163 @@ await test('genesis backfills balances; epochs commit confirmed credits only (es
   assert.ok(logs.some((m) => /PROOF CHAIN BROKEN/.test(m)), 'logged loudly')
   fs.writeFileSync(hf, orig)
   await coord.stop()
+})
+
+// ─── review fixes: save race, ledger-drop warning, missing chain, caches ─────
+
+function devRig(dir: string) {
+  const crawler = createStubCrawler({ initialPages: 40 })
+  const { st, api } = stubTrainer()
+  const mk = () => createCoordinator({ crawler, emit: () => undefined, dataDir: dir, log: () => undefined, trainer: api, limits: { jobFillWaitMs: 0 }, auth: { checkToken: () => null } })
+  return { st, mk }
+}
+
+async function connect(coord: ReturnType<typeof createCoordinator>, cid: string, dev: string) {
+  const c = fakeConn(cid, '10.9.0.1')
+  coord.handle(c, { t: 'neuron.register', label: 'race', zone: 'EPI', gflops: 100, kind: 'browser', wallet: null, adapter: { deviceId: dev } })
+  await c.next('neuron.ok')
+  return async () => {
+    coord.handle(c, { t: 'job.request', caps: { train: true, version: 3 } })
+    const job = (await c.next('job')) as Extract<ServerMsg, { t: 'job' }>
+    coord.handle(c, { t: 'train.result', result: { id: job.job.id, kind: 'train', grad: 'AAAAAAAA', loss: 4.5, ms: 3 } })
+    await new Promise((r) => setTimeout(r, 30))
+  }
+}
+
+const ledgerOnDisk = (dir: string) => JSON.parse(fs.readFileSync(path.join(dir, 'ledger.json'), 'utf8')) as { totals: { inkIssued: number }; epoch?: { index: number; closing?: unknown } }
+
+await test('epoch close never races an in-flight async ledger save (the stale snapshot cannot land after the close)', async () => {
+  const dir = tmp('lusca-race-')
+  const { mk } = devRig(dir)
+  let clock = Date.UTC(2026, 9, 6, 8, 30)
+  const coord = mk()
+  const proofs = createProofs({ dataDir: dir, epochs: coord.epochs, salt: SALT, epochMinutes: 60, log: () => undefined, now: () => clock })
+  proofs.start()
+  const round = await connect(coord, 'r1', 'racedevice01')
+  for (let i = 0; i < 3; i++) await round()
+  const realRename = fs.promises.rename
+  let slow = true
+  ;(fs.promises as { rename: typeof realRename }).rename = async (a, b) => {
+    if (slow && String(b).endsWith('ledger.json')) await new Promise((r) => setTimeout(r, 2500))
+    return realRename(a, b)
+  }
+  try {
+    await new Promise((r) => setTimeout(r, 2150)) // the debounced async save is now in flight (slow rename)
+    assert.equal(coord.epochs.busy?.(), true, 'async save in flight')
+    for (let i = 0; i < 3; i++) await round() // credited while it is in flight
+    clock = Date.UTC(2026, 9, 6, 9, 0, 1)
+    assert.equal(coord.epochs.busy?.(), true, 'still in flight')
+    assert.equal(proofs.tick(), null, 'no close while an async save is in flight')
+    slow = false
+    for (let i = 0; i < 60 && !proofs.header(1); i++) await new Promise((r) => setTimeout(r, 100))
+    const h1 = proofs.header(1)
+    assert.ok(h1, 'closed by the short retry once the save landed')
+    await new Promise((r) => setTimeout(r, 300))
+    const disk = ledgerOnDisk(dir)
+    assert.equal(disk.epoch?.index, 2, 'ledger.json on disk is at or after the close')
+    assert.ok(Math.round(disk.totals.inkIssued * 1e6) >= h1!.totals.ledgerCredits, 'the ledger on disk holds every credit the header committed')
+  } finally {
+    ;(fs.promises as { rename: typeof realRename }).rename = realRename
+    proofs.stop()
+    await coord.stop()
+  }
+})
+
+await test('write generations: an async save that serialized before a sync save never renames over it', async () => {
+  const dir = tmp('lusca-gen-')
+  const { mk } = devRig(dir)
+  const coord = mk()
+  const proofs = createProofs({ dataDir: dir, epochs: coord.epochs, salt: SALT, epochMinutes: 60, log: () => undefined, now: () => Date.UTC(2026, 9, 6, 8, 30) })
+  proofs.start()
+  proofs.stop()
+  const round = await connect(coord, 'g1', 'gendevice01')
+  await round()
+  const realCopy = fs.promises.copyFile
+  const parked: { release: (() => void) | null } = { release: null }
+  ;(fs.promises as { copyFile: typeof realCopy }).copyFile = async (a, b, m) => {
+    if (String(a).endsWith('ledger.json')) await new Promise<void>((r) => (parked.release = r))
+    return realCopy(a, b, m)
+  }
+  try {
+    await new Promise((r) => setTimeout(r, 2150)) // async save serialized, now parked before its rename
+    assert.ok(parked.release, 'async save parked')
+    await round() // newer credit
+    coord.flushSync() // synchronous save of the newer state lands first
+    const synced = ledgerOnDisk(dir).totals.inkIssued
+    parked.release!()
+    await new Promise((r) => setTimeout(r, 300))
+    assert.equal(ledgerOnDisk(dir).totals.inkIssued, synced, 'the older async snapshot was dropped, not renamed over the newer file')
+  } finally {
+    ;(fs.promises as { copyFile: typeof realCopy }).copyFile = realCopy
+    await coord.stop()
+  }
+})
+
+await test('a drop in ledger lifetime credits is a warning, not a broken chain', async () => {
+  const chain = chainOf(4)
+  const headers = chain.map((c) => c.header)
+  const low = buildEpoch(4, 5000, 5999, [leaf(9)], headers[3], headers[3].totals.ledgerCredits - 1)
+  assert.equal(checkEpoch(low.header, low.leaves, headers[3]), null)
+  const r = await verifyHeadersAsync(subtle, [...headers, low.header])
+  assert.equal(r.ok, true)
+  assert.equal(r.warnings.length, 1)
+  assert.equal(r.warnings[0].index, 4)
+  // stored on disk: status stays ok, the warning is reported
+  const dir = tmp('lusca-warn-')
+  fs.mkdirSync(path.join(dir, 'proofs'))
+  for (const e of [...chain, low]) {
+    const pad = String(e.header.index).padStart(8, '0')
+    fs.writeFileSync(path.join(dir, 'proofs', `l-${pad}.json`), JSON.stringify({ leaves: e.leaves.map((l) => [l.id, l.credits, l.jobs, l.flops]) }))
+    fs.writeFileSync(path.join(dir, 'proofs', `h-${pad}.json`), JSON.stringify(e.header))
+  }
+  seedLedger(dir)
+  const { mk } = devRig(dir)
+  const coord = mk()
+  const p = createProofs({ dataDir: dir, epochs: coord.epochs, salt: SALT, epochMinutes: 60, log: () => undefined, now: () => 10_000 })
+  p.start()
+  p.stop()
+  assert.equal(p.status().ok, true)
+  assert.equal(p.status().state, 'verified')
+  assert.match(p.status().warning ?? '', /epoch 4: ledger lifetime credits went down/)
+  await coord.stop()
+})
+
+await test('a missing chain is never silently restarted (proofs off until restored or LUSCA_PROOFS_RESTART)', async () => {
+  const dir = tmp('lusca-missing-')
+  seedLedger(dir)
+  const { mk } = devRig(dir)
+  let coord = mk()
+  let clock = Date.UTC(2026, 9, 6, 8, 30)
+  const mkP = (allowRestart = false) => createProofs({ dataDir: dir, epochs: coord.epochs, salt: SALT, epochMinutes: 60, allowRestart, log: () => undefined, now: () => clock })
+  let p = mkP()
+  p.start()
+  clock = Date.UTC(2026, 9, 6, 9, 0, 1)
+  assert.equal(p.tick()?.index, 1)
+  p.stop()
+  await coord.stop()
+  fs.rmSync(path.join(dir, 'proofs'), { recursive: true, force: true })
+  coord = mk()
+  p = mkP()
+  p.start()
+  p.stop()
+  assert.equal(p.status().ok, false)
+  assert.equal(p.status().state, 'off')
+  assert.equal(p.header(0), null, 'no new genesis written')
+  assert.equal(fs.existsSync(path.join(dir, 'proofs', 'h-00000000.json')), false)
+  p = mkP(true)
+  p.start()
+  p.stop()
+  assert.equal(p.status().ok, true)
+  assert.ok(p.header(0), 'explicit restart writes a new genesis')
+  await coord.stop()
+})
+
+await test('cached tree levels give the same paths as the uncached tree (1..40 leaves)', () => {
+  for (let n = 1; n <= 40; n++) {
+    const o = orderLeaves(3, Array.from({ length: n }, (_, i) => leaf(i)))
+    const levels = treeLevels(o.hashes)
+    for (let i = 0; i < n; i++) assert.deepEqual(pathFromLevels(levels, i), merklePath(o.hashes, i))
+  }
 })
 
 // ─── payout preview math = the payout engine's planPayout ──────────────────

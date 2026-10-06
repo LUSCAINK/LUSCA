@@ -1,5 +1,5 @@
 // /api/proofs/* routes. server/http.ts applies the Origin guard, the rate limits (reads: the
-// shared read limit; POST lookups: the sign-in limit), the JSON content-type check and body
+// shared read limit; POST lookups: their own per-address limit), the JSON content-type check and body
 // parsing, then calls handleProofRoute. Errors carry an HTTP status (thrown as ProofRouteError).
 //
 // GET  /api/proofs?limit=20&before=<index>   chain head, open epoch, newest headers (paged)
@@ -26,6 +26,10 @@ export class ProofRouteError extends Error {
 export interface ProofRouteResult {
   status: number
   body: unknown
+  /** Pre-serialized JSON body (sent as is instead of `body`). */
+  text?: string
+  /** Strong validator for an immutable body (If-None-Match → 304). */
+  etag?: string
   /** Response may be cached publicly for this many seconds. */
   maxAge?: number
 }
@@ -96,11 +100,10 @@ export function handleProofRoute(api: ProofsApi, preview: PreviewSource | null, 
   if (m) {
     if (!isGet) throw new ProofRouteError(405, 'method not allowed')
     const index = Number(m[1])
-    const h = api.header(index)
-    const leaves = h ? api.leaves(index) : null
-    if (!h || !leaves) throw new ProofRouteError(404, 'no such epoch')
-    // closed epochs never change: cache hard
-    return { status: 200, body: { index, treeRoot: h.treeRoot, leaves }, maxAge: 3600 }
+    const out = api.leavesJson(index)
+    if (!out) throw new ProofRouteError(404, 'no such epoch')
+    // closed epochs never change: serialized once, served with a validator, cached hard
+    return { status: 200, body: null, text: out.text, etag: out.etag, maxAge: 3600 }
   }
 
   m = INDEX_RE.exec(p)

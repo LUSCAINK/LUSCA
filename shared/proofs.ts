@@ -81,17 +81,27 @@ export interface ProofChainPage {
   open: { index: number; startedAt: number; closesAt: number } | null
   /** Startup verification of the stored chain. */
   status: ProofChainStatus
+  /** The open epoch is past its close time and has not closed (ledger not saved, disk error). */
+  stalled?: boolean
   epochMinutes: number
   /** Σ over every closed epoch, genesis included: credits in micro-credits, leaves = committed (identity, epoch) pairs. */
   committed: { epochs: number; credits: number; leaves: number }
 }
 
 export interface ProofChainStatus {
+  /** false: the stored chain failed verification, or proofs are off. */
   ok: boolean
+  /** 'verified': chain intact and extending; 'broken': a stored epoch failed verification; 'off': no epochs are being closed. */
+  state?: 'verified' | 'broken' | 'off'
   /** Epochs whose header hash, link and root were re-checked at start (and every close since). */
   verified: number
-  /** First problem found, if any. */
+  /** First problem found, if any (or why proofs are off). */
   error: string | null
+  /**
+   * Not a broken chain, but worth knowing: the ledger's lifetime credits recorded in a header went
+   * down from the previous one (a ledger reset or restore from backup). The headers still link.
+   */
+  warning?: string | null
   checkedAt: number
 }
 
@@ -265,6 +275,13 @@ export interface ChainCheck {
   checked: number
   /** Index of the first bad header, with the reason. */
   bad: { index: number; reason: string } | null
+  /** Headers that link correctly but record lower ledger lifetime credits than the one before. */
+  warnings: { index: number; reason: string }[]
+}
+
+/** The ledger cross-check: a header recording lower lifetime credits than its predecessor. */
+export function ledgerDropReason(h: EpochHeader, prev: EpochHeader): string | null {
+  return h.totals.ledgerCredits < prev.totals.ledgerCredits ? `ledger lifetime credits went down from epoch ${prev.index} (ledger reset or restored from a backup)` : null
 }
 
 /**
@@ -273,20 +290,26 @@ export interface ChainCheck {
  */
 export async function verifyHeadersAsync(hash: AsyncHash, headers: EpochHeader[], anchor: EpochHeader | null = null): Promise<ChainCheck> {
   const hs = [...headers].sort((a, b) => a.index - b.index)
+  const warnings: ChainCheck['warnings'] = []
+  if (anchor) {
+    const a = await headerHashAsync(hash, anchor)
+    if (a !== anchor.headerHash) return { ok: false, checked: 0, bad: { index: anchor.index, reason: `anchor header hash mismatch (recomputed ${a.slice(0, 12)}…)` }, warnings }
+  }
   let prev = anchor
   let checked = 0
   for (const h of hs) {
     const recomputed = await headerHashAsync(hash, h)
-    if (recomputed !== h.headerHash) return { ok: false, checked, bad: { index: h.index, reason: `header hash mismatch (recomputed ${recomputed.slice(0, 12)}…)` } }
+    if (recomputed !== h.headerHash) return { ok: false, checked, bad: { index: h.index, reason: `header hash mismatch (recomputed ${recomputed.slice(0, 12)}…)` }, warnings }
     if (prev === null) {
-      if (h.index !== 0 || h.prevHeaderHash !== ZERO_HASH) return { ok: false, checked, bad: { index: h.index, reason: 'chain does not start at genesis' } }
+      if (h.index !== 0 || h.prevHeaderHash !== ZERO_HASH) return { ok: false, checked, bad: { index: h.index, reason: 'chain does not start at genesis' }, warnings }
     } else {
-      if (h.index !== prev.index + 1) return { ok: false, checked, bad: { index: h.index, reason: `index gap after ${prev.index}` } }
-      if (h.prevHeaderHash !== prev.headerHash) return { ok: false, checked, bad: { index: h.index, reason: `prevHeaderHash does not match epoch ${prev.index}` } }
-      if (h.totals.ledgerCredits < prev.totals.ledgerCredits) return { ok: false, checked, bad: { index: h.index, reason: 'ledger lifetime credits went down' } }
+      if (h.index !== prev.index + 1) return { ok: false, checked, bad: { index: h.index, reason: `index gap after ${prev.index}` }, warnings }
+      if (h.prevHeaderHash !== prev.headerHash) return { ok: false, checked, bad: { index: h.index, reason: `prevHeaderHash does not match epoch ${prev.index}` }, warnings }
+      const drop = ledgerDropReason(h, prev)
+      if (drop) warnings.push({ index: h.index, reason: drop })
     }
     prev = h
     checked++
   }
-  return { ok: true, checked, bad: null }
+  return { ok: true, checked, bad: null, warnings }
 }

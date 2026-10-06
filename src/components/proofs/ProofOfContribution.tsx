@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   canonicalHeader,
   headerHashAsync,
+  isHash,
   leafBytes,
   leafHashAsync,
   merkleRootAsync,
@@ -51,6 +52,33 @@ async function postJson<T>(url: string, data: unknown): Promise<T> {
   const body = (await res.json().catch(() => null)) as T & { error?: string }
   if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`)
   return body
+}
+
+/* ─── the head this browser verified last (the anchor for the next check) ─── */
+
+interface SeenHead {
+  index: number
+  headerHash: string
+  at: number
+}
+const SEEN_KEY = 'lusca.proofs.seen'
+
+function readSeen(): SeenHead | null {
+  try {
+    const r = JSON.parse(localStorage.getItem(SEEN_KEY) ?? 'null') as Partial<SeenHead> | null
+    if (r && Number.isSafeInteger(r.index) && (r.index as number) >= 0 && isHash(r.headerHash) && typeof r.at === 'number') return r as SeenHead
+  } catch {
+    /* storage blocked */
+  }
+  return null
+}
+
+function writeSeen(h: SeenHead) {
+  try {
+    localStorage.setItem(SEEN_KEY, JSON.stringify(h))
+  } catch {
+    /* storage blocked: the check still ran, it just cannot be remembered */
+  }
 }
 
 /** The caller's identity material, as account.watch sends it. */
@@ -133,20 +161,36 @@ interface ChainRun {
   roots: number
   msg: string
   ms: number
+  /** Oldest header re-hashed (0 = from genesis; >0 = linked to an anchor below it). */
+  from: number
+  /** The head this browser had verified before this run, and whether the chain still extends it. */
+  prior: SeenHead | null
+  head: EpochHeader | null
+  warnings: string[]
 }
 
-/** Every header from the API, oldest first (paged, newest first on the wire). */
-async function fetchAllHeaders(max = 5000): Promise<EpochHeader[]> {
+const IDLE_RUN: ChainRun = { state: 'idle', checked: 0, total: 0, roots: 0, msg: '', ms: 0, from: 0, prior: null, head: null, warnings: [] }
+
+/**
+ * Headers from the API, oldest first (paged, newest first on the wire). Stops after `max`; when it
+ * did not reach genesis, `anchor` is the header just below the oldest one (fetched on its own).
+ */
+async function fetchHeaders(max = 2000, downTo = 0): Promise<{ headers: EpochHeader[]; anchor: EpochHeader | null }> {
   const out: EpochHeader[] = []
   let before: number | null = null
   for (;;) {
     const page: ProofChainPage = await getJson<ProofChainPage>(`/api/proofs?limit=100${before !== null ? `&before=${before}` : ''}`)
     out.push(...page.headers)
-    if (page.next === null || out.length >= max) break
+    if (page.next === null || out.length >= max || page.next <= downTo) break
     before = page.next
   }
-  return out.sort((a, b) => a.index - b.index)
+  out.sort((a, b) => a.index - b.index)
+  const oldest = out[0]
+  const anchor = oldest && oldest.index > 0 ? (await getJson<{ header: EpochHeader }>(`/api/proofs/${oldest.index - 1}`)).header : null
+  return { headers: out, anchor }
 }
+
+const fmtWhen = (t: number) => `${fmtUtc(t).slice(0, 16)} UTC`
 
 function Detail({ h, onClose }: { h: EpochHeader; onClose: () => void }) {
   const [root, setRoot] = useState<{ state: 'idle' | 'busy' | 'ok' | 'bad'; value?: string; n?: number }>({ state: 'idle' })
@@ -235,9 +279,35 @@ interface MyCheck {
   shown: number
   root: string
   headerOk: boolean
-  inChain: boolean | null
+  inChain: boolean
+  link: string
   pass: boolean
   header: EpochHeader
+}
+
+/** Link a header to the current head: every header above it re-hashed here, every prevHeaderHash checked. */
+async function linkToHead(h: EpochHeader, known: Map<number, EpochHeader>): Promise<{ ok: boolean; text: string }> {
+  if (!sha) return { ok: false, text: 'WebCrypto unavailable' }
+  try {
+    const top = await getJson<ProofChainPage>('/api/proofs?limit=100')
+    if (!top.head) return { ok: false, text: 'the server reports no chain head' }
+    const above = new Map<number, EpochHeader>()
+    for (const x of top.headers) if (x.index > h.index) above.set(x.index, x)
+    let next = top.next
+    for (let i = 0; i < 50 && next !== null && next > h.index + 1; i++) {
+      const page: ProofChainPage = await getJson<ProofChainPage>(`/api/proofs?limit=100&before=${next}`)
+      for (const x of page.headers) if (x.index > h.index) above.set(x.index, x)
+      next = page.next
+    }
+    for (let i = h.index + 1; i <= top.head.index; i++) if (!above.has(i) && known.has(i)) above.set(i, known.get(i)!)
+    const run = [...above.values()].sort((a, b) => a.index - b.index)
+    if (run.length !== top.head.index - h.index) return { ok: false, text: `could not fetch every header from #${h.index} to the head` }
+    const res = await verifyHeadersAsync(sha, run, h)
+    if (!res.ok) return { ok: false, text: `does not link to the head: ${res.bad ? `epoch ${res.bad.index}: ${res.bad.reason}` : 'unknown'}` }
+    return { ok: true, text: run.length ? `links to the current head #${top.head.index} through ${fmtInt(run.length)} header${run.length === 1 ? '' : 's'} re-hashed here` : `is the current head #${top.head.index}` }
+  } catch (e) {
+    return { ok: false, text: `could not load the chain: ${(e as Error).message}` }
+  }
 }
 
 function MyProof({ chain }: { chain: Map<number, EpochHeader> }) {
@@ -267,11 +337,13 @@ function MyProof({ chain }: { chain: Map<number, EpochHeader> }) {
           const idLocal = p.scope === 'wallet' && wallet ? bytesToHex(await sha(utf8(`lusca:id:v1:wallet:${wallet}`))) : null
           const trace = await walkPath(sha, leafLocal, p.path as PathStep[])
           const hh = await headerHashAsync(sha, p.header)
-          const known = chain.get(p.header.index)
-          const inChain = known ? known.headerHash === p.header.headerHash : null
           const headerOk = hh === p.header.headerHash
-          const pass = leafLocal === p.leafHash && trace.root === p.header.treeRoot && headerOk && inChain !== false && (idLocal === null || idLocal === p.leaf.id)
-          out.push({ scope: p.scope, epoch: p.header.index, leaf: p.leaf, idLocal, leafLocal, leafServer: p.leafHash, steps: trace.steps, shown: 0, root: trace.root, headerOk, inChain, pass, header: p.header })
+          // Is this header part of the public chain? Re-hash every header above it up to the current
+          // head and check each link down to it (the server's answer alone only shows it hashes consistently).
+          const link = await linkToHead(p.header, chain)
+          const inChain = link.ok
+          const pass = leafLocal === p.leafHash && trace.root === p.header.treeRoot && headerOk && inChain && (idLocal === null || idLocal === p.leaf.id)
+          out.push({ scope: p.scope, epoch: p.header.index, leaf: p.leaf, idLocal, leafLocal, leafServer: p.leafHash, steps: trace.steps, shown: 0, root: trace.root, headerOk, inChain, link: link.text, pass, header: p.header })
         }
         if (id !== runId.current) return
         if (!out.length) {
@@ -382,9 +454,7 @@ function MyProof({ chain }: { chain: Map<number, EpochHeader> }) {
                   <li className={c.leafLocal === c.leafServer ? 'ok' : 'no'}>leaf hash recomputed here matches</li>
                   <li className={c.root === c.header.treeRoot ? 'ok' : 'no'}>path ends at treeRoot {short(c.header.treeRoot, 8)}</li>
                   <li className={c.headerOk ? 'ok' : 'no'}>header re-hashed here = {short(c.header.headerHash, 8)}</li>
-                  <li className={c.inChain === null ? '' : c.inChain ? 'ok' : 'no'}>
-                    {c.inChain === null ? 'header not in the loaded chain view' : 'same header as in the public chain'}
-                  </li>
+                  <li className={c.inChain ? 'ok' : 'no'}>header {c.link}</li>
                 </ul>
               </div>
             )}
@@ -490,8 +560,11 @@ export function ProofOfContribution() {
   const [err, setErr] = useState<string | null>(null)
   const [sel, setSel] = useState<number | null>(null)
   const [marks, setMarks] = useState<Map<number, BlockMark>>(new Map())
-  const [run, setRun] = useState<ChainRun>({ state: 'idle', checked: 0, total: 0, roots: 0, msg: '', ms: 0 })
+  const [run, setRun] = useState<ChainRun>(IDLE_RUN)
   const [all, setAll] = useState<Map<number, EpochHeader>>(new Map())
+  const [seen, setSeen] = useState<SeenHead | null>(() => readSeen())
+  const [copied, setCopied] = useState(false)
+  const refetchFor = useRef<{ closesAt: number; tries: number; at: number }>({ closesAt: 0, tries: 0, at: 0 })
 
   useEffect(() => {
     let live = true
@@ -516,22 +589,58 @@ export function ProofOfContribution() {
     }
   }, [])
 
-  // the open epoch closed: fetch the new head right away
+  // the open epoch closed: fetch the new head soon after, then back off (a stalled close must not
+  // turn every open tab into a once-a-second poller)
   useEffect(() => {
-    if (page?.open && now > page.open.closesAt + 20_000) {
-      void getJson<ProofChainPage>('/api/proofs?limit=12').then(setPage).catch(() => undefined)
+    if (!page?.open || now <= page.open.closesAt + 20_000) return
+    const r = refetchFor.current
+    if (r.closesAt !== page.open.closesAt) {
+      r.closesAt = page.open.closesAt
+      r.tries = 0
+      r.at = 0
     }
+    const wait = r.tries === 0 ? 0 : Math.min(300_000, 30_000 * 2 ** (r.tries - 1))
+    if (now - r.at < wait) return
+    r.tries++
+    r.at = now
+    void getJson<ProofChainPage>('/api/proofs?limit=12')
+      .then((p) => {
+        setPage(p)
+        setAll((m) => {
+          const n = new Map(m)
+          for (const h of p.headers) n.set(h.index, h)
+          return n
+        })
+      })
+      .catch(() => undefined)
   }, [now, page])
 
   const verifyChain = async () => {
     if (!sha) return
     const t0 = performance.now()
-    setRun({ state: 'running', checked: 0, total: 0, roots: 0, msg: 'fetching headers…', ms: 0 })
+    const prior = readSeen()
+    setRun({ ...IDLE_RUN, state: 'running', msg: 'fetching headers…', prior })
     try {
-      const headers = await fetchAllHeaders()
-      setAll(new Map(headers.map((h) => [h.index, h])))
+      const { headers, anchor } = await fetchHeaders(2000, prior ? prior.index : 0)
+      setAll((m) => {
+        const n = new Map(m)
+        for (const h of headers) n.set(h.index, h)
+        return n
+      })
       setMarks(new Map(page?.headers.map((h) => [h.index, 'checking' as BlockMark]) ?? []))
-      const res = await verifyHeadersAsync(sha, headers)
+      const res = await verifyHeadersAsync(sha, headers, anchor)
+      const head = headers.length ? headers[headers.length - 1] : null
+      const from = headers.length ? headers[0].index : 0
+      // the anchor this browser kept: the chain must still contain exactly that header
+      let priorBad: string | null = null
+      if (prior && head) {
+        if (prior.index > head.index) priorBad = `the chain is shorter than head #${prior.index} this browser verified on ${fmtWhen(prior.at)}: history was rewritten`
+        else {
+          const then = headers.find((h) => h.index === prior.index) ?? (prior.index === anchor?.index ? anchor : null)
+          if (!then) priorBad = `could not fetch epoch #${prior.index} (the head verified on ${fmtWhen(prior.at)})`
+          else if (then.headerHash !== prior.headerHash) priorBad = `epoch #${prior.index} no longer has the hash this browser verified on ${fmtWhen(prior.at)} (${prior.headerHash.slice(0, 12)}…): history was rewritten`
+        }
+      }
       // visual pass over the visible blocks, newest first, then recompute their roots from the public leaves
       let roots = 0
       let rootBad: number | null = null
@@ -551,16 +660,39 @@ export function ProofOfContribution() {
         if (!reduced()) await sleep(90)
       }
       const ms = Math.round(performance.now() - t0)
-      if (res.ok && rootBad === null) setRun({ state: 'ok', checked: res.checked, total: headers.length, roots, msg: '', ms })
-      else setRun({ state: 'bad', checked: res.checked, total: headers.length, roots, msg: res.bad ? `epoch ${res.bad.index}: ${res.bad.reason}` : `epoch ${rootBad}: leaves do not hash to treeRoot`, ms })
+      const warnings = res.warnings.map((w) => `epoch ${w.index}: ${w.reason}`)
+      const base = { checked: res.checked, total: headers.length, roots, ms, from, prior, head, warnings }
+      if (res.ok && rootBad === null && priorBad === null) {
+        setRun({ ...base, state: 'ok', msg: '' })
+        if (head) {
+          const s = { index: head.index, headerHash: head.headerHash, at: Date.now() }
+          writeSeen(s)
+          setSeen(s)
+        }
+      } else setRun({ ...base, state: 'bad', msg: priorBad ?? (res.bad ? `epoch ${res.bad.index}: ${res.bad.reason}` : `epoch ${rootBad}: leaves do not hash to treeRoot`) })
     } catch (e) {
-      setRun({ state: 'error', checked: 0, total: 0, roots: 0, msg: (e as Error).message, ms: 0 })
+      setRun({ ...IDLE_RUN, state: 'error', msg: (e as Error).message, prior })
+    }
+  }
+
+  const copyHead = async () => {
+    const h = run.head ?? page?.head
+    if (!h) return
+    try {
+      await navigator.clipboard.writeText(`LUSCA proof chain head #${h.index} ${h.headerHash}`)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1800)
+    } catch {
+      /* clipboard blocked */
     }
   }
 
   const headers = page?.headers ?? []
   const selected = sel !== null ? (all.get(sel) ?? null) : null
   const st = page?.status
+  const off = st?.state === 'off'
+  const stalled = !!page?.stalled
+  const drift = page?.committed && page.head ? page.head.totals.ledgerCredits - page.committed.credits : 0
 
   return (
     <div id="ep-proofs" className="poc pk-anchor">
@@ -574,34 +706,73 @@ export function ProofOfContribution() {
         </p>
       </div>
 
-      <div className={`poc-strip${st && !st.ok ? ' poc-strip-bad' : ''}`}>
-        <span className={`led ${st ? (st.ok ? 'on' : 'tre-led-err') : 'pulse'}`} aria-hidden="true" />
+      <div className={`poc-strip${st && (!st.ok || stalled) ? ' poc-strip-bad' : ''}`}>
+        <span className={`led ${st ? (st.ok && !stalled ? 'on' : 'tre-led-err') : 'pulse'}`} aria-hidden="true" />
         <p className="poc-strip-t" role="status">
           {err ? (
             <>proofs unavailable: {err}</>
           ) : !page ? (
             'loading the chain…'
+          ) : off ? (
+            <>
+              <b>proofs are off on this server</b>
+              {st?.error ? ` · ${st.error}` : ''}
+            </>
           ) : (
             <>
-              <b>{st?.ok ? 'chain verified on the server at start' : 'chain check failed on the server'}</b> · {fmtInt(st?.verified ?? 0)} epochs · head #
+              <b>{st?.ok ? 'server re-hashed the chain at start' : 'chain check failed on the server'}</b> · {fmtInt(st?.verified ?? 0)} epochs · head #
               {page.head?.index ?? DASH} {page.head ? short(page.head.headerHash, 10) : ''}
               {st?.error ? ` · ${st.error}` : ''}
+              {stalled ? ' · the open epoch is past its close time and has not closed' : ''}
             </>
           )}
         </p>
-        <button type="button" className="btn poc-vbtn" onClick={() => void verifyChain()} disabled={!page || run.state === 'running' || !sha}>
+        <button type="button" className="btn poc-vbtn" onClick={() => void verifyChain()} disabled={!page || !page.head || run.state === 'running' || !sha}>
           {run.state === 'running' ? 'Re-hashing…' : 'Verify the whole chain'}
         </button>
       </div>
+      {st?.warning && <p className="poc-runres mono poc-warnt">! {st.warning}</p>}
       {run.state !== 'idle' && run.state !== 'running' && (
-        <p className={`poc-runres mono ${run.state === 'ok' ? 'poc-good' : 'poc-badt'}`} role="status">
-          {run.state === 'ok'
-            ? `✓ ${fmtInt(run.checked)} headers re-hashed in this browser, every link holds · ${run.roots} newest roots recomputed from leaves.json · ${run.ms} ms`
-            : run.state === 'bad'
-              ? `✗ ${run.msg}`
-              : `could not verify: ${run.msg}`}
-        </p>
+        <div className={`poc-runres mono ${run.state === 'ok' ? 'poc-good' : 'poc-badt'}`} role="status">
+          {run.state === 'ok' ? (
+            <>
+              <p>
+                ✓ {fmtInt(run.checked)} headers re-hashed in this browser{run.from > 0 ? ` (#${run.from} to the head, linked to #${run.from - 1})` : ', genesis to head'}, every link holds · {run.roots} newest
+                roots recomputed from leaves.json · {run.ms} ms
+              </p>
+              <p className="poc-anchor">
+                {run.prior
+                  ? `✓ still contains head #${run.prior.index} ${run.prior.headerHash.slice(0, 12)}… that this browser verified on ${fmtWhen(run.prior.at)}: nothing before it was rewritten`
+                  : `head #${run.head?.index ?? DASH} saved in this browser. The next check proves the chain only grew from it.`}
+              </p>
+            </>
+          ) : run.state === 'bad' ? (
+            <p>✗ {run.msg}</p>
+          ) : (
+            <p>could not verify: {run.msg}</p>
+          )}
+          {run.warnings.map((w) => (
+            <p key={w} className="poc-warnt">
+              ! {w}
+            </p>
+          ))}
+        </div>
       )}
+      <div className="poc-seen mono">
+        <span className="label">your anchor</span>
+        <span>
+          {seen ? (
+            <>
+              head #{seen.index} <span className="num">{short(seen.headerHash, 12)}</span> · verified here {fmtWhen(seen.at)}
+            </>
+          ) : (
+            'none yet: run "Verify the whole chain" once and this browser keeps the head it checked'
+          )}
+        </span>
+        <button type="button" className="poc-x" onClick={() => void copyHead()} disabled={!page?.head}>
+          {copied ? 'copied' : 'copy head hash'}
+        </button>
+      </div>
 
       <dl className="poc-stats">
         <div>
@@ -612,10 +783,12 @@ export function ProofOfContribution() {
           <dt className="label">credits committed</dt>
           <dd className="num">{page?.committed ? credits(page.committed.credits) : DASH}</dd>
           {page?.committed && page.head && (
-            <dd className="poc-stat-s mono">
-              {page.committed.credits === page.head.totals.ledgerCredits
+            <dd className="poc-stat-s mono" title="Lifetime credits on the ledger include credits issued to no ledger account (below the account minimum or over the account cap) and balances evicted before genesis; those have no leaf.">
+              {drift === 0
                 ? `= ledger lifetime at #${page.head.index}`
-                : `ledger lifetime at #${page.head.index}: ${credits(page.head.totals.ledgerCredits)}`}
+                : drift > 0
+                  ? `ledger lifetime at #${page.head.index}: ${credits(page.head.totals.ledgerCredits)} · ${credits(drift)} issued to no account`
+                  : `ledger lifetime at #${page.head.index}: ${credits(page.head.totals.ledgerCredits)} (ledger lower than committed)`}
             </dd>
           )}
         </div>

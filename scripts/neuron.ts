@@ -64,7 +64,7 @@ import { bestMatchesCPU } from '../shared/vectorize.ts'
 import { b64ToF32 } from '../shared/b64.ts'
 import { base58Decode, base58Encode, isSolanaAddress } from '../shared/base58.ts'
 import type { AuthNonce, AuthSession } from '../shared/payouts.ts'
-import { bytesToHex, canonicalHeader, hexToBytes, leafBytes, nodeBytes, type ProofLookup } from '../shared/proofs.ts'
+import { bytesToHex, canonicalHeader, hexToBytes, isHash, leafBytes, nodeBytes, verifyHeadersAsync, type EpochHeader, type ProofChainPage, type ProofLookup } from '../shared/proofs.ts'
 import { privateKeyFromSeed, rawPublicKey, signEd25519 } from '../server/auth/ed25519.ts'
 import { SEPIA, cosine, decodeGrad, encodeGrad, f16ToF32, lossAndGrad, trainFlops } from '../shared/sepia/index.mjs'
 import { createUI } from './neuron-tui/index.ts'
@@ -332,6 +332,39 @@ function cpuModel(): string {
  * ~/.lusca/device-id (mode 0600). Hostname/user-derived ids are guessable, so they are only the
  * fallback when that file cannot be written.
  */
+/**
+ * The newest proof-chain head this machine verified for a server (~/.lusca/proof-head-<server>.json).
+ * The next check proves the chain only grew from it: a rewritten history cannot pass that check.
+ */
+interface SeenHead {
+  index: number
+  headerHash: string
+  at: number
+}
+function seenHeadFile(server: string): string {
+  return path.join(os.homedir(), '.lusca', `proof-head-${createHash('sha256').update(server).digest('hex').slice(0, 12)}.json`)
+}
+function readSeenHead(server: string): SeenHead | null {
+  try {
+    const r = JSON.parse(fs.readFileSync(seenHeadFile(server), 'utf8')) as Partial<SeenHead>
+    if (Number.isSafeInteger(r.index) && (r.index as number) >= 0 && isHash(r.headerHash) && typeof r.at === 'number') return r as SeenHead
+  } catch {
+    /* none yet */
+  }
+  return null
+}
+function writeSeenHead(server: string, h: SeenHead) {
+  try {
+    const file = seenHeadFile(server)
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
+    const tmp = `${file}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(h), { mode: 0o600 })
+    fs.renameSync(tmp, file)
+  } catch {
+    /* read-only home: the check still runs, it just cannot remember */
+  }
+}
+
 function deviceId(): string {
   const dir = path.join(os.homedir(), '.lusca')
   const file = path.join(dir, 'device-id')
@@ -726,6 +759,36 @@ async function main() {
   // line per new epoch; silent when the server has no proofs (older server) or no leaf yet.
   let proofEpoch = -1
   const sha = (b: Uint8Array) => new Uint8Array(createHash('sha256').update(b).digest())
+  const server = httpBase(args.server).origin
+  /** Does the chain the server serves now extend the head this machine verified before? */
+  const checkHead = async (): Promise<string | null> => {
+    const get = async (p: string) => {
+      const r = await fetch(new URL(p, server), { signal: AbortSignal.timeout(10_000) })
+      return r.ok ? ((await r.json()) as ProofChainPage) : null
+    }
+    let page = await get('/api/proofs?limit=100')
+    const head = page?.head
+    if (!page || !head) return null
+    const seen = readSeenHead(server)
+    const when = (t: number) => new Date(t).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
+    let note: string | null = null
+    if (seen) {
+      if (seen.index > head.index) return `proof chain is SHORTER than the head #${seen.index} this machine verified on ${when(seen.at)}: history was rewritten`
+      const run: EpochHeader[] = [...page.headers]
+      for (let i = 0; i < 20 && page && page.next !== null && Math.min(...run.map((h) => h.index)) > seen.index; i++) {
+        page = await get(`/api/proofs?limit=100&before=${page.next}`)
+        run.push(...(page?.headers ?? []))
+      }
+      const from = run.filter((h) => h.index >= seen.index).sort((a, b) => a.index - b.index)
+      if (!from.length || from[0].index !== seen.index) return null // could not fetch back that far: say nothing
+      if (from[0].headerHash !== seen.headerHash) return `proof chain REWRITTEN: epoch #${seen.index} no longer has the hash this machine verified on ${when(seen.at)}`
+      const res = await verifyHeadersAsync(async (b) => sha(b), from.slice(1), from[0])
+      if (!res.ok) return `proof chain does not link back to the head this machine verified (${res.bad ? `epoch ${res.bad.index}: ${res.bad.reason}` : 'unknown'})`
+      note = `chain extends the head #${seen.index} seen ${when(seen.at)}`
+    }
+    writeSeenHead(server, { index: head.index, headerHash: head.headerHash, at: Date.now() })
+    return note ?? `head #${head.index} ${head.headerHash.slice(0, 12)}… saved: later checks prove the chain only grew`
+  }
   const checkProof = async () => {
     if (stopping) return
     try {
@@ -737,6 +800,8 @@ async function main() {
       const newest = Math.max(-1, ...(mine?.identities ?? []).map((i) => i.epochs[0] ?? -1))
       if (newest < 0 || newest === proofEpoch) return
       const res = (await post(`/api/proofs/${newest}/proof`)) as { proofs?: ProofLookup[] } | null
+      const headNote = await checkHead().catch(() => null)
+      if (headNote && /SHORTER|REWRITTEN|does not link/.test(headNote)) emit({ t: 'notice', level: 'warn', msg: headNote })
       for (const p of res?.proofs ?? []) {
         if (!p.leaf) continue
         let cur = sha(leafBytes(p.header.index, p.leaf))
@@ -747,7 +812,7 @@ async function main() {
           t: 'notice',
           level: rootOk && headerOk ? 'info' : 'warn',
           msg: rootOk && headerOk
-            ? `proof · epoch #${p.header.index} root ${p.header.treeRoot.slice(0, 12)}… · ${fmtCredits(p.leaf.credits / 1e6)} credits on this ${p.scope} · Merkle path verified here`
+            ? `proof · epoch #${p.header.index} root ${p.header.treeRoot.slice(0, 12)}… · ${fmtCredits(p.leaf.credits / 1e6)} credits on this ${p.scope} · Merkle path verified here${headNote && !/SHORTER|REWRITTEN|does not link/.test(headNote) ? ` · ${headNote}` : ''}`
             : `proof · epoch #${p.header.index}: the server's Merkle path did NOT verify (${rootOk ? 'header hash' : 'root'} mismatch)`,
         })
       }

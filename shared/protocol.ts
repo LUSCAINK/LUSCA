@@ -133,8 +133,11 @@ export interface Stats {
   heldPages?: number;
   heldTokens?: number;
   heldBytes?: number;
-  /** Kept archive files whose totals were never recorded (not in heldPages / heldTokens). */
+  /** Bytes of dataset.jsonl + the counted archives (what heldPages / heldTokens describe). */
+  /** Kept archive files whose totals were never recorded (not in heldPages / heldTokens / heldBytes). */
   heldUncounted?: number;
+  /** Bytes of those uncounted archive files. */
+  heldUncountedBytes?: number;
   bytes: number;
   domains: number;
   frontier: number;

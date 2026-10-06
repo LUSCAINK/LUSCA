@@ -8,7 +8,7 @@
 // the archived page / token totals forward in ingest-state.json so lifetime
 // counters stay monotonic across restarts.
 import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { appendFile, readdir, rename, unlink, writeFile, readFile } from 'node:fs/promises'
+import { appendFile, open as openFile, readdir, rename, unlink, writeFile, readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { basename, join } from 'node:path'
 
@@ -73,11 +73,14 @@ export function emptyArchived(sectors: number): ArchivedTotals {
 export interface HeldCorpus {
   pages: number
   tokens: number
+  /** Bytes of dataset.jsonl plus the counted archives (the files pages / tokens describe). */
   bytes: number
   /** Archive files on disk. */
   archives: number
-  /** Archive files on disk whose page / token totals were never recorded (rotated before this was tracked): not in pages / tokens. */
+  /** Archive files on disk whose page / token totals were never recorded (rotated before this was tracked): not in pages / tokens / bytes. */
   uncounted: number
+  /** Bytes of those uncounted archive files. */
+  uncountedBytes: number
 }
 
 /** Page / token totals per archive file still on disk (dataset-archives.json, written at rotation and pruning). */
@@ -175,7 +178,14 @@ export class DatasetWriter {
     const file = join(this.dir, ARCHIVES_FILE)
     const tmp = `${file}.${process.pid}.tmp`
     try {
-      await writeFile(tmp, JSON.stringify(this.archiveTotals), 'utf8')
+      // tmp → fsync → rename: a crash never leaves a torn or empty totals file (all archives would read as uncounted)
+      const fh = await openFile(tmp, 'w')
+      try {
+        await fh.writeFile(JSON.stringify(this.archiveTotals), 'utf8')
+        await fh.sync()
+      } finally {
+        await fh.close()
+      }
       await rename(tmp, file)
     } catch (e) {
       console.warn('[crawler] could not save dataset-archives.json:', (e as Error)?.message ?? e)
@@ -188,15 +198,19 @@ export class DatasetWriter {
     let tokens = this.file.tokens
     let bytes = this.size
     let uncounted = 0
+    let uncountedBytes = 0
     for (const a of this.archivesOnDisk) {
-      bytes += a.bytes
       const t = this.archiveTotals[a.name]
       if (t) {
         pages += t.pages
         tokens += t.tokens
-      } else uncounted++
+        bytes += a.bytes
+      } else {
+        uncounted++
+        uncountedBytes += a.bytes
+      }
     }
-    return { pages, tokens, bytes, archives: this.archivesOnDisk.length, uncounted }
+    return { pages, tokens, bytes, archives: this.archivesOnDisk.length, uncounted, uncountedBytes }
   }
 
   /** Account for a page that was already in dataset.jsonl at start-up (reload path). */

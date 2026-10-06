@@ -1427,7 +1427,7 @@ export function createIngest(opts: CrawlerOptions & CrawlerExtraOptions): Crawle
       return liveAgents().map((a) => ({ ...a.info }))
     },
 
-    stats(): Pick<Stats, 'pages' | 'tokens' | 'bytes' | 'domains' | 'frontier' | 'rejected' | 'dupes' | 'errors' | 'agentsActive' | 'agentsTotal' | 'pagesPerMin' | 'tokensPerMin' | 'uptime' | 'heldPages' | 'heldTokens' | 'heldBytes' | 'heldUncounted'> {
+    stats(): Pick<Stats, 'pages' | 'tokens' | 'bytes' | 'domains' | 'frontier' | 'rejected' | 'dupes' | 'errors' | 'agentsActive' | 'agentsTotal' | 'pagesPerMin' | 'tokensPerMin' | 'uptime' | 'heldPages' | 'heldTokens' | 'heldBytes' | 'heldUncounted' | 'heldUncountedBytes'> {
       const now = Date.now()
       const rate = prunedRate(now)
       let active = 0
@@ -1439,6 +1439,7 @@ export function createIngest(opts: CrawlerOptions & CrawlerExtraOptions): Crawle
         heldTokens: held.tokens,
         heldBytes: held.bytes,
         heldUncounted: held.uncounted,
+        heldUncountedBytes: held.uncountedBytes,
         pages: totals.pages,
         tokens: totals.tokens,
         bytes: totals.bytes,

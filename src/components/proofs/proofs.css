@@ -75,6 +75,44 @@
 .poc-badt {
   color: var(--err);
 }
+.poc-warnt {
+  color: var(--warn);
+}
+.poc-runres p {
+  margin: 0;
+}
+.poc-runres p + p {
+  margin-top: 4px;
+}
+.poc-runres .poc-anchor {
+  color: var(--fg);
+}
+.poc-seen {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: -6px;
+  padding: 8px 14px;
+  border: 1px dashed var(--line-2);
+  font-size: var(--t-2xs);
+  line-height: 1.5;
+  color: var(--fg-2);
+}
+.poc-seen > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--fg-1);
+}
+.poc-seen .poc-x {
+  padding: 0;
+  color: var(--hot);
+}
+.poc-seen .poc-x:disabled {
+  color: var(--fg-3);
+  cursor: default;
+}
 
 /* ─── stats ─────────────────────────────────────── */
 .poc-stats {

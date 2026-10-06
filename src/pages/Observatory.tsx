@@ -89,7 +89,7 @@ export default function Observatory() {
         </div>
         <div className="obs-stats">
           <Stat label="pages accepted" value={v(stats.pages)} hot />
-          <Stat label="tokens" value={v(stats.tokens)} compact />
+          <Stat label="tokens accepted" value={v(stats.tokens)} compact />
           <Stat label="hosts" value={v(stats.domains)} />
           <Stat label="frontier" value={v(stats.frontier)} compact />
           <Stat label="pages / min" value={v(stats.pagesPerMin)} />

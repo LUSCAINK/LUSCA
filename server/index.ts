@@ -303,7 +303,8 @@ function healthReport(trainer: TrainerApi): HealthReport {
   const now = Date.now()
   const degraded: string[] = []
   const proofs = proofsRef ? proofsRef.status() : null
-  if (proofs && !proofs.ok) degraded.push('proof-chain-broken')
+  if (proofs && !proofs.ok) degraded.push(proofs.state === 'off' ? 'proofs-off' : 'proof-chain-broken')
+  if (proofs?.stalled) degraded.push('proof-epoch-stalled')
 
   // A save that landed after the failure clears it.
   if (ledgerState.failingSince && mtimeMs(path.join(DATA_DIR, 'ledger.json')) > ledgerState.failingSince) {
@@ -520,6 +521,7 @@ async function main() {
       salt: loadHashSalt(DATA_DIR, process.env.LUSCA_HASH_SALT, (level, msg) => log[level]('proofs', msg)),
       epochMinutes: resolveEpochMinutes(process.env),
       checkToken: (t) => auth.checkToken(t),
+      allowRestart: process.env.LUSCA_PROOFS_RESTART === '1',
       log: (level, msg) => log[level]('proofs', msg),
     })
     proofs.start() // verifies the stored chain (or writes genesis) before the server listens

@@ -40,7 +40,7 @@ function Telemetry() {
   const live = conn === 'live'
   const rows: [string, number, boolean?][] = [
     ['pages accepted', s.pages],
-    ['tokens collected', s.tokens, true],
+    ['tokens accepted', s.tokens, true],
     ['websites', s.domains],
     ['agents working', s.agentsActive],
     ['gpus connected', s.neurons],

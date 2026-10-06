@@ -112,8 +112,9 @@ export function Economics() {
         Proof of contribution
       </H3>
       <p>
-        Every confirmed credit is committed to a public hash chain, so a contributor can prove what they earned and anyone can check that past epochs were not
-        rewritten. Every <C>LUSCA_EPOCH_MIN</C> minutes (default 60, boundaries on the UTC clock) the server closes a contribution epoch:
+        Every confirmed credit is committed to a public hash chain, so a contributor can prove what they earned, and anyone who kept an earlier head hash can
+        detect a rewrite of the history before it. Every <C>LUSCA_EPOCH_MIN</C> minutes (default 60, boundaries on the UTC clock) the server closes a
+        contribution epoch:
       </p>
       <Spec
         rows={[
@@ -138,7 +139,19 @@ export function Economics() {
         <li>
           <b>Persistence.</b> The open epoch’s credits are saved inside <C>ledger.json</C> together with the balances; a closing epoch is written there first
           (write-ahead), then to <C>proofs/l-*.json</C> and <C>proofs/h-*.json</C> (fsync, rename). A closed epoch is never rewritten. Every start re-hashes
-          the whole chain and reports a mismatch in <C>/api/health</C> (<C>proof-chain-broken</C>).
+          the whole chain and reports a mismatch in <C>/api/health</C> (<C>proof-chain-broken</C>). If the chain is missing while the ledger shows one existed,
+          proofs turn off (<C>proofs-off</C>) instead of starting a new chain; only <C>LUSCA_PROOFS_RESTART=1</C> starts over, and a restart is visible to
+          anyone holding an old head.
+        </li>
+        <li>
+          <b>Anchors.</b> A hash chain only shows that history was not rewritten to someone who kept a hash from before. The Rewards page stores the last head
+          it verified in your browser and the desktop neuron stores it in <C>~/.lusca</C>; the next check requires the chain to still contain exactly that
+          header. Copy a head hash and post it anywhere public to make it an anchor for everyone.
+        </li>
+        <li>
+          <b>Ledger cross-check.</b> Each header records the ledger’s lifetime credits. Credits issued to no ledger account (below the account minimum, over
+          the account cap) and balances evicted before genesis have no leaf, so that number can be higher than the credits committed. If it ever goes down
+          (a ledger reset or a restore from backup) the header records it and the check shows a warning; the chain itself still links.
         </li>
         <li>
           <b>Check it yourself.</b> <C>GET /api/proofs</C> lists headers; <C>GET /api/proofs/:index/leaves.json</C> publishes every leaf so the root can be
@@ -147,8 +160,10 @@ export function Economics() {
         </li>
       </ol>
       <p>
-        What it proves: the server committed to these credits at that time and has not changed them since. What it does not prove: that the server measured
-        the work honestly in the first place. That rests on the spot checks and full audits in <Link to="/docs/neurons">08</Link>.
+        What it proves: your leaf is in an epoch whose header links to the current head, and the history up to any head you kept was not changed since you
+        checked it. What it does not prove: that the server measured the work honestly in the first place (that rests on the spot checks and full audits in{' '}
+        <Link to="/docs/neurons">08</Link>), or anything about epochs before the oldest head anyone kept. The chain is not yet anchored on Solana: not
+        connected yet.
       </p>
       <Src path="shared/proofs.ts (format, browser verification) · server/proofs/index.ts (epochs, storage) · server/neurons/coordinator.ts (EpochLedger)" />
     </>

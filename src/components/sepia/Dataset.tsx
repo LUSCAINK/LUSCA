@@ -145,7 +145,7 @@ export function Dataset() {
             sub={
               stats.heldPages == null
                 ? 'not reported by this server'
-                : `${fmtC(stats.heldTokens ?? 0)} tok · ${fmtBytes(stats.heldBytes ?? 0)}${stats.heldUncounted ? ` · +${stats.heldUncounted} older archive files not counted` : ''}`
+                : `${fmtC(stats.heldTokens ?? 0)} tok · ${fmtBytes(stats.heldBytes ?? 0)}${stats.heldUncounted ? ` · +${stats.heldUncounted} older archive file${stats.heldUncounted === 1 ? '' : 's'}${stats.heldUncountedBytes ? ` (${fmtBytes(stats.heldUncountedBytes)})` : ''} not counted` : ''}`
             }
           />
           <Tot k="raw html" v={fmtBytes(stats.bytes)} />

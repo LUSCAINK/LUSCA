@@ -28,6 +28,7 @@ import {
   canonicalHeader,
   compareBytes,
   isHash,
+  ledgerDropReason,
   leafBytes,
   nodeBytes,
   type EpochHeader,
@@ -45,8 +46,12 @@ type LogFn = (level: 'info' | 'warn' | 'error', msg: string) => void
 const HEADER_RE = /^h-(\d{8})\.json$/
 const TICK_MS = 15_000
 const LEAF_CACHE = 24
+const TREE_CACHE = 8
+const JSON_CACHE = 4
 const IDENT_EPOCHS = 100
 const MAX_IDENTS = 50_000
+/** The open epoch counts as stalled this long after its close time. */
+const STALL_MS = 120_000
 const RETRYABLE = new Set(['EPERM', 'EBUSY', 'EACCES', 'EAGAIN'])
 
 // ─── pure tree code (sync, node:crypto) ─────────────────────────────────────
@@ -87,8 +92,12 @@ export function merkleRoot(hashes: Uint8Array[]): string {
 
 /** Merkle path of the leaf at `pos` (an odd last node at some level has no sibling there). */
 export function merklePath(hashes: Uint8Array[], pos: number): PathStep[] {
+  return pathFromLevels(treeLevels(hashes), pos)
+}
+
+/** Merkle path from prebuilt levels (treeLevels). */
+export function pathFromLevels(levels: Uint8Array[][], pos: number): PathStep[] {
   const out: PathStep[] = []
-  const levels = treeLevels(hashes)
   let i = pos
   for (let d = 0; d < levels.length - 1; d++) {
     const level = levels[d]
@@ -137,7 +146,10 @@ export function buildEpoch(index: number, startedAt: number, endedAt: number, le
   return { header: { ...base, headerHash: headerHash(base) }, leaves: ordered.leaves }
 }
 
-/** Check one stored epoch against its predecessor. Returns a reason, or null when it holds. */
+/**
+ * Check one stored epoch against its predecessor. Returns a reason, or null when it holds. A drop in
+ * the ledger's lifetime credits is not a broken chain (see ledgerDropReason): it is reported apart.
+ */
 export function checkEpoch(h: EpochHeader, leaves: ProofLeaf[] | null, prev: EpochHeader | null): string | null {
   const { headerHash: stored, ...base } = h
   if (headerHash(base) !== stored) return 'header hash does not match its contents'
@@ -146,7 +158,6 @@ export function checkEpoch(h: EpochHeader, leaves: ProofLeaf[] | null, prev: Epo
   } else {
     if (h.index !== prev.index + 1) return `index gap after epoch ${prev.index}`
     if (h.prevHeaderHash !== prev.headerHash) return `prevHeaderHash does not match epoch ${prev.index}`
-    if (h.totals.ledgerCredits < prev.totals.ledgerCredits) return 'ledger lifetime credits went down'
   }
   if (leaves === null) return 'leaves file missing or unreadable'
   if (leaves.length !== h.leafCount) return `leafCount ${h.leafCount} but ${leaves.length} leaves stored`
@@ -232,6 +243,11 @@ export interface ProofsOptions {
   epochMinutes?: number
   /** Session-token check (server/auth): token → verified wallet. */
   checkToken?: (token: unknown) => { wallet: string } | null
+  /**
+   * Start a new chain (new genesis) even though ledger.json shows one existed (LUSCA_PROOFS_RESTART=1).
+   * Without it a missing proofs/ directory turns proofs off instead of silently starting over.
+   */
+  allowRestart?: boolean
   log?: LogFn
   now?: () => number
 }
@@ -240,11 +256,13 @@ export interface ProofsApi {
   page(limit: number, before: number | null): ProofChainPage
   header(index: number): EpochHeader | null
   leaves(index: number): ProofLeaf[] | null
+  /** leaves.json body of a closed epoch, serialized once and cached (closed epochs never change). */
+  leavesJson(index: number): { text: string; etag: string } | null
   /** Identities of the caller (same scope rules as account.watch); [] when neither is valid. */
   resolve(auth: unknown, device: unknown): { scope: 'wallet' | 'device'; key: string; wallet: string | null }[]
   mine(auth: unknown, device: unknown): ProofIdentity[]
   proof(index: number, auth: unknown, device: unknown): ProofLookup[] | null
-  status(): ProofChainStatus & { head: number | null; pendingWrite: boolean }
+  status(): ProofChainStatus & { head: number | null; pendingWrite: boolean; stalled: boolean }
   /** Close the open epoch now if it is due (also run by the timer). Returns the closed header. */
   tick(force?: boolean): EpochHeader | null
   start(): void
@@ -275,11 +293,15 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
   const epochs = opts.epochs
   const headers: EpochHeader[] = [] // index-ordered, contiguous from 0 while the chain is intact
   const leafCache = new Map<number, ProofLeaf[]>()
-  const orderCache = new Map<number, { leaves: ProofLeaf[]; hashes: Uint8Array[] }>() // tree order + leaf hashes, newest lookups
-  const identEpochs = new Map<string, number[]>() // identity → epochs with a leaf (oldest first, capped)
-  let status: ProofChainStatus = { ok: true, verified: 0, error: null, checkedAt: 0 }
+  // tree order, every level and leaf positions of the most recently looked-up epochs
+  const treeCache = new Map<number, { leaves: ProofLeaf[]; levels: Uint8Array[][]; pos: Map<string, number> }>()
+  const jsonCache = new Map<number, { text: string; etag: string }>()
+  // identity → epochs with a leaf (oldest first, capped); least recently seen identities are evicted first
+  const identEpochs = new Map<string, number[]>()
+  let status: ProofChainStatus = { ok: true, state: 'verified', verified: 0, error: null, warning: null, checkedAt: 0 }
   let pendingWrite: ClosingRecord | null = null
   let timer: NodeJS.Timeout | null = null
+  let retry: NodeJS.Timeout | null = null
   let ready = false
   let savingWarned = false
   const committed = { credits: 0, leaves: 0 } // Σ over every stored header (genesis included)
@@ -290,13 +312,31 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
   function noteIdentities(index: number, leaves: ProofLeaf[]) {
     for (const l of leaves) {
       let list = identEpochs.get(l.id)
-      if (!list) {
-        if (identEpochs.size >= MAX_IDENTS) continue
-        identEpochs.set(l.id, (list = []))
+      if (list) identEpochs.delete(l.id) // re-insert: Map order = least recently seen first
+      else {
+        list = []
+        while (identEpochs.size >= MAX_IDENTS) identEpochs.delete(identEpochs.keys().next().value as string)
       }
+      identEpochs.set(l.id, list)
       list.push(index)
       if (list.length > IDENT_EPOCHS) list.splice(0, list.length - IDENT_EPOCHS)
     }
+  }
+
+  function isStalled(): boolean {
+    const open = epochs.open()
+    return ready && !!open && now() > closesAt(open.startedAt) + STALL_MS
+  }
+
+  function setOff(reason: string) {
+    status = { ...status, ok: false, state: 'off', error: reason, checkedAt: now() }
+  }
+
+  function noteWarning(h: EpochHeader, prev: EpochHeader | null) {
+    const w = prev ? ledgerDropReason(h, prev) : null
+    if (!w) return
+    status = { ...status, warning: status.warning ?? `epoch ${h.index}: ${w}` }
+    log('warn', `epoch ${h.index}: ${w}. The chain still links; the header records it.`)
   }
 
   function cacheLeaves(index: number, leaves: ProofLeaf[]) {
@@ -385,6 +425,7 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
   }
 
   function adopt(rec: ClosingRecord) {
+    noteWarning(rec.header, head())
     headers.push(rec.header)
     committed.credits += rec.header.totals.credits
     committed.leaves += rec.header.leafCount
@@ -448,6 +489,7 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
       const prev = headers.length ? headers[headers.length - 1] : null
       const leaves = parseLeaves(readJson(path.join(dir, `l-${pad(h.index)}.json`)))
       const bad = checkEpoch(h, leaves, prev)
+      if (prev && !bad) noteWarning(h, prev)
       if (bad) {
         error ??= `epoch ${h.index}: ${bad}`
         // keep going from here so the chain can still be served and extended; the status stays broken
@@ -460,7 +502,7 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
         if (h.index >= names.length - LEAF_CACHE) cacheLeaves(h.index, leaves)
       }
     }
-    status = { ok: error === null, verified, error, checkedAt: now() }
+    status = { ok: error === null, state: error === null ? 'verified' : 'broken', verified, error, warning: status.warning ?? null, checkedAt: now() }
     const ms = Math.round(performance.now() - t0)
     if (error) log('error', `PROOF CHAIN BROKEN — ${error}. ${verified}/${headers.length} epochs verified. Closed epochs are never rewritten; investigate ${dir}.`)
     else if (headers.length) log('info', `proof chain verified: ${headers.length} epochs, head ${head()!.index} (${head()!.headerHash.slice(0, 16)}…) in ${ms} ms`)
@@ -491,9 +533,19 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
       // 2. genesis: the full confirmed balance of every account, once
       if (!epochs.saving()) {
         log('error', 'the ledger is not being saved; contribution proofs are off until ledger.json is readable')
+        setOff('ledger.json is not readable, so no epoch can be committed')
         return
       }
-      if (open && open.index > 0) log('warn', `no proof chain on disk but ledger.json has an open epoch ${open.index}; starting a new chain from the current balances`)
+      if (open && open.index > 0) {
+        // A chain existed (the ledger is collecting epoch N > 0) but proofs/ is gone. Starting over
+        // silently would hand out a fresh chain that passes every check; refuse unless told to.
+        if (!opts.allowRestart) {
+          log('error', `PROOF CHAIN MISSING — ledger.json is collecting epoch ${open.index} but ${dir} holds no chain. Proofs are off. Restore the directory, or set LUSCA_PROOFS_RESTART=1 to start a new chain from the current balances (anyone holding an old head hash will see the restart).`)
+          setOff(`proof chain missing on disk (ledger expects epoch ${open.index}); restore it or restart the chain explicitly`)
+          return
+        }
+        log('warn', `no proof chain on disk but ledger.json has an open epoch ${open.index}; LUSCA_PROOFS_RESTART is set: starting a new chain from the current balances`)
+      }
       const t = now()
       const leaves = epochs.balances().map((b) => ({ key: b.key, credits: b.credits, jobs: b.jobs, flops: b.flops }))
       const rows = new Map<string, EpochRow>(leaves.map((b) => [b.key, { credits: b.credits, jobs: b.jobs, flops: b.flops }]))
@@ -502,6 +554,7 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
         persist(g)
       } catch (e) {
         log('error', `could not write the genesis epoch: ${(e as Error).message}; proofs are off`)
+        setOff(`could not write the genesis epoch: ${(e as Error).message}`)
         return
       }
       adopt(g)
@@ -526,6 +579,10 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
       savingWarned = true
       return null
     }
+    if (savingWarned) {
+      savingWarned = false
+      log('info', 'ledger.json is being saved again: epochs close again')
+    }
     if (pendingWrite && !flushPending()) return null
     const open = epochs.open()
     if (!open) return null
@@ -533,6 +590,17 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
     if (!force && t < closesAt(open.startedAt)) return null
     const prev = head()
     if (prev && open.index !== prev.index + 1) return null // guarded in init(); never fork
+    if (epochs.busy?.()) {
+      // an async ledger save is in flight; its older snapshot must not land after the close's save
+      if (!retry) {
+        retry = setTimeout(() => {
+          retry = null
+          tick(force)
+        }, 250)
+        retry.unref?.()
+      }
+      return null
+    }
     const built: { rec: ClosingRecord | null } = { rec: null }
     let saved = false
     try {
@@ -564,20 +632,44 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
     return out
   }
 
+  /** Tree order, every level and leaf positions of a closed epoch: built once, then cached. */
+  function treeOf(index: number) {
+    let t = treeCache.get(index)
+    if (t) {
+      treeCache.delete(index)
+      treeCache.set(index, t)
+      return t
+    }
+    const leaves = readLeaves(index)
+    if (!leaves) return null
+    const ordered = orderLeaves(index, leaves)
+    t = { leaves: ordered.leaves, levels: treeLevels(ordered.hashes), pos: new Map(ordered.leaves.map((l, i) => [l.id, i])) }
+    treeCache.set(index, t)
+    while (treeCache.size > TREE_CACHE) treeCache.delete(treeCache.keys().next().value as number)
+    return t
+  }
+
   function proofFor(index: number, id: string, scope: 'wallet' | 'device'): ProofLookup | null {
     const h = headers[index]
     if (!h || h.index !== index) return null
+    const t = treeOf(index)
+    if (!t) return null
+    const pos = t.pos.get(id)
+    if (pos === undefined) return { header: h, scope, leaf: null, leafHash: null, position: null, path: [] }
+    return { header: h, scope, leaf: t.leaves[pos], leafHash: bytesToHex(t.levels[0][pos]), position: pos, path: pathFromLevels(t.levels, pos) }
+  }
+
+  function leavesJson(index: number): { text: string; etag: string } | null {
+    const h = headers[index]
+    if (!h || h.index !== index) return null
+    let hit = jsonCache.get(index)
+    if (hit) return hit
     const leaves = readLeaves(index)
     if (!leaves) return null
-    let ordered = orderCache.get(index)
-    if (!ordered) {
-      ordered = orderLeaves(index, leaves)
-      orderCache.set(index, ordered)
-      while (orderCache.size > 8) orderCache.delete(orderCache.keys().next().value as number)
-    }
-    const pos = ordered.leaves.findIndex((l) => l.id === id)
-    if (pos < 0) return { header: h, scope, leaf: null, leafHash: null, position: null, path: [] }
-    return { header: h, scope, leaf: ordered.leaves[pos], leafHash: bytesToHex(ordered.hashes[pos]), position: pos, path: merklePath(ordered.hashes, pos) }
+    hit = { text: JSON.stringify({ index, treeRoot: h.treeRoot, leaves }), etag: `"${h.headerHash.slice(0, 32)}"` }
+    jsonCache.set(index, hit)
+    while (jsonCache.size > JSON_CACHE) jsonCache.delete(jsonCache.keys().next().value as number)
+    return hit
   }
 
   return {
@@ -593,12 +685,14 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
         next: from > 0 ? from : null,
         open: ready && open ? { index: open.index, startedAt: open.startedAt, closesAt: closesAt(open.startedAt) } : null,
         status,
+        stalled: isStalled(),
         epochMinutes: epochMs / 60_000,
         committed: { epochs: headers.length, credits: committed.credits, leaves: committed.leaves },
       }
     },
     header: (index) => (headers[index]?.index === index ? headers[index] : null),
     leaves: (index) => (headers[index]?.index === index ? readLeaves(index) : null),
+    leavesJson,
     resolve,
     mine(auth, device) {
       return resolve(auth, device).map((r) => {
@@ -615,7 +709,7 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
       }
       return out
     },
-    status: () => ({ ...status, head: head()?.index ?? null, pendingWrite: pendingWrite !== null }),
+    status: () => ({ ...status, head: head()?.index ?? null, pendingWrite: pendingWrite !== null, stalled: isStalled() }),
     tick,
     start() {
       init()
@@ -625,7 +719,9 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
     },
     stop() {
       if (timer) clearInterval(timer)
+      if (retry) clearTimeout(retry)
       timer = null
+      retry = null
     },
   }
 }

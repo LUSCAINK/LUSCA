@@ -39,7 +39,7 @@ export interface CrawlerApi {
   stop(): Promise<void>;
   agents(): AgentInfo[];
   /** Stats fields owned by the crawler (index.ts merges neuron/model fields). */
-  stats(): Pick<Stats, 'pages' | 'tokens' | 'bytes' | 'domains' | 'frontier' | 'rejected' | 'dupes' | 'errors' | 'agentsActive' | 'agentsTotal' | 'pagesPerMin' | 'tokensPerMin' | 'uptime' | 'heldPages' | 'heldTokens' | 'heldBytes' | 'heldUncounted'>;
+  stats(): Pick<Stats, 'pages' | 'tokens' | 'bytes' | 'domains' | 'frontier' | 'rejected' | 'dupes' | 'errors' | 'agentsActive' | 'agentsTotal' | 'pagesPerMin' | 'tokensPerMin' | 'uptime' | 'heldPages' | 'heldTokens' | 'heldBytes' | 'heldUncounted' | 'heldUncountedBytes'>;
   sectors(): SectorInfo[];
   domains(): DomainInfo[];
   recent(n: number): PageRecord[];           // newest first
