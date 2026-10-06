@@ -107,6 +107,50 @@ export function Economics() {
         <Link to="/earn">Rewards</Link> page, read from <C>GET /api/payouts</C>; per-wallet history is at <C>GET /api/payouts/wallet/:address</C>.
       </p>
       <Callout kind="note">Nothing in this manual or on the Rewards page is financial advice. Payout amounts are not guaranteed.</Callout>
+
+      <H3 id="economics-proofs" n="10.5">
+        Proof of contribution
+      </H3>
+      <p>
+        Every confirmed credit is committed to a public hash chain, so a contributor can prove what they earned and anyone can check that past epochs were not
+        rewritten. Every <C>LUSCA_EPOCH_MIN</C> minutes (default 60, boundaries on the UTC clock) the server closes a contribution epoch:
+      </p>
+      <Spec
+        rows={[
+          ['leaf', <C key="l">sha256(0x00 ‖ u32be epoch ‖ identity[32] ‖ u64be credits ‖ u64be jobs ‖ u64be flops)</C>, 'credits in micro-credits (1 credit = 1 000 000), all integers'],
+          ['inner node', <C key="n">sha256(0x01 ‖ left ‖ right)</C>, 'the 0x00 / 0x01 prefixes keep a leaf from ever passing as a node'],
+          ['tree', 'leaf hashes sorted ascending, paired left to right', 'an odd last node moves up unchanged; one leaf = its own root; no leaves = 32 zero bytes'],
+          ['header', <C key="h">{'{v, index, startedAt, endedAt, leafCount, totals, treeRoot, prevHeaderHash}'}</C>, 'canonical JSON in exactly this key order; totals = credits, jobs, flops, ledgerCredits'],
+          ['headerHash', <C key="hh">sha256(utf8(canonical header))</C>, 'each header carries the previous headerHash: one chain back to epoch 0'],
+          ['identity', 'wallet: sha256("lusca:id:v1:wallet:" + address)', 'device: HMAC-SHA256 under the server secret, so device ids never leave the server'],
+        ]}
+      />
+      <ol className="dlist">
+        <li>
+          <b>What counts.</b> One leaf per ledger account that received <i>confirmed</i> credits in the epoch: verified dedupe jobs, and gradient jobs once a
+          full audit confirms them. Credits held in escrow are not in any leaf until confirmed; forfeited escrow never is. A link from a device to a wallet
+          moves period credits for payouts but is not new work, so it adds no leaf.
+        </li>
+        <li>
+          <b>Genesis.</b> Epoch 0 commits the full confirmed balance of every account at the moment proofs started on this server, so earlier history is
+          covered too.
+        </li>
+        <li>
+          <b>Persistence.</b> The open epoch’s credits are saved inside <C>ledger.json</C> together with the balances; a closing epoch is written there first
+          (write-ahead), then to <C>proofs/l-*.json</C> and <C>proofs/h-*.json</C> (fsync, rename). A closed epoch is never rewritten. Every start re-hashes
+          the whole chain and reports a mismatch in <C>/api/health</C> (<C>proof-chain-broken</C>).
+        </li>
+        <li>
+          <b>Check it yourself.</b> <C>GET /api/proofs</C> lists headers; <C>GET /api/proofs/:index/leaves.json</C> publishes every leaf so the root can be
+          recomputed; <C>POST /api/proofs/:index/proof</C> with your wallet session token or device id returns your leaf and its Merkle path. The Rewards page
+          runs all of it in your browser with WebCrypto.
+        </li>
+      </ol>
+      <p>
+        What it proves: the server committed to these credits at that time and has not changed them since. What it does not prove: that the server measured
+        the work honestly in the first place. That rests on the spot checks and full audits in <Link to="/docs/neurons">08</Link>.
+      </p>
+      <Src path="shared/proofs.ts (format, browser verification) · server/proofs/index.ts (epochs, storage) · server/neurons/coordinator.ts (EpochLedger)" />
     </>
   )
 }

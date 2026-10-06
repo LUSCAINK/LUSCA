@@ -64,6 +64,7 @@ import { bestMatchesCPU } from '../shared/vectorize.ts'
 import { b64ToF32 } from '../shared/b64.ts'
 import { base58Decode, base58Encode, isSolanaAddress } from '../shared/base58.ts'
 import type { AuthNonce, AuthSession } from '../shared/payouts.ts'
+import { bytesToHex, canonicalHeader, hexToBytes, leafBytes, nodeBytes, type ProofLookup } from '../shared/proofs.ts'
 import { privateKeyFromSeed, rawPublicKey, signEd25519 } from '../server/auth/ed25519.ts'
 import { SEPIA, cosine, decodeGrad, encodeGrad, f16ToF32, lossAndGrad, trainFlops } from '../shared/sepia/index.mjs'
 import { createUI } from './neuron-tui/index.ts'
@@ -719,6 +720,44 @@ async function main() {
   // Confirmed credits at the first reply of this run, per resolved scope (session gain = now − base).
   let sessionBase: { scope: string; ink: number } | null = null
   let sessionCarry = 0 // gain on an earlier scope of this run (the identity changed mid-run)
+
+  // Proof of contribution: shortly after start and every 10 min, ask the server for this identity's
+  // newest epoch leaf and verify its Merkle path and the epoch header hash right here. One feed
+  // line per new epoch; silent when the server has no proofs (older server) or no leaf yet.
+  let proofEpoch = -1
+  const sha = (b: Uint8Array) => new Uint8Array(createHash('sha256').update(b).digest())
+  const checkProof = async () => {
+    if (stopping) return
+    try {
+      const post = async (p: string): Promise<unknown> => {
+        const r = await fetch(new URL(p, httpBase(args.server)), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: dev, auth: authToken }), signal: AbortSignal.timeout(10_000) })
+        return r.ok ? r.json() : null
+      }
+      const mine = (await post('/api/proofs/mine')) as { identities?: { epochs: number[] }[] } | null
+      const newest = Math.max(-1, ...(mine?.identities ?? []).map((i) => i.epochs[0] ?? -1))
+      if (newest < 0 || newest === proofEpoch) return
+      const res = (await post(`/api/proofs/${newest}/proof`)) as { proofs?: ProofLookup[] } | null
+      for (const p of res?.proofs ?? []) {
+        if (!p.leaf) continue
+        let cur = sha(leafBytes(p.header.index, p.leaf))
+        for (const step of p.path) cur = sha(step.side === 'L' ? nodeBytes(hexToBytes(step.h), cur) : nodeBytes(cur, hexToBytes(step.h)))
+        const rootOk = bytesToHex(cur) === p.header.treeRoot
+        const headerOk = bytesToHex(sha(new TextEncoder().encode(canonicalHeader(p.header)))) === p.header.headerHash
+        emit({
+          t: 'notice',
+          level: rootOk && headerOk ? 'info' : 'warn',
+          msg: rootOk && headerOk
+            ? `proof · epoch #${p.header.index} root ${p.header.treeRoot.slice(0, 12)}… · ${fmtCredits(p.leaf.credits / 1e6)} credits on this ${p.scope} · Merkle path verified here`
+            : `proof · epoch #${p.header.index}: the server's Merkle path did NOT verify (${rootOk ? 'header hash' : 'root'} mismatch)`,
+        })
+      }
+      proofEpoch = newest
+    } catch {
+      /* server without proofs or unreachable: no line */
+    }
+  }
+  setTimeout(() => void checkProof(), 20_000).unref()
+  setInterval(() => void checkProof(), 10 * 60_000).unref()
   let watchedSock: WebSocket | null = null
   let watchedAuth: string | null = null
   let accountWaiters: (() => void)[] = []

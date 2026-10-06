@@ -275,6 +275,7 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
   const epochs = opts.epochs
   const headers: EpochHeader[] = [] // index-ordered, contiguous from 0 while the chain is intact
   const leafCache = new Map<number, ProofLeaf[]>()
+  const orderCache = new Map<number, { leaves: ProofLeaf[]; hashes: Uint8Array[] }>() // tree order + leaf hashes, newest lookups
   const identEpochs = new Map<string, number[]>() // identity → epochs with a leaf (oldest first, capped)
   let status: ProofChainStatus = { ok: true, verified: 0, error: null, checkedAt: 0 }
   let pendingWrite: ClosingRecord | null = null
@@ -556,7 +557,12 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
     if (!h || h.index !== index) return null
     const leaves = readLeaves(index)
     if (!leaves) return null
-    const ordered = orderLeaves(index, leaves)
+    let ordered = orderCache.get(index)
+    if (!ordered) {
+      ordered = orderLeaves(index, leaves)
+      orderCache.set(index, ordered)
+      while (orderCache.size > 8) orderCache.delete(orderCache.keys().next().value as number)
+    }
     const pos = ordered.leaves.findIndex((l) => l.id === id)
     if (pos < 0) return { header: h, scope, leaf: null, leafHash: null, position: null, path: [] }
     return { header: h, scope, leaf: ordered.leaves[pos], leafHash: bytesToHex(ordered.hashes[pos]), position: pos, path: merklePath(ordered.hashes, pos) }
