@@ -91,7 +91,10 @@ export function Economics() {
           The browser sends the token with <C>neuron.register</C> (<C>auth</C>). Credits go to the wallet only with a valid token; a bare wallet
           field is ignored for payouts.
         </li>
-        <li>On a device’s first verified register in a period, the credits that device earned earlier in that period move to the wallet, once.</li>
+        <li>
+          Right after sign-in (<C>POST /api/auth/link-device</C>) and on a device’s verified register, the credits that device earned earlier in the
+          current period move to the wallet. A device is linked to one wallet per period; credits from earlier periods stay on the device.
+        </li>
       </ol>
       <Src path="server/auth/auth.ts (signInMessage, createAuth) · server/neurons/coordinator.ts" />
 

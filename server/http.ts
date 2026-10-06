@@ -70,7 +70,7 @@ function safe<T>(key: string, fn: () => T, fallback: T): T {
 
 // ─── types / defaults ───────────────────────────────────────────────────────
 
-export type HubCoordinator = CoordinatorApi & Partial<Pick<LuscaCoordinator, 'ledger' | 'balance'>>
+export type HubCoordinator = CoordinatorApi & Partial<Pick<LuscaCoordinator, 'ledger' | 'balance' | 'linkDevice'>>
 
 /** Read side of the payout engine (server/payouts). */
 export interface HubPayouts {
@@ -204,6 +204,7 @@ const LOOP_RESOLUTION_MS = 20
 const READ_CACHE_MS = 2_000               // /api/ledger, /api/neurons, traces: shared snapshot this old at most
 const READ_CACHE_MAX = 64
 const PAYOUTS_CACHE_MS = 5_000            // /api/payouts and /api/payouts/wallet/:address
+const DEVICE_ID_RE = /^[A-Za-z0-9_-]{6,64}$/ // browser / desktop neuron device ids (as the coordinator accepts them)
 const NON_ESSENTIAL = new Set<ServerMsg['t']>(['trace', 'agent', 'discover', 'reject'])
 /**
  * Per-client stream budget: a message of type t is sent only if the client's byte bucket
@@ -1404,6 +1405,24 @@ export function createHub(opts: HubOptions): Hub {
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'expected a JSON object')
       const out = authCall(() => auth.verify(body, clientIp(req)))
       log.info('auth', `wallet verified ${out.wallet.slice(0, 4)}…${out.wallet.slice(-4)}`)
+      return sendJson(req, res, 200, out)
+    }
+
+    // Right after sign-in: this device's current-period credits move to the verified wallet (the
+    // same move a verified neuron.register makes), so the panel shows them on the wallet at once.
+    if (p === '/api/auth/link-device') {
+      allow(['POST'])
+      requireJson(req)
+      const m = requireModules()
+      const coord = m.coordinator
+      if (!coord.linkDevice) throw new HttpError(503, 'wallet sign-in is not available on this server')
+      limit(authLimit, req, 'sign-in')
+      const body = (await readJsonBody(req)) as { token?: unknown; deviceId?: unknown } | null
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'expected a JSON object')
+      if (typeof body.deviceId !== 'string' || !DEVICE_ID_RE.test(body.deviceId)) throw new HttpError(400, 'deviceId must match [A-Za-z0-9_-]{6,64}')
+      const ip = clientIp(req)
+      const out = safe('coordinator.linkDevice', () => coord.linkDevice!(body.token, body.deviceId, ip), null)
+      if (!out) throw new HttpError(401, 'session token is invalid or expired — verify the wallet again')
       return sendJson(req, res, 200, out)
     }
 

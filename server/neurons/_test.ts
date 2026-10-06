@@ -858,7 +858,8 @@ async function trainFlow() {
   const crawler = createStubCrawler({ initialPages: 40 })
   const broadcasts: ServerMsg[] = []
   const { st, api } = stubTrainer()
-  const mk = () => createCoordinator({ crawler, emit: (m) => broadcasts.push(m), dataDir, log: () => undefined, trainer: api, limits: { jobFillWaitMs: 0 } })
+  const GRACE = 300 // rejoin grace for a closed socket's outstanding job
+  const mk = () => createCoordinator({ crawler, emit: (m) => broadcasts.push(m), dataDir, log: () => undefined, trainer: api, limits: { jobFillWaitMs: 0 }, rejoinGraceMs: GRACE })
   let coord = mk()
   const inkEvents = () => broadcasts.filter((m): m is Extract<ServerMsg, { t: 'ink' }> => m.t === 'ink').map((m) => m.event)
   const settle = () => new Promise((r) => setTimeout(r, 40))
@@ -961,9 +962,38 @@ async function trainFlow() {
   // an unknown train.result is refused, not paid
   coord.handle(old, { t: 'train.result', result: { id: 'nope', kind: 'train', grad: 'AAAA', loss: 1, ms: 1 } })
   ok((await old.next('error')).msg === 'unknown or expired job', 'train: stray train.result refused')
-  // abandoning a gradient job is a failure
+  // a socket closed with a gradient job outstanding (reload, dropped network): scored only when the
+  // identity does not register again within the grace
+  const evBefore = inkEvents().length
   coord.disconnect(cpu)
-  ok(inkEvents().at(-1)?.kind === 'train' && inkEvents().at(-1)?.verified === false, 'train: disconnect with a gradient job outstanding → failed')
+  ok(inkEvents().length === evBefore, 'train: disconnect with a gradient job outstanding → not scored at once')
+  await new Promise((r) => setTimeout(r, GRACE + 200))
+  ok(inkEvents().at(-1)?.kind === 'train' && inkEvents().at(-1)?.verified === false && /abandoned/.test(inkEvents().at(-1)!.reason), 'train: … not back within the grace → failed (abandoned)')
+  // a reload: the same identity registers again on a new socket before the grace runs out → no strike
+  const re1 = fakeConn('tr5', '10.9.1.4')
+  await reg(re1, { deviceId: 'trainrel01', backend: 'cpu' })
+  coord.handle(re1, { t: 'job.request', caps: { train: true, version: st.version } })
+  ok(((await re1.next('job')).job as SimJob | TrainJob).kind === 'train', 'train: reload test neuron holds a gradient job')
+  const evRel = inkEvents().length
+  coord.disconnect(re1)
+  const re2 = fakeConn('tr6', '10.9.1.4')
+  await reg(re2, { deviceId: 'trainrel01', backend: 'cpu' })
+  await new Promise((r) => setTimeout(r, GRACE + 200))
+  ok(inkEvents().length === evRel, 'train: reload (re-register within the grace) → the abandoned job is not scored, no strike')
+  // the old socket is reaped only after the new one registered → not scored either
+  coord.handle(re2, { t: 'job.request', caps: { train: true, version: st.version } })
+  await re2.next('job')
+  const re3 = fakeConn('tr7', '10.9.1.4')
+  await reg(re3, { deviceId: 'trainrel01', backend: 'cpu' })
+  coord.disconnect(re2)
+  await new Promise((r) => setTimeout(r, GRACE + 200))
+  ok(inkEvents().length === evRel, 'train: closed socket of an identity already back on another socket → not scored')
+  // an explicit neuron.leave is still scored at once
+  coord.handle(re3, { t: 'job.request', caps: { train: true, version: st.version } })
+  await re3.next('job')
+  coord.handle(re3, { t: 'neuron.leave' })
+  ok(inkEvents().at(-1)?.verified === false && /left with a job outstanding/.test(inkEvents().at(-1)!.reason), 'train: neuron.leave with a gradient job outstanding → failed at once')
+  coord.disconnect(re3)
   await coord.stop()
   fs.rmSync(dataDir, { recursive: true, force: true })
 }
@@ -1078,17 +1108,21 @@ async function accountWatchFlow() {
     if (v === 'applied') ok(acc.pendingInk === JOB_INK, `watch: escrow add pushed again (${acc.pendingInk})`)
   }
   ok(acc.pendingInk === 0 && acc.failed === 1 && acc.ink === confirmed, `watch: a failed audit pushes the forfeited escrow and the failed job (pending ${acc.pendingInk}, failed ${acc.failed})`)
+  // the first job was issued before its credit created the account: jobs never trail the scored ones
+  ok(acc.jobs >= acc.verified + acc.failed, `watch: jobs ≥ verified + failed on the account (${acc.jobs} ≥ ${acc.verified} + ${acc.failed})`)
 
   // Wallet scope: a valid session token → wallet:<w>. An invalid token falls back to the device.
   const wpage = fakeConn('watch-wallet-page', IP)
   coord.handle(wpage, { t: 'account.watch', device: DEV, auth: tokW })
   m = await wpage.next('account', 1000)
   ok(m.scope === 'wallet' && m.account === null, 'watch: valid token → scope wallet (no wallet account yet → null)')
+  ok(m.device?.kind === 'device' && m.device.wallet === null && m.device.ink === coord.balance(`device:${DEV}`)!.ink, 'watch: a wallet watch that names a device also carries that device account (what stays on it)')
   const forged = tokW.slice(0, -2) + (tokW.endsWith('AA') ? 'BB' : 'AA')
   const fpage = fakeConn('watch-forged-page', IP)
   coord.handle(fpage, { t: 'account.watch', device: DEV, auth: forged })
   m = await fpage.next('account', 1000)
   ok(m.scope === 'device' && m.account?.ink === coord.balance(`device:${DEV}`)!.ink, 'watch: invalid token falls back to the device account')
+  ok(!('device' in m), 'watch: device scope → no separate device field')
   coord.handle(fpage, { t: 'account.watch', device: null, auth: forged })
   m = await fpage.next('account', 1000)
   ok(m.scope === null && m.account === null, 'watch: invalid token and no device → scope null')
@@ -1100,6 +1134,7 @@ async function accountWatchFlow() {
   ok((await neuron.next('neuron.ok')).auth === 'verified', 'watch: neuron signs in (verified register)')
   m = await wpage.next('account', 2000)
   ok(m.scope === 'wallet' && m.account?.kind === 'wallet' && m.account.wallet === W2 && Math.abs(m.account.periodInk - devPeriod) < 1e-6, `watch: device → wallet link pushes the wallet account (${m.account?.periodInk} period INK)`)
+  ok(m.device?.periodInk === 0 && m.device.ink === coord.balance(`device:${DEV}`)!.ink && !wpage.inbox.some((x) => x.t === 'account'), 'watch: …in one message with what stays on the device (both keys touched → one push)')
   await wait(1300)
   acc = pageLog.at(-1)!.msg.account!
   ok(acc.periodInk === 0 && acc.ink === coord.balance(`device:${DEV}`)!.ink && acc.ink < devInkBefore, `watch: …and the device watcher sees its period INK moved (${devInkBefore} → ${acc.ink})`)
@@ -1119,6 +1154,50 @@ async function accountWatchFlow() {
   await dedupe(neuron, 1)
   await wait(1400)
   ok(!wpage.inbox.some((x) => x.t === 'account'), 'watch: the replaced watch gets no pushes for the old account')
+
+  // POST /api/auth/link-device (coord.linkDevice): sign-in while the neuron is not running.
+  const DEV2 = 'watch-dev-02'
+  const W4 = base58Encode(Uint8Array.from({ length: 32 }, (_, i) => (i * 31 + 3) & 255))
+  const tok4 = auth.issueToken(W4).token
+  const n2 = fakeConn('watch-neuron-2', IP)
+  coord.handle(n2, { t: 'neuron.register', label: 'Watch GPU 2', zone: 'EPI', gflops: 10, kind: 'browser', wallet: null, adapter: { deviceId: DEV2 } })
+  await n2.next('neuron.ok')
+  await dedupe(n2, 2)
+  coord.handle(n2, { t: 'neuron.leave' })
+  const dev2 = coord.balance(`device:${DEV2}`)!
+  const dev2Period = dev2.periodInk ?? 0
+  ok(dev2Period > 0, `link-device: the device earned period credits (${dev2Period})`)
+  const lpage = fakeConn('watch-link-page', IP)
+  coord.handle(lpage, { t: 'account.watch', device: DEV2, auth: tok4 })
+  m = await lpage.next('account', 1000)
+  ok(m.scope === 'wallet' && m.account === null && m.device?.ink === dev2.ink, 'link-device: before the link the wallet is empty and the credits show on the device')
+  ok(coord.linkDevice(tok4, 'bad id!', IP) === null && coord.linkDevice('not-a-token', DEV2, IP) === null && coord.linkDevice(null, DEV2, IP) === null, 'link-device: invalid device id or token → null')
+  ok(coord.linkDevice(tok4, DEV2, '10.99.0.1')?.ink === 0 && coord.balance(`device:${DEV2}`)!.periodInk === dev2.periodInk, 'link-device: from another network nothing moves')
+  const linked = coord.linkDevice(tok4, DEV2, IP)
+  ok(linked?.wallet === W4 && Math.abs(linked.ink - round2(dev2Period)) < 1e-9, `link-device: the device's period credits move to the wallet (${linked?.ink})`)
+  m = await lpage.next('account', 2000)
+  ok(m.account?.wallet === W4 && Math.abs(m.account.periodInk - dev2Period) < 1e-6 && m.account.ink === coord.balance(W4)!.ink, `link-device: the wallet watcher gets the moved credits pushed (${m.account?.ink})`)
+  ok(m.device?.periodInk === 0 && m.device.ink === coord.balance(`device:${DEV2}`)!.ink, `link-device: …and what stays on the device (${m.device?.ink})`)
+  ok(coord.linkDevice(tok4, DEV2, IP)?.ink === 0, 'link-device: idempotent (nothing left to move)')
+  coord.disconnect(n2)
+  coord.disconnect(lpage)
+
+  // Escrow never creates a ledger account: a device holding only pending training credits still shows them.
+  const DEV3 = 'watch-dev-03'
+  const n3 = fakeConn('watch-neuron-3', IP)
+  coord.handle(n3, { t: 'neuron.register', label: 'Watch GPU 3', zone: 'EPI', gflops: 10, kind: 'browser', wallet: null, adapter: { deviceId: DEV3 } })
+  await n3.next('neuron.ok')
+  const epage = fakeConn('watch-escrow-page', IP)
+  coord.handle(epage, { t: 'account.watch', device: DEV3 })
+  ok((await epage.next('account', 1000)).account === null, 'watch: new device → account null')
+  st.verdict = 'applied'
+  coord.handle(n3, { t: 'job.request', caps: { train: true, version: st.version } })
+  tj = (await n3.next('job')).job as SimJob | TrainJob
+  coord.handle(n3, { t: 'train.result', result: { id: tj.id, kind: 'train', grad: 'AAAAAAAA', loss: 4.5, ms: 3 } })
+  m = await epage.next('account', 2000)
+  ok(coord.balance(`device:${DEV3}`) === null && m.account?.kind === 'device' && m.account.pendingInk === JOB_INK && m.account.ink === 0 && m.account.jobs === 0, `watch: escrow without a ledger account → zero view carrying pendingInk (${m.account?.pendingInk})`)
+  coord.disconnect(n3)
+  coord.disconnect(epage)
 
   // Closed connection: its watch is gone (no pushes, nothing kept).
   const n0 = pageLog.length
@@ -1143,6 +1222,8 @@ async function accountWatchFlow() {
   ok(m.scope === null && m.account === null, "watch: invalid device id → scope null, account null")
   coord.handle(g, { t: 'account.watch', device: 'x'.repeat(65) })
   ok((await g.next('account', 1000)).scope === null, 'watch: over-long device id → scope null')
+  coord.handle(g, { t: 'account.watch', device: 'y'.repeat(900_000), auth: 'z'.repeat(900_000) })
+  ok((await g.next('account', 1000)).scope === null, 'watch: oversized device / auth values → scope null (not held)')
 
   // Watch spam: a burst is answered at once, the rest collapses into one (newest) request.
   const s = fakeConn('watch-spam', IP)
@@ -1198,6 +1279,11 @@ async function e2e() {
   const sp2 = await fetch(`${base}/api/spawn`, { method: 'POST', headers: JSON_HDR, body: JSON.stringify({ name: 'kraken-2', owner: null, sector: 3 }) })
   ok(sp2.status === 429 && sp2.headers.get('retry-after') !== null, 'POST /api/spawn rate limited (1 / 10 s / IP)')
   ok((await fetch(`${base}/api/nope`)).status === 404, 'unknown /api route → 404')
+  const linkBad = await fetch(`${base}/api/auth/link-device`, { method: 'POST', headers: JSON_HDR, body: JSON.stringify({ token: 'x', deviceId: 'bad id!' }) })
+  ok(linkBad.status === 400, 'POST /api/auth/link-device with an invalid device id → 400')
+  const linkTok = await fetch(`${base}/api/auth/link-device`, { method: 'POST', headers: JSON_HDR, body: JSON.stringify({ token: 'not-a-token', deviceId: 'web-0123456789abcdef' }) })
+  ok(linkTok.status === 401, 'POST /api/auth/link-device with an invalid session token → 401')
+  ok((await fetch(`${base}/api/auth/link-device`)).status === 405, 'GET /api/auth/link-device → 405')
   const cors = await fetch(`${base}/api/health`, { headers: { Origin: 'http://localhost:5173' } })
   ok(cors.headers.get('access-control-allow-origin') === 'http://localhost:5173', 'CORS allows localhost origin')
   const corsX = await fetch(`${base}/api/health`, { headers: { Origin: 'https://evil.example' } })

@@ -135,6 +135,9 @@ const MAX_NEURONS = 1_024
 const MAX_NEURONS_PER_IP = 8
 const REGISTER_WINDOW_MS = 60_000
 const MAX_REGISTERS_PER_IP = 20     // neuron.register messages per IP per minute
+/** A socket closed with a job outstanding (reload, network drop): scored as abandoned only if its identity does not register again within this. */
+export const REJOIN_GRACE_MS = 60_000
+const MAX_ABANDONED = 4_096         // closed-socket jobs awaiting their grace at once; past it they are scored right away
 const ACCOUNT_SWITCH_MS = 60_000    // a live neuron may change its ledger account at most once a minute
 const NEW_ACCOUNT_WINDOW_MS = 60 * 60_000
 /** A ledger account is only created by a verified job worth at least this much INK. */
@@ -161,6 +164,8 @@ export const ACCOUNT_FLUSH_MS = 250
 export const ACCOUNT_PUSH_MIN_MS = 1_000
 const WATCH_BURST = 6               // account.watch requests per connection: burst…
 const WATCH_REFILL_MS = 2_000       // …then one per 2 s (a held request is applied when a token refills)
+const MAX_WATCH_DEVICE_LEN = 64     // longest valid device id (DEVICE_ID_RE)
+const MAX_WATCH_AUTH_LEN = 512      // longest session token server/auth accepts
 /** Client-supplied device ids (adapter.deviceId on register, `device` on account.watch). */
 const DEVICE_ID_RE = /^[A-Za-z0-9_-]{6,64}$/
 
@@ -731,6 +736,8 @@ export interface CoordinatorExtraOptions {
   limits?: Partial<CoordinatorLimits>
   /** Session-token check (server/auth). Without it no register is verified and no INK reaches a wallet. */
   auth?: { checkToken(token: unknown): { wallet: string; exp: number } | null }
+  /** Override REJOIN_GRACE_MS (tests). */
+  rejoinGraceMs?: number
 }
 
 /** CoordinatorApi plus lifecycle and ledger accessors used by server/index.ts and http.ts. */
@@ -745,6 +752,12 @@ export interface LuscaCoordinator extends CoordinatorApi {
   balance(walletOrKey: string): LedgerAccount | null
   /** The limits this instance runs with. */
   limits(): CoordinatorLimits
+  /**
+   * POST /api/auth/link-device: the wallet of a valid session token takes over the device's
+   * current-period credits, the same move as a verified register from that device. Returns the
+   * credits moved, or null when the token or the device id is not valid.
+   */
+  linkDevice(token: unknown, deviceId: unknown, ip: string): { wallet: string; ink: number } | null
   /** Period INK of verified wallets, for the payout engine. */
   payouts: PayoutLedger
 }
@@ -856,12 +869,21 @@ interface RowState {
   lease: string | null
 }
 
+/** Jobs a socket closed on, scored as abandoned when `timer` fires unless the identity registers again. */
+interface Abandoned {
+  peer: Peer
+  jobs: { id: string; kind?: 'train' }[]
+  timer: NodeJS.Timeout
+}
+
 /** One connection following its own ledger account (account.watch). */
 interface AccountWatch {
   conn: NeuronConn
   scope: 'wallet' | 'device' | null
   /** Ledger key watched (null scope: none). */
   key: string | null
+  /** Wallet scope: the device account the watch also named, followed too (what stays on that device). */
+  devKey: string | null
   lastSentAt: number
   /** Trailing push, due at lastSentAt + ACCOUNT_PUSH_MIN_MS (reads the account when it fires). */
   timer: NodeJS.Timeout | null
@@ -913,6 +935,10 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
   // ledger account key -> strike identities whose escrow record may hold items for it (a superset:
   // every insert is indexed, removals are dropped eagerly on confirm / forfeit and lazily on read)
   const escrowIdx = new Map<string, Set<string>>()
+  const rejoinGraceMs = typeof opts.rejoinGraceMs === 'number' && opts.rejoinGraceMs >= 0 ? opts.rejoinGraceMs : REJOIN_GRACE_MS
+  /** Jobs left outstanding by closed sockets, per strike identity, until their grace runs out. */
+  const abandoned = new Map<string, Set<Abandoned>>()
+  let abandonedCount = 0
   // account watches: connection id -> watch, ledger key -> watches, keys touched since the last push
   const watches = new Map<string, AccountWatch>()
   const watchedKeys = new Map<string, Set<AccountWatch>>()
@@ -1943,6 +1969,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     const acc = accounts.get(peer.account)
     if (acc) {
       acc.failed++
+      settleJobCount(acc)
       touch(acc.key)
     }
     markDirty()
@@ -2025,6 +2052,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     const acc = accountForPeer(peer, ink)
     if (acc) {
       acc.verified++
+      settleJobCount(acc)
       acc.ink += ink
       acc.periodInk = round6((acc.periodInk ?? 0) + ink)
       if (acc.kind === 'device') acc.earnNet = hid('net', accountNetKey(peer.ip))
@@ -2327,6 +2355,15 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     }
   }
 
+  /**
+   * `jobs` is counted at issue, on the account the neuron had then: none before its first credit
+   * creates one, and the old one when a sign-in switches accounts mid-job. An account never shows
+   * fewer jobs than were scored on it.
+   */
+  function settleJobCount(a: LedgerAccount) {
+    if (a.jobs < a.verified + a.failed) a.jobs = a.verified + a.failed
+  }
+
   /** Move an account's escrowed INK into the ledger (same rules as a verified dedupe job). */
   function creditEscrowItem(key: string, it: EscrowItem, ip: string, now: number): LedgerAccount | null {
     let a = accounts.get(key)
@@ -2339,6 +2376,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     }
     if (!a) return null
     a.verified += it.jobs
+    settleJobCount(a)
     a.ink += it.ink
     a.periodInk = round6((a.periodInk ?? 0) + it.ink)
     if (a.kind === 'device') a.earnNet = hid('net', accountNetKey(ip))
@@ -2642,6 +2680,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
         return
       }
       if (key !== existing.account) existing.accountSetAt = now
+      rejoined(strikeKey)
       existing.account = key
       existing.accountKind = accKind
       existing.strikeKey = strikeKey
@@ -2676,6 +2715,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       return
     }
 
+    rejoined(strikeKey)
     const moved = wallet && device ? linkDevice(device, wallet, ip, now) : 0
     const acc = accounts.get(key)
     if (acc) {
@@ -2740,10 +2780,32 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
 
   // ── account watches ──
 
-  /** What a watcher sees of one ledger account (no label / link / network fields), null when there is none. */
+  /**
+   * What a watcher sees of one ledger account (no label / link / network fields), null when there
+   * is none. Escrow never creates an account (a confirm does), so a key holding only pending
+   * training credits gets a zero view carrying them.
+   */
   function accountView(key: string): AccountView | null {
     const a = accounts.get(key)
-    if (!a || (a.kind !== 'wallet' && a.kind !== 'device')) return null
+    if (!a) {
+      const kind = key.startsWith('wallet:') ? 'wallet' : key.startsWith('device:') ? 'device' : null
+      const pending = kind ? pendingInkOf(key) : 0
+      if (!kind || !(pending > 0)) return null
+      return {
+        kind,
+        wallet: kind === 'wallet' ? key.slice('wallet:'.length) : null,
+        ink: 0,
+        pendingInk: round2(pending),
+        periodInk: 0,
+        jobs: 0,
+        verified: 0,
+        failed: 0,
+        flops: 0,
+        firstSeen: 0,
+        lastSeen: 0,
+      }
+    }
+    if (a.kind !== 'wallet' && a.kind !== 'device') return null
     return {
       kind: a.kind,
       wallet: a.kind === 'wallet' ? a.wallet : null,
@@ -2768,9 +2830,22 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     watchFlushTimer.unref?.()
   }
 
-  function sendAccount(w: AccountWatch, account: AccountView | null, now: number) {
+  type AccountMsg = Extract<ServerMsg, { t: 'account' }>
+
+  /**
+   * One watcher's message: its account, plus for a wallet watch that also named a device the
+   * device's own account. `views` caches the accounts read during one flush.
+   */
+  function sendAccount(w: AccountWatch, now: number, views?: Map<string, AccountView | null>) {
+    const view = (key: string): AccountView | null => {
+      if (!views) return accountView(key)
+      if (!views.has(key)) views.set(key, accountView(key))
+      return views.get(key) ?? null
+    }
     w.lastSentAt = now
-    safeSend(w.conn, { t: 'account', scope: w.scope, account, at: now })
+    const msg: AccountMsg = { t: 'account', scope: w.scope, account: w.key ? view(w.key) : null, at: now }
+    if (w.devKey) msg.device = view(w.devKey)
+    safeSend(w.conn, msg)
   }
 
   /** Each touched key is read once; a watcher pushed less than ACCOUNT_PUSH_MIN_MS ago gets a trailing push instead. */
@@ -2781,19 +2856,21 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       const now = Date.now()
       const keys = [...dirtyKeys]
       dirtyKeys.clear()
+      const views = new Map<string, AccountView | null>()
+      const seen = new Set<AccountWatch>() // a watcher of two touched keys gets one message
       for (const key of keys) {
         const set = watchedKeys.get(key)
         if (!set) continue
-        let view: AccountView | null | undefined
         for (const w of set) {
+          if (seen.has(w)) continue
+          seen.add(w)
           if (w.timer) continue // a trailing push is already due; it reads the account when it fires
           const wait = w.lastSentAt + ACCOUNT_PUSH_MIN_MS - now
           if (wait > 0) {
             trailingPush(w, wait)
             continue
           }
-          if (view === undefined) view = accountView(key)
-          sendAccount(w, view, now)
+          sendAccount(w, now, views)
         }
       }
     } catch (e) {
@@ -2806,7 +2883,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       w.timer = null
       try {
         if (stopped || watches.get(w.conn.id) !== w || !w.key) return
-        sendAccount(w, accountView(w.key), Date.now())
+        sendAccount(w, Date.now())
       } catch (e) {
         log('error', `account push: ${(e as Error)?.message ?? e}`)
       }
@@ -2814,17 +2891,27 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     w.timer.unref?.()
   }
 
-  function unlinkWatch(w: AccountWatch) {
-    if (!w.key) return
-    const set = watchedKeys.get(w.key)
-    if (set) {
-      set.delete(w)
-      if (!set.size) {
-        watchedKeys.delete(w.key)
-        dirtyKeys.delete(w.key)
-      }
+  function linkWatchKey(w: AccountWatch, key: string) {
+    let set = watchedKeys.get(key)
+    if (!set) watchedKeys.set(key, (set = new Set()))
+    set.add(w)
+  }
+
+  function unlinkWatchKey(w: AccountWatch, key: string) {
+    const set = watchedKeys.get(key)
+    if (!set) return
+    set.delete(w)
+    if (!set.size) {
+      watchedKeys.delete(key)
+      dirtyKeys.delete(key)
     }
+  }
+
+  function unlinkWatch(w: AccountWatch) {
+    if (w.key) unlinkWatchKey(w, w.key)
+    if (w.devKey) unlinkWatchKey(w, w.devKey)
     w.key = null
+    w.devKey = null
   }
 
   /** Resolve a watch request like neuron.register resolves the ledger key, then answer it right away. */
@@ -2833,30 +2920,30 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     w.queued = null
     if (!req) return
     const claims = req.auth !== undefined && req.auth !== null && req.auth !== '' ? (opts.auth?.checkToken(req.auth) ?? null) : null
+    const device = req.device !== null && DEVICE_ID_RE.test(req.device) ? req.device : null
     let scope: AccountWatch['scope'] = null
     let key: string | null = null
     if (claims?.wallet) {
       scope = 'wallet'
       key = `wallet:${claims.wallet}`
-    } else if (req.device !== null && DEVICE_ID_RE.test(req.device)) {
+    } else if (device) {
       scope = 'device'
-      key = `device:${req.device}`
+      key = `device:${device}`
     }
-    if (w.key !== key) {
+    // A wallet watch also follows the device it came from: credits earned there before the
+    // wallet was verified stay on the device account.
+    const devKey = scope === 'wallet' && device ? `device:${device}` : null
+    if (w.key !== key || w.devKey !== devKey) {
       unlinkWatch(w)
-      if (key) {
-        let set = watchedKeys.get(key)
-        if (!set) watchedKeys.set(key, (set = new Set()))
-        set.add(w)
-        w.key = key
-      }
+      if (key) linkWatchKey(w, (w.key = key))
+      if (devKey) linkWatchKey(w, (w.devKey = devKey))
     }
     w.scope = scope
     if (w.timer) {
       clearTimeout(w.timer) // this reply is fresher than the push that was due
       w.timer = null
     }
-    sendAccount(w, key ? accountView(key) : null, now)
+    sendAccount(w, now)
   }
 
   function refillWatchTokens(w: AccountWatch, now: number) {
@@ -2870,12 +2957,16 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
    */
   function watch(conn: NeuronConn, msg: unknown) {
     const m = msg as { device?: unknown; auth?: unknown }
-    const device = m.device === undefined || m.device === null ? null : m.device
-    const auth = m.auth
-    if (device !== null && typeof device !== 'string') return
-    if (auth !== undefined && auth !== null && typeof auth !== 'string') return
+    const rawDevice = m.device === undefined || m.device === null ? null : m.device
+    const rawAuth = m.auth
+    if (rawDevice !== null && typeof rawDevice !== 'string') return
+    if (rawAuth !== undefined && rawAuth !== null && typeof rawAuth !== 'string') return
+    // Longer than any valid device id / session token: resolves as none. Only the bounded values
+    // are held, so a held request costs a few hundred bytes whatever the frame size.
+    const device = rawDevice !== null && rawDevice.length <= MAX_WATCH_DEVICE_LEN ? rawDevice : null
+    const auth = typeof rawAuth === 'string' && rawAuth.length > MAX_WATCH_AUTH_LEN ? null : rawAuth
     const now = Date.now()
-    const cur: AccountWatch = watches.get(conn.id) ?? { conn, scope: null, key: null, lastSentAt: 0, timer: null, tokens: WATCH_BURST, tokensAt: now, queued: null, queueTimer: null }
+    const cur: AccountWatch = watches.get(conn.id) ?? { conn, scope: null, key: null, devKey: null, lastSentAt: 0, timer: null, tokens: WATCH_BURST, tokensAt: now, queued: null, queueTimer: null }
     watches.set(conn.id, cur)
     cur.queued = { device, auth }
     if (cur.queueTimer) return // already held: the newest request wins when the bucket refills
@@ -2977,11 +3068,78 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     try {
       if (!conn || typeof conn.id !== 'string') return
       dropWatch(conn.id)
-      // Cooldowns live on the identity / ip records and are never cleared here.
-      if (remove(conn.id, 'abandoned — disconnected with a job outstanding')) log('info', `- neuron ${conn.id} disconnected`)
+      // Cooldowns live on the identity / ip records and are never cleared here. A job left
+      // outstanding is scored as abandoned once the grace runs out (deferAbandoned).
+      const peer = peers.get(conn.id)
+      const jobs: Abandoned['jobs'] = []
+      if (peer?.pending) jobs.push({ id: peer.pending.id })
+      if (peer?.pendingTrain) jobs.push({ id: peer.pendingTrain.id, kind: 'train' })
+      if (remove(conn.id, null)) {
+        if (peer && jobs.length) deferAbandoned(peer, jobs)
+        log('info', `- neuron ${conn.id} disconnected`)
+      }
     } catch (e) {
       log('error', `disconnect failed: ${(e as Error).message}`)
     }
+  }
+
+  /**
+   * A socket closed with a job outstanding. A reload or a dropped connection is not a failed job:
+   * when the same identity registers again within the grace, the job is not scored (rejoined).
+   * Otherwise it counts as abandoned, with the strike, as before. Leaving with neuron.leave is
+   * scored at once.
+   */
+  function deferAbandoned(peer: Peer, jobs: Abandoned['jobs']) {
+    const reason = 'abandoned — disconnected with a job outstanding'
+    if (abandonedCount >= MAX_ABANDONED || rejoinGraceMs <= 0) {
+      for (const job of jobs) recordFailure(peer, job, reason)
+      return
+    }
+    const key = peer.strikeKey
+    // Already back on another socket (the old one was only reaped now): nothing to wait for.
+    for (const p of peers.values()) {
+      if (p.strikeKey !== key) continue
+      log('info', `${key} is registered on another socket: ${jobs.length} job${jobs.length === 1 ? '' : 's'} left by its closed socket not scored`)
+      return
+    }
+    const entry: Abandoned = {
+      peer,
+      jobs,
+      timer: setTimeout(() => {
+        try {
+          if (!forgetAbandoned(key, entry)) return
+          for (const job of entry.jobs) recordFailure(entry.peer, job, reason)
+        } catch (e) {
+          log('error', `abandoned job: ${(e as Error)?.message ?? e}`)
+        }
+      }, rejoinGraceMs),
+    }
+    entry.timer.unref?.()
+    let set = abandoned.get(key)
+    if (!set) abandoned.set(key, (set = new Set()))
+    set.add(entry)
+    abandonedCount++
+  }
+
+  function forgetAbandoned(key: string, entry: Abandoned): boolean {
+    const set = abandoned.get(key)
+    if (!set?.delete(entry)) return false
+    if (!set.size) abandoned.delete(key)
+    abandonedCount--
+    return true
+  }
+
+  /** The identity registered again: jobs its closed sockets left are not scored. */
+  function rejoined(strikeKey: string) {
+    const set = abandoned.get(strikeKey)
+    if (!set) return
+    let n = 0
+    for (const entry of [...set]) {
+      clearTimeout(entry.timer)
+      forgetAbandoned(strikeKey, entry)
+      n += entry.jobs.length
+    }
+    if (n > 0) log('info', `${strikeKey} registered again: ${n} job${n === 1 ? '' : 's'} left by its closed socket not scored`)
   }
 
   function stats() {
@@ -3007,6 +3165,9 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     if (watchFlushTimer) clearTimeout(watchFlushTimer)
     watchFlushTimer = null
     for (const id of [...watches.keys()]) dropWatch(id)
+    for (const set of abandoned.values()) for (const entry of set) clearTimeout(entry.timer)
+    abandoned.clear()
+    abandonedCount = 0
     for (const p of peers.values()) {
       if (p.timer) clearTimeout(p.timer)
       if (p.pending) settle(p.pending, false)
@@ -3045,6 +3206,15 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       return out
     },
     limits: () => ({ ...limits }),
+    linkDevice: (token: unknown, deviceId: unknown, ip: string) => {
+      if (stopped || typeof deviceId !== 'string' || !DEVICE_ID_RE.test(deviceId)) return null
+      if (typeof token !== 'string' || !token) return null
+      const wallet = opts.auth?.checkToken(token)?.wallet ?? null
+      if (!wallet) return null
+      const moved = linkDevice(deviceId, wallet, typeof ip === 'string' && ip ? ip : 'unknown', Date.now())
+      if (moved > 0) log('info', `linked this period's device INK to ${wallet.slice(0, 4)}…${wallet.slice(-4)} at sign-in: ${round2(moved)} INK`)
+      return { wallet, ink: round2(moved) }
+    },
     payouts: payoutLedger,
   }
 }

@@ -417,6 +417,10 @@
   text-transform: uppercase;
   color: var(--fg-2);
 }
+.earn-ink-rest {
+  margin-top: 6px;
+  color: var(--fg-3);
+}
 .earn-ink-addr {
   /* base58 is case-sensitive */
   text-transform: none;
@@ -538,13 +542,13 @@
   color: var(--err);
 }
 .et-sub {
+  /* wraps: the "all-time · this session" / "last benchmark" qualifiers must stay readable */
   font-size: var(--t-3xs);
   letter-spacing: 0.06em;
+  line-height: 1.4;
   text-transform: uppercase;
   color: var(--fg-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .et-link {
   padding: 0;
@@ -1787,10 +1791,9 @@
 .dt-sub {
   font-size: var(--t-3xs);
   letter-spacing: 0.06em;
+  line-height: 1.4;
   color: var(--fg-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .tp-fig {

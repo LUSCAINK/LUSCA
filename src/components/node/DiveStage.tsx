@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { useLastRun } from '@/lib/account'
 import { useNeuron } from '@/lib/gpu'
 import type { NeuronHistoryPoint, NeuronStatus } from '@/lib/gpu'
 import { useSampled } from '@/lib/hooks'
@@ -6,6 +7,7 @@ import { DASH, fmtInt } from '@/lib/format'
 import { Stage } from './Stage'
 import type { StageState } from './Stage'
 import { UNREACHABLE_TEXT, serverState } from './flow'
+import { useSaved, useSession } from './session'
 import { fmtFlop, fmtG, shortId } from './util'
 
 const STATUS_TEXT: Record<NeuronStatus, string> = {
@@ -105,12 +107,25 @@ function logKeys(log: string[]): string[] {
   return keys
 }
 
+/** One count tile: the saved all-time value with this session's share, or this session alone while the account is unknown. */
+function CountTile({ label, all, session, fmt, err = false }: { label: string; all: number | null; session: number; fmt: (n: number) => string; err?: boolean }) {
+  return (
+    <div className="dt">
+      <div className="label">{label}</div>
+      <div className={`dt-v num ${err ? 'dt-err' : ''}`}>{fmt(all ?? session)}</div>
+      <div className="dt-sub mono">{all !== null ? `all-time · +${fmt(session)} this session` : 'this session'}</div>
+    </div>
+  )
+}
+
+function flopText(n: number): string {
+  const f = fmtFlop(n)
+  return `${f.v} ${f.u}`
+}
+
 export function DiveStage({ state }: { state: StageState }) {
   const status = useNeuron((s) => s.status)
-  const jobs = useNeuron((s) => s.jobs)
-  const verified = useNeuron((s) => s.verified)
-  const failed = useNeuron((s) => s.failed)
-  const flops = useNeuron((s) => s.flops)
+  const session = useSession()
   const lastJob = useNeuron((s) => s.lastJob)
   const lastTrain = useNeuron((s) => s.lastTrain)
   const trainBackend = useNeuron((s) => s.trainBackend)
@@ -121,6 +136,7 @@ export function DiveStage({ state }: { state: StageState }) {
   const zone = useNeuron((s) => s.zone)
   const neuronId = useNeuron((s) => s.neuronId)
   const backend = useNeuron((s) => s.backend)
+  const lastRun = useLastRun()
   const { start, pause, resume, stop } = useNeuron.getState()
   const conn = useSampled((s) => s.conn, 500)
 
@@ -129,7 +145,11 @@ export function DiveStage({ state }: { state: StageState }) {
   const active = running || paused
   const srv = serverState(conn)
   const live = srv === 'live'
-  const fl = fmtFlop(flops)
+  // Counts: the server's all-time totals with this session's share; this session only while unknown.
+  const { acct } = useSaved(live)
+  // Until a benchmark runs on this page, tier and speed come from this browser's last finished one.
+  const headZone = zone ?? lastRun?.zone ?? DASH
+  const headSpeed = bench ? `${fmtG(bench.gflops)} GFLOPS` : lastRun ? `${fmtG(lastRun.gflops)} GFLOPS · last benchmark` : DASH
 
   const onStart = () => void start()
 
@@ -168,7 +188,7 @@ export function DiveStage({ state }: { state: StageState }) {
             <div className="nd-actions dc-btns">
               {!active && (
                 <button type="button" className="btn primary lg" onClick={onStart} disabled={!live || status === 'benchmarking' || state === 'locked'}>
-                  {!live ? 'waiting for server' : jobs > 0 ? 'start again' : 'start verified jobs'}
+                  {!live ? 'waiting for server' : session.jobs > 0 || (acct?.jobs ?? 0) > 0 ? 'start again' : 'start verified jobs'}
                 </button>
               )}
               {running && (
@@ -207,7 +227,7 @@ export function DiveStage({ state }: { state: StageState }) {
               <span className="hot">B</span>&nbsp;&nbsp;<b>Job stats</b>
             </span>
             <span className="nd-meta">
-              {neuronId ? `id ${shortId(neuronId)}` : 'not registered'} · {zone ?? '—'} · {bench ? `${fmtG(bench.gflops)} GFLOPS` : '—'}
+              {neuronId ? `id ${shortId(neuronId)}` : 'not registered'} · {headZone} · {headSpeed}
             </span>
           </div>
           <div className="dl-tiles">
@@ -218,18 +238,10 @@ export function DiveStage({ state }: { state: StageState }) {
                 <span>{STATUS_TEXT[status]}</span>
               </div>
             </div>
-            <div className="dt">
-              <div className="label">jobs done</div>
-              <div className="dt-v num">{fmtInt(jobs)}</div>
-            </div>
-            <div className="dt">
-              <div className="label">verified</div>
-              <div className="dt-v num">{fmtInt(verified)}</div>
-            </div>
-            <div className="dt">
-              <div className="label">failed</div>
-              <div className={`dt-v num ${failed > 0 ? 'dt-err' : ''}`}>{fmtInt(failed)}</div>
-            </div>
+            <CountTile label="jobs done" all={acct ? acct.jobs : null} session={session.jobs} fmt={fmtInt} />
+            {/* the ledger counts a gradient job as verified once a full audit releases its escrow */}
+            <CountTile label="verified" all={acct ? acct.verified : null} session={acct ? session.confirmed : session.verified} fmt={fmtInt} />
+            <CountTile label="failed" all={acct ? acct.failed : null} session={session.failed} fmt={fmtInt} err={session.failed > 0} />
             <div className="dt">
               <div className="label">server</div>
               <div className="dt-v dt-mode">{live ? 'live' : srv === 'connecting' ? 'connecting' : DASH}</div>
@@ -237,9 +249,10 @@ export function DiveStage({ state }: { state: StageState }) {
             <div className="dt">
               <div className="label">total work</div>
               <div className="dt-v num">
-                {fl.v}
-                <span className="dt-u">{fl.u}</span>
+                {fmtFlop(acct ? acct.flops : session.flops).v}
+                <span className="dt-u">{fmtFlop(acct ? acct.flops : session.flops).u}</span>
               </div>
+              <div className="dt-sub mono">{acct ? `all-time · +${flopText(session.flops)} this session` : 'this session'}</div>
             </div>
             <div className="dt">
               <div className="label">last job speed</div>

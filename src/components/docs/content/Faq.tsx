@@ -75,8 +75,10 @@ const FAQ: [string, ReactNode][] = [
     <>
       No. Credits are kept on the server’s ledger, not in the page: per verified wallet, otherwise per anonymous device id that this browser keeps in local
       storage. When <Link to="/node">Start earning</Link> opens, the earnings panel reads your saved total from the server; figures marked “this session”
-      count only since the page loaded. Clearing this browser’s site data creates a new device id, and credits saved under the old one are no longer
-      shown here; credits on a verified wallet show in any browser signed in with that wallet.
+      count only since the page loaded or since you signed a wallet in or out. Clearing this browser’s site data creates a new device id, and credits
+      saved under the old one are no longer shown here; credits on a verified wallet show in any browser signed in with that wallet. When you verify a
+      wallet, the credits this device earned in the current payout period move to it. Credits from earlier periods stay with the device, earn no
+      payout, and are listed under your wallet total as staying on this device.
     </>,
   ],
   [

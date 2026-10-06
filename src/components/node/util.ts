@@ -1,7 +1,8 @@
 // Small helpers shared by the Node page panels.
 import { ZONES } from '@shared/protocol'
 import type { Zone } from '@shared/protocol'
-import type { GpuDetect } from '@/lib/gpu'
+// GPU display name: shared with the neuron, which stores it with the last benchmark.
+export { deviceName } from '@/lib/gpu/detect'
 
 /** Depth range of each zone in metres (matches ZONES[].depth). */
 export const ZONE_DEPTH: Record<Zone, [number, number]> = {
@@ -96,14 +97,4 @@ export function scrollToId(id: string) {
   if (!el) return
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
-}
-
-/** Short human GPU name, e.g. "NVIDIA GeForce RTX 4070" (or "CPU" on the fallback path). */
-export function deviceName(det: GpuDetect | null, cpu: boolean): string {
-  if (cpu || !det || !det.supported) return 'CPU'
-  const desc = det.info.description.trim()
-  if (desc) return desc.replace(/\(R\)|\(TM\)/gi, '').replace(/\s+/g, ' ').trim()
-  const vendor = det.label.split('·')[0].trim()
-  const arch = det.info.architecture || det.info.device
-  return arch ? `${vendor} ${arch}` : vendor
 }

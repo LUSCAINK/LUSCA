@@ -61,7 +61,7 @@ import { bus } from '@/lib/bus'
 import { useLive } from '@/lib/store'
 import { refreshWalletPayouts } from '@/lib/payouts'
 import { authToken, useWallet, verifiedWallet } from '@/lib/wallet'
-import { acquireDevice, detectGpu } from './detect'
+import { acquireDevice, detectGpu, deviceName } from './detect'
 import type { GpuDetect } from './detect'
 import { cpuBenchmark, runBenchmark } from './bench'
 import type { BenchProgress, BenchResult } from './bench'
@@ -159,6 +159,12 @@ export interface NeuronState {
   inkPending: number
   /** Training INK forfeited by a failed audit. */
   inkForfeited: number
+  /**
+   * Gradients counted in `verified` whose escrow is not confirmed (still pending, or forfeited).
+   * The ledger counts a gradient job as verified only once a full audit releases it, so
+   * `verified - trainHeld` is this session's share of the account's verified count.
+   */
+  trainHeld: number
   detect: GpuDetect | null
   bench: NeuronBench | null
   /** Live benchmark progress (phase, 0..100 pct, running GFLOPS). */
@@ -335,6 +341,7 @@ export const useNeuron = create<NeuronState>(() => ({
   lastTrain: null,
   inkPending: 0,
   inkForfeited: 0,
+  trainHeld: 0,
   detect: null,
   bench: null,
   benchProgress: null,
@@ -420,8 +427,8 @@ let wasLiveThisSession = false
 let trainReadyGen = -1 // loop generation whose trainer self-test already ran
 let trainStrikes = 0 // consecutive GPU gradient faults
 let trainTestedDevice: GPUDevice | null = null // device whose trainer self-test passed this session
-/** Training INK per job this session: escrow state as the coordinator reported it. */
-const trainLedger = new Map<string, { ink: number; status: 'confirmed' | 'pending' | 'forfeited' }>()
+/** Training INK per job this session: escrow state as the coordinator reported it (ok = verified). */
+const trainLedger = new Map<string, { ink: number; status: 'confirmed' | 'pending' | 'forfeited'; ok: boolean }>()
 /** Send order of this session's training results (the coordinator's escrow seq follows it). */
 const trainOrder = new Map<string, number>()
 let trainOrderSeq = 0
@@ -459,8 +466,8 @@ useWallet.subscribe((s, prev) => {
 
 /**
  * Ask the server to move this device's INK from the current payout period to the newly
- * verified wallet (POST /api/auth/link-device, idempotent). Best effort: servers that link
- * on neuron.register instead answer 404, which is ignored.
+ * verified wallet (POST /api/auth/link-device, idempotent; answers { wallet, ink moved }). Best
+ * effort: a verified neuron.register makes the same move, and older servers answer 404.
  */
 async function linkDevice(sess: AuthSession): Promise<void> {
   const id = storedDeviceId()
@@ -472,7 +479,10 @@ async function linkDevice(sess: AuthSession): Promise<void> {
       body: JSON.stringify({ token: sess.token, deviceId: id }),
     })
     if (!res.ok) return
-    log(`linked this device to wallet ${sess.wallet.slice(0, 4)}…${sess.wallet.slice(-4)} for the current payout period`)
+    const out = (await res.json().catch(() => null)) as { ink?: unknown } | null
+    const moved = typeof out?.ink === 'number' && Number.isFinite(out.ink) && out.ink > 0 ? out.ink : 0
+    // 0: nothing to move, or this device is linked to another wallet for this period
+    if (moved > 0) log(`linked this device to wallet ${sess.wallet.slice(0, 4)}…${sess.wallet.slice(-4)} · ${moved.toFixed(2)} credits from the current payout period moved to it`)
     refreshWalletPayouts(sess.wallet)
   } catch {
     /* server unreachable: registering with the token still links new work */
@@ -748,7 +758,7 @@ export async function benchmark(): Promise<NeuronBench | null> {
         benchProgress: { phase: 'done', pct: 100, gflops: bench.gflops, n: bench.n },
       })
       // shown as "last benchmark" after a reload, until the next one replaces it
-      recordLastRun({ zone, gflops: bench.gflops, gpu: bench.backend === 'webgpu' && det.supported ? det.label : null, backend: bench.backend, at: Date.now() })
+      recordLastRun({ zone, gflops: bench.gflops, gpu: bench.backend === 'webgpu' && det.supported ? deviceName(det, false) : null, backend: bench.backend, at: Date.now() })
       kernel?.setThroughputHint(bench.gflops)
       const zoneName = ZONES.find((z) => z.zone === zone)?.name ?? zone
       log(
@@ -818,12 +828,14 @@ function syncTrainInk(simInk: number) {
   let confirmed = 0
   let pending = 0
   let forfeited = 0
+  let held = 0
   for (const e of trainLedger.values()) {
     if (e.status === 'confirmed') confirmed += e.ink
     else if (e.status === 'pending') pending += e.ink
     else forfeited += e.ink
+    if (e.ok && e.status !== 'confirmed') held++
   }
-  set({ ink: simInk + confirmed, inkPending: pending, inkForfeited: forfeited })
+  set({ ink: simInk + confirmed, inkPending: pending, inkForfeited: forfeited, trainHeld: held })
 }
 
 let simInkTotal = 0 // confirmed INK from dedupe jobs this session
@@ -839,7 +851,7 @@ let simInkTotal = 0 // confirmed INK from dedupe jobs this session
  */
 function creditTrainInk(ev: InkEv, ink: number, first: boolean) {
   const st = ev.status
-  if (first) trainLedger.set(ev.jobId, { ink: ev.verified ? ink : 0, status: ev.verified ? (st ?? 'confirmed') : 'forfeited' })
+  if (first) trainLedger.set(ev.jobId, { ink: ev.verified ? ink : 0, status: ev.verified ? (st ?? 'confirmed') : 'forfeited', ok: ev.verified })
   if (st === 'forfeited') {
     for (const e of trainLedger.values()) if (e.status === 'pending') e.status = st
   } else if (st === 'confirmed' && ev.verified) {

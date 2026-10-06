@@ -183,10 +183,29 @@ function onVisibility() {
  */
 export const AUTORESUME_KEY = 'lusca.autoresume'
 
+/**
+ * This page load reloaded the same tab. A duplicated or restored tab also inherits the
+ * sessionStorage flag, but it must not start a second neuron on the same GPU and device id.
+ */
+function wasReload(): boolean {
+  try {
+    const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
+    if (nav) return nav.type === 'reload'
+    return (performance as Performance & { navigation?: { type: number } }).navigation?.type === 1 // older engines
+  } catch {
+    return false
+  }
+}
+
 function resumeAfterReload() {
   let on = false
   try {
     on = sessionStorage.getItem(AUTORESUME_KEY) === '1'
+    // not a reload (duplicated / restored tab, new navigation): this tab never started earning
+    if (on && !wasReload()) {
+      sessionStorage.removeItem(AUTORESUME_KEY)
+      on = false
+    }
   } catch {
     on = false
   }

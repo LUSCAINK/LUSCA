@@ -20,7 +20,7 @@ const SERVER: Row[] = [
   ['ink', 'event: InkEvent · kind: sim | train · status: confirmed | pending | forfeited', 'every verdict, pass or fail, and every escrow change', 'all'],
   ['neuron.ok', 'neuron: NeuronInfo · auth: verified | invalid | none', 'answer to neuron.register', 'that neuron'],
   ['payout', 'overview: PayoutsOverview', 'a payout period closes or a payout transaction confirms', 'all'],
-  ['account', 'scope: wallet | device | null · account: AccountView | null · at', 'answer to account.watch, then whenever that ledger account or its escrow changes (≤ 1/s)', 'that client'],
+  ['account', 'scope: wallet | device | null · account: AccountView | null · at · device?: AccountView | null', 'answer to account.watch, then whenever that ledger account or its escrow changes (≤ 1/s); a wallet watch that names a device also carries that device’s account (credits that stay on it)', 'that client'],
   ['error', 'msg', 'a request could not be served', 'that client'],
 ]
 
@@ -46,6 +46,7 @@ const REST: [string, string, string, string][] = [
   ['GET', '/api/neurons', '—', 'NeuronInfo[]'],
   ['GET', '/api/auth/nonce', 'wallet', '{ nonce, message, expiresAt } · single-use nonce, 5 min TTL'],
   ['POST', '/api/auth/verify', '{ wallet, nonce, signature }', '{ token, wallet, expiresAt } · ed25519 over the exact message · 30-day token'],
+  ['POST', '/api/auth/link-device', '{ token, deviceId }', '{ wallet, ink } · moves the device’s current-period credits to the verified wallet (same network that earned them)'],
   ['GET', '/api/payouts', '—', 'PayoutsOverview { mode, treasury, period, history, rules } · cached 5 s'],
   ['GET', '/api/payouts/wallet/:address', '—', 'WalletPayouts: periods paid with amounts and tx signatures, current-period credits and estimated share'],
 ]

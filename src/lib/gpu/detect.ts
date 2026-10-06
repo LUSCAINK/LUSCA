@@ -145,6 +145,19 @@ export function gpuLabel(info: GpuAdapterSummary, isFallback: boolean): string {
   return detail ? `${vendor} · ${detail}` : vendor
 }
 
+/**
+ * Short human GPU name, e.g. "NVIDIA GeForce RTX 4070" (or "CPU" on the fallback path). The
+ * Node page shows it, and the neuron stores it with the last benchmark, so both read the same.
+ */
+export function deviceName(det: GpuDetect | null, cpu: boolean): string {
+  if (cpu || !det || !det.supported) return 'CPU'
+  const desc = det.info.description.trim()
+  if (desc) return desc.replace(/\(R\)|\(TM\)/gi, '').replace(/\s+/g, ' ').trim()
+  const vendor = det.label.split('·')[0].trim()
+  const arch = det.info.architecture || det.info.device
+  return arch ? `${vendor} ${arch}` : vendor
+}
+
 function readLimits(adapter: GPUAdapter): GpuLimitsSummary {
   const l = adapter.limits
   const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : 0)

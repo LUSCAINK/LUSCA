@@ -56,6 +56,8 @@ export default function Node() {
   const status = useNeuron((s) => s.status)
   const det = useNeuron((s) => s.detect)
   const bench = useNeuron((s) => s.bench)
+  // activity restored after a reload (job log / speed chart) keeps step 4 readable before a benchmark
+  const hasActivity = useNeuron((s) => s.log.length > 0 || s.history.length > 0)
   const conn = useSampled((s) => s.conn, 500)
   const { phase } = usePhase()
 
@@ -68,7 +70,7 @@ export default function Node() {
     status === 'detecting' ? 'busy' : det ? 'done' : 'ready',
     !det ? 'locked' : status === 'benchmarking' ? 'busy' : bench ? 'done' : 'ready',
     !bench ? 'locked' : 'done',
-    !bench ? 'locked' : running ? 'busy' : 'ready',
+    !bench && !hasActivity ? 'locked' : running ? 'busy' : 'ready',
   ]
 
   const jump = (id: string) => (e: MouseEvent) => {

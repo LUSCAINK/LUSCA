@@ -6,7 +6,9 @@
 // server answers with { t: 'account', scope, account, at } and pushes a fresh one whenever that
 // account or its escrow changes. `useAccount` mirrors the latest answer, so the saved totals are
 // on screen right after a reload. Server values only: until the first answer for the current
-// identity arrives, `loaded` is false and the UI shows "—".
+// identity arrives, `loaded` is false and the UI shows "—". A wallet-scope answer also carries
+// this browser's device account (`device`): credits earned before the wallet was verified stay
+// there and are shown next to the wallet total instead of disappearing from the panel.
 //
 // Device id: the anonymous id the ledger uses when no wallet is verified (localStorage
 // 'lusca.deviceId'). It is created only when a neuron starts (neuronDeviceId); watching the
@@ -83,6 +85,12 @@ export interface AccountState {
   scope: AccountScope
   /** The account; null with a resolved scope = no ledger entry yet (0 credits). */
   account: AccountView | null
+  /**
+   * Wallet scope only: this browser's device account, where credits earned before the wallet was
+   * verified stay (earlier payout periods; current-period ones move to the wallet when it is
+   * linked). null otherwise or when the device has none.
+   */
+  deviceAccount: AccountView | null
   /** Server time (ms) of the last 'account' message, null before the first one. */
   at: number | null
   /**
@@ -93,7 +101,7 @@ export interface AccountState {
   loaded: boolean
 }
 
-export const useAccount = create<AccountState>(() => ({ scope: null, account: null, at: null, loaded: false }))
+export const useAccount = create<AccountState>(() => ({ scope: null, account: null, deviceAccount: null, at: null, loaded: false }))
 
 type AccountMsg = Extract<ServerMsg, { t: 'account' }>
 type WatchMsg = Extract<ClientMsg, { t: 'account.watch' }>
@@ -104,7 +112,7 @@ const HOLD_MS = 2500
 /** Identity the last watch asked for. */
 let asked: { scope: AccountScope; wallet: string | null } = { scope: null, wallet: null }
 let curKey: string | null = null
-let held: { scope: AccountScope; account: AccountView | null; at: number } | null = null
+let held: { scope: AccountScope; account: AccountView | null; device: AccountView | null; at: number } | null = null
 let holdTimer: ReturnType<typeof setTimeout> | null = null
 
 const rank = (s: AccountScope) => (s === 'wallet' ? 2 : s === 'device' ? 1 : 0)
@@ -125,7 +133,7 @@ function watch() {
   if (key !== curKey) {
     // Another identity: nothing shown so far belongs to it.
     curKey = key
-    useAccount.setState({ scope: null, account: null, at: null, loaded: false })
+    useAccount.setState({ scope: null, account: null, deviceAccount: null, at: null, loaded: false })
   }
   asked = { scope, wallet }
   dropHeld()
@@ -164,8 +172,8 @@ function readView(v: unknown): AccountView | null {
   }
 }
 
-function applyAccount(scope: AccountScope, account: AccountView | null, at: number) {
-  useAccount.setState({ scope, account, at, loaded: true })
+function applyAccount(scope: AccountScope, account: AccountView | null, device: AccountView | null, at: number) {
+  useAccount.setState({ scope, account, deviceAccount: scope === 'wallet' ? device : null, at, loaded: true })
 }
 
 /**
@@ -180,16 +188,17 @@ function onAccount(m: AccountMsg) {
   if (scope !== 'wallet' && scope !== 'device' && scope !== null) return
   const account = m.account === null ? null : readView(m.account)
   if (m.account !== null && !account) return // malformed: keep what we have
+  const device = m.device === undefined || m.device === null ? null : readView(m.device)
   const at = num(m.at) ?? Date.now()
   const r = rank(scope)
   const want = rank(asked.scope)
   if (r === want && (scope !== 'wallet' || !account || account.wallet === asked.wallet)) {
     dropHeld()
-    applyAccount(scope, account, at)
+    applyAccount(scope, account, device, at)
     return
   }
   if (r > want || scope === 'wallet') return
-  held = { scope, account, at }
+  held = { scope, account, device, at }
   if (holdTimer === null) {
     holdTimer = setTimeout(() => {
       holdTimer = null
@@ -197,7 +206,7 @@ function onAccount(m: AccountMsg) {
       held = null
       if (!h) return
       asked = { scope: h.scope, wallet: null } // later pushes for it apply at once
-      applyAccount(h.scope, h.account, h.at)
+      applyAccount(h.scope, h.account, h.device, h.at)
     }, HOLD_MS)
   }
 }

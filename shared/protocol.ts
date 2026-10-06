@@ -283,8 +283,10 @@ export type ServerMsg =
   | { t: 'payout'; overview: PayoutsOverview }      // broadcast when a payout period closes or a payout tx confirms
   // reply to account.watch (sent only to the watching connection), then again whenever the watched
   // account or its escrow changes (coalesced, ≤ 1/s). scope null = no wallet token and no valid device
-  // id; account null = no ledger account yet (0 credits)
-  | { t: 'account'; scope: 'wallet' | 'device' | null; account: AccountView | null; at: number }
+  // id; account null = no ledger account yet (0 credits). `device`: wallet scope only, when the watch
+  // also named a valid device id: that device's own account (credits earned there before the wallet
+  // was verified, which stay on it), null = none; absent otherwise
+  | { t: 'account'; scope: 'wallet' | 'device' | null; account: AccountView | null; at: number; device?: AccountView | null }
   | { t: 'error'; msg: string };
 
 export type ClientMsg =
@@ -309,6 +311,7 @@ export type ClientMsg =
 // GET  /api/pages?sector=&q=      -> PageRecord[] (newest first, up to 200)
 // POST /api/generate {prompt, n}  -> { text: string, ms: number }   (sample from SEPIA)
 // POST /api/spawn {name, owner, sector} -> AgentInfo                (adds an agent to an arm)
+// POST /api/auth/link-device {token, deviceId} -> { wallet, ink }   (move the device's current-period credits to the verified wallet)
 
 /**
  * GPU depth zones. A zone sets (a) the job size the coordinator issues — 4× the FLOPs per

@@ -1,8 +1,11 @@
 import { ZONES } from '@shared/protocol'
+import { useLastRun } from '@/lib/account'
 import { useNeuron } from '@/lib/gpu'
+import { useSampled } from '@/lib/hooks'
 import { fmtInt } from '@/lib/format'
 import { SecHead } from './Stage'
 import { STEP_NAMES, usePhase } from './flow'
+import { useSaved, useSession } from './session'
 import { deviceName, fmtG, scrollToId } from './util'
 
 type StepState = 'done' | 'working' | 'next' | 'waiting'
@@ -29,11 +32,13 @@ export function HowSteps() {
   const det = useNeuron((s) => s.detect)
   const bench = useNeuron((s) => s.bench)
   const zone = useNeuron((s) => s.zone)
-  const verified = useNeuron((s) => s.verified)
-  const jobs = useNeuron((s) => s.jobs)
   const backend = useNeuron((s) => s.backend)
   const prog = useNeuron((s) => s.benchProgress)
   const { phase, step } = usePhase()
+  const { verified, jobs } = useSession()
+  const live = useSampled((s) => s.conn === 'live', 500)
+  const { acct } = useSaved(live)
+  const lastRun = useLastRun()
   const running = status === 'running' || status === 'paused'
   const zinfo = ZONES.find((z) => z.zone === zone)
 
@@ -51,11 +56,25 @@ export function HowSteps() {
   const stateText = (i: number) => (i === 3 && status === 'running' ? 'earning' : i === 3 && status === 'paused' ? 'paused' : STATE_TEXT[states[i]])
   const pct = status === 'benchmarking' && prog ? Math.round(Math.max(0, Math.min(100, prog.pct))) : 0
 
+  // Before this page detects / benchmarks, the steps show this browser's last finished benchmark
+  // and the saved account's all-time count, like the earnings panel.
+  const lastGpu = lastRun ? (lastRun.backend === 'cpu' ? 'CPU' : (lastRun.gpu ?? 'GPU')) : null
+  const idle = acct && acct.verified > 0 ? `not running · ${fmtInt(acct.verified)} verified all-time` : 'not started yet'
   const values = [
-    det ? (det.supported ? deviceName(det, false) : 'no WebGPU · CPU path') : 'not checked yet',
-    bench ? `${fmtG(bench.gflops)} GFLOPS${backend === 'cpu' || bench.backend === 'cpu' ? ' · cpu' : ''}` : status === 'benchmarking' ? `measuring · ${pct}%` : 'not measured yet',
-    zinfo ? `${zinfo.zone} · ×${zinfo.bonus.toFixed(2)} credit bonus` : 'not set yet',
-    running ? `${status === 'paused' ? 'paused' : 'earning'} · ${fmtInt(verified)} verified` : jobs > 0 ? `stopped · ${fmtInt(verified)} verified` : 'not started yet',
+    det ? (det.supported ? deviceName(det, false) : 'no WebGPU · CPU path') : lastGpu ? `${lastGpu} · last benchmark` : 'not checked yet',
+    bench
+      ? `${fmtG(bench.gflops)} GFLOPS${backend === 'cpu' || bench.backend === 'cpu' ? ' · cpu' : ''}`
+      : status === 'benchmarking'
+        ? `measuring · ${pct}%`
+        : lastRun
+          ? `${fmtG(lastRun.gflops)} GFLOPS · last benchmark`
+          : 'not measured yet',
+    zinfo ? `${zinfo.zone} · ×${zinfo.bonus.toFixed(2)} credit bonus` : lastRun ? `${lastRun.zone} · last benchmark` : 'not set yet',
+    running
+      ? `${status === 'paused' ? 'paused' : 'earning'} · ${fmtInt(verified)} verified this session`
+      : jobs > 0
+        ? `stopped · ${fmtInt(verified)} verified this session`
+        : idle,
   ]
 
   return (

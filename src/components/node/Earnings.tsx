@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { ZONES } from '@shared/protocol'
-import type { AccountView } from '@shared/protocol'
 import type { PayoutCluster } from '@shared/payouts'
-import { useAccount, useLastRun } from '@/lib/account'
+import { useLastRun } from '@/lib/account'
 import { useNeuron } from '@/lib/gpu'
 import { useNow, useSampled } from '@/lib/hooks'
 import { fmtSol, refreshWalletPayouts, solscanAccount, solscanTx, usePayouts, useWalletPayouts } from '@/lib/payouts'
@@ -12,54 +11,12 @@ import { shortAddr, useWallet } from '@/lib/wallet'
 import { DASH, fmtDur, fmtInt } from '@/lib/format'
 import { PHASE_TEXT, STEP_NAMES, UNREACHABLE_TEXT, serverState, startEarning, usePhase } from './flow'
 import type { Phase } from './flow'
+import { ago, useSaved, useSession } from './session'
+import type { Saved } from './session'
 
 /** After a failed payout refresh, keep showing the last server answer for this long. */
 const PAYOUT_FRESH_MS = 60_000
 import { deviceName, fmtG, fmtInk, scrollToId } from './util'
-
-/** The saved ledger account as the panels show it. */
-interface Saved {
-  /**
-   * Server totals, all-time for the identity the server resolved (verified wallet, else this
-   * device). null while unknown: server unreachable, its first answer for the current identity
-   * not in yet, or no identity it can key. A resolved identity without an account is a real zero.
-   */
-  acct: AccountView | null
-  /** Connected, waiting for the server's first answer for the current identity. */
-  loading: boolean
-  /** "this device" / "wallet AbCd…WxYz" (null while unknown). */
-  to: string | null
-  /** The short wallet address in `to` (base58 is case-sensitive: never uppercase it). */
-  addr: string | null
-}
-
-/** Totals for an identity the ledger has no account for yet: nothing earned so far. */
-function emptyAccount(kind: 'wallet' | 'device', wallet: string | null): AccountView {
-  return { kind, wallet, ink: 0, pendingInk: 0, periodInk: 0, jobs: 0, verified: 0, failed: 0, flops: 0, firstSeen: 0, lastSeen: 0 }
-}
-
-/** This browser's saved account from the server ('account' pushes), gated on the connection. */
-function useSaved(live: boolean): Saved {
-  const scope = useAccount((s) => s.scope)
-  const account = useAccount((s) => s.account)
-  const loaded = useAccount((s) => s.loaded)
-  const verifiedAddr = useWallet((s) => (s.status === 'verified' ? (s.session?.wallet ?? null) : null))
-  if (!live) return { acct: null, loading: false, to: null, addr: null }
-  if (!loaded) return { acct: null, loading: true, to: null, addr: null }
-  if (!scope) return { acct: null, loading: false, to: null, addr: null }
-  const acct = account ?? emptyAccount(scope, scope === 'wallet' ? verifiedAddr : null)
-  const addr = scope === 'wallet' ? shortAddr(acct.wallet ?? verifiedAddr) : null
-  return { acct, loading: false, to: addr ? `wallet ${addr}` : 'this device', addr }
-}
-
-/** "just now", "3 min ago", "5 h ago", "2 d ago". */
-function ago(ts: number, now: number): string {
-  const s = Math.max(0, (now - ts) / 1000)
-  if (s < 60) return 'just now'
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`
-  if (s < 86400) return `${Math.floor(s / 3600)} h ago`
-  return `${Math.floor(s / 86400)} d ago`
-}
 
 function ledClass(phase: Phase): string {
   if (phase === 'earning' || phase === 'starting') return 'led on pulse'
@@ -180,8 +137,12 @@ function WalletLine({ cluster }: { cluster: PayoutCluster | undefined }) {
   )
 }
 
-/** Real payout state from GET /api/payouts and /api/payouts/wallet/:address. "—" when unknown. */
-function PayoutBlock() {
+/**
+ * Real payout state from GET /api/payouts and /api/payouts/wallet/:address. "—" when unknown.
+ * The wallet's own credits come from the pushed account (`saved`) when it is that wallet's, so
+ * they match the headline instead of trailing it by the payout API's cache and poll interval.
+ */
+function PayoutBlock({ saved }: { saved: Saved }) {
   const { overview, overviewAt, overviewError } = usePayouts()
   const session = useWallet((s) => (s.status === 'verified' ? s.session : null))
   const addr = session?.wallet ?? null
@@ -209,6 +170,7 @@ function PayoutBlock() {
 
   const paidTxs = wp ? wp.history.filter((r) => r.tx && r.status === 'sent').slice(0, 3) : []
   const share = wp?.period ?? null
+  const mine = addr && saved.acct?.kind === 'wallet' && saved.acct.wallet === addr ? saved.acct : null
 
   return (
     <div className="earn-pay" aria-labelledby="ep-h">
@@ -237,7 +199,7 @@ function PayoutBlock() {
           </div>
           <div className="ep-row">
             <dt className="label">your credits this period</dt>
-            <dd className="ep-v num">{share ? fmtInk(share.ink) : DASH}</dd>
+            <dd className="ep-v num">{mine ? fmtInk(mine.periodInk) : share ? fmtInk(share.ink) : DASH}</dd>
             <dd className="ep-sub mono">{addr ? 'verified wallet' : 'verified wallets only'}</dd>
           </div>
           <div className="ep-row">
@@ -267,7 +229,7 @@ function PayoutBlock() {
           </div>
           <div className="ep-row">
             <dt className="label">your credits all-time</dt>
-            <dd className="ep-v num">{wp ? fmtInk(wp.totalInk) : DASH}</dd>
+            <dd className="ep-v num">{mine ? fmtInk(mine.ink) : wp ? fmtInk(wp.totalInk) : DASH}</dd>
             <dd className="ep-sub mono">{addr ? 'credited to this wallet' : 'verified wallets only'}</dd>
           </div>
         </dl>
@@ -291,7 +253,7 @@ function TrainingBlock({ live, phase, step, saved }: { live: boolean; phase: Pha
   const applied = useNeuron((s) => s.gradsApplied)
   const stale = useNeuron((s) => s.gradsStale)
   const last = useNeuron((s) => s.lastTrain)
-  const ink = useNeuron((s) => s.ink)
+  const { ink } = useSession()
   const pending = useNeuron((s) => s.inkPending)
   const forfeited = useNeuron((s) => s.inkForfeited)
 
@@ -352,7 +314,7 @@ function TrainingBlock({ live, phase, step, saved }: { live: boolean; phase: Pha
             {acct
               ? forfeited > 0
                 ? `${fmtInk(forfeited)} forfeited this session by a failed audit`
-                : pending > 0
+                : pending > 0 && pending <= acct.pendingInk + 0.005 // escrowed before a sign-in change stays with the other account
                   ? `${fmtInk(pending)} from this session · held until the next full audit passes`
                   : 'held until the next full audit passes'
               : saved.loading
@@ -372,10 +334,9 @@ function TrainingBlock({ live, phase, step, saved }: { live: boolean; phase: Pha
 /** Live "Your earnings" panel: the most important thing on the page once you start. */
 export function EarningsPanel() {
   const { phase, step } = usePhase()
-  const ink = useNeuron((s) => s.ink)
+  const session = useSession()
+  const ink = session.ink
   const lastTrain = useNeuron((s) => s.lastTrain)
-  const verified = useNeuron((s) => s.verified)
-  const failed = useNeuron((s) => s.failed)
   const zone = useNeuron((s) => s.zone)
   const bench = useNeuron((s) => s.bench)
   const det = useNeuron((s) => s.detect)
@@ -411,7 +372,7 @@ export function EarningsPanel() {
   if (!live) totalSub = srv === 'connecting' ? 'connecting to the LUSCA server…' : UNREACHABLE_TEXT
   else if (saved.loading) totalSub = `loading your credits…${ink > 0 ? ` · +${fmtInk(ink)} this session` : ''}`
   // No ledger identity yet (no wallet sign-in, no device id): one is created when the neuron starts.
-  else if (!acct) totalSub = `no account on this browser yet · created when you start earning${ink > 0 ? ` · +${fmtInk(ink)} this session` : ''}`
+  else if (!acct) totalSub = `nothing earned on this browser yet · credits are saved on the server once you start${ink > 0 ? ` · +${fmtInk(ink)} this session` : ''}`
   else {
     const parts = ['confirmed']
     if (acct.pendingInk > 0) parts.push(`${fmtInk(acct.pendingInk)} pending audit`)
@@ -422,12 +383,17 @@ export function EarningsPanel() {
       </>
     )
   }
+  // Signed in: credits this device earned before the wallet was verified stay on it (not in the total).
+  const rest = saved.rest
+  const restText = rest
+    ? `${fmtInk(rest.ink)} credits${rest.pendingInk > 0 ? ` + ${fmtInk(rest.pendingInk)} pending` : ''} stay on this device · earned before the wallet was verified · not included above`
+    : null
   const totalLabel = acct
     ? `${total} credits confirmed${acct.pendingInk > 0 ? `, ${fmtInk(acct.pendingInk)} pending audit` : ''}, credited to ${saved.to}`
     : saved.loading
       ? 'loading your credits'
       : live
-        ? 'no account on this browser yet'
+        ? 'no credits saved on this browser yet'
         : 'credits unavailable'
 
   // New credits on a verified wallet: refresh its period standing (throttled; the server caches 5 s).
@@ -471,6 +437,7 @@ export function EarningsPanel() {
           <span className="earn-ink-u">credits</span>
         </div>
         <div className="earn-ink-sub mono">{totalSub}</div>
+        {restText && <div className="earn-ink-sub earn-ink-rest mono">{restText}</div>}
       </div>
 
       <div className="earn-msg" aria-live="polite">
@@ -539,19 +506,20 @@ export function EarningsPanel() {
 
       {(active || lastTrain || hasCredits) && <TrainingBlock live={live} phase={phase} step={step} saved={saved} />}
 
-      <PayoutBlock />
+      <PayoutBlock saved={saved} />
 
       <dl className="earn-grid">
         <div className="et">
           <dt className="label">jobs verified</dt>
           <dd className="et-v num">{acct ? fmtInt(acct.verified) : DASH}</dd>
-          <dd className="et-sub mono">{acct ? `all-time · ${fmtInt(verified)} this session` : saved.loading ? 'loading…' : 'checked by the server'}</dd>
+          {/* the ledger counts a gradient job once its escrow is released: compare like with like */}
+          <dd className="et-sub mono">{acct ? `all-time · +${fmtInt(session.confirmed)} this session` : saved.loading ? 'loading…' : 'checked by the server'}</dd>
         </div>
         <div className="et">
           <dt className="label">jobs failed</dt>
           {/* all-time count; red only while this session has failures (a current problem) */}
-          <dd className={`et-v num ${acct && failed > 0 ? 'et-err' : ''}`}>{acct ? fmtInt(acct.failed) : DASH}</dd>
-          <dd className="et-sub mono">{acct ? `all-time · ${fmtInt(failed)} this session` : saved.loading ? 'loading…' : 'rejected by the server'}</dd>
+          <dd className={`et-v num ${acct && session.failed > 0 ? 'et-err' : ''}`}>{acct ? fmtInt(acct.failed) : DASH}</dd>
+          <dd className="et-sub mono">{acct ? `all-time · +${fmtInt(session.failed)} this session` : saved.loading ? 'loading…' : 'rejected by the server'}</dd>
         </div>
         <div className="et">
           <dt className="label">your tier</dt>
@@ -622,8 +590,7 @@ export function EarningsPanel() {
 /** Slim fixed bar that keeps your earnings and Pause / Stop in reach once the panel scrolls away. */
 export function EarnStrip() {
   const { phase, step } = usePhase()
-  const verified = useNeuron((s) => s.verified)
-  const failed = useNeuron((s) => s.failed)
+  const { verified, failed } = useSession()
   const zone = useNeuron((s) => s.zone)
   const live = useSampled((s) => s.conn === 'live', 500)
   const { acct } = useSaved(live)
