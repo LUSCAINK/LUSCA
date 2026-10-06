@@ -599,6 +599,149 @@ function EvmSections({ r }: { r: LensReport }) {
   )
 }
 
+/** Other EVM chains with code at the same address (eth_getCode via /api/lens/detect). Shows nothing it could not read. */
+function AlsoOn({ r }: { r: LensReport }) {
+  const [other, setOther] = useState<{ chain: ChainId; bytes: number | null }[] | null>(null)
+  useEffect(() => {
+    if (r.chain === 'solana') return
+    const ac = new AbortController()
+    fetchDetect(r.address, ac.signal)
+      .then((d) => {
+        const rest = d.chains.filter((c) => c.chain !== r.chain)
+        if (rest.some((c) => c.code === null)) return // a chain did not answer: say nothing
+        setOther(rest.filter((c) => c.code).map((c) => ({ chain: c.chain, bytes: c.bytes })))
+      })
+      .catch(() => {})
+    return () => ac.abort()
+  }, [r.chain, r.address])
+  if (r.chain === 'solana' || other === null) return null
+  return (
+    <div className="ln-also mono">
+      <span className="dimmer">same address on other chains</span>
+      {other.length === 0 ? (
+        <span className="dim">
+          no code on{' '}
+          {EVM_CHAINS.filter((c) => c !== r.chain)
+            .map((c) => CHAIN_LABEL[c])
+            .join(' or ')}
+        </span>
+      ) : (
+        other.map((o) => (
+          <Link key={o.chain} to={`/lens/${o.chain}/${r.address}`} className="ln-chip">
+            {CHAIN_LABEL[o.chain]} · {fmtBytes(o.bytes)} →
+          </Link>
+        ))
+      )}
+    </div>
+  )
+}
+
+/** Guard names of the privileged functions, counted ('onlyOwner ×5'); inline caller checks are one group. */
+function guardCounts(list: { guard: string }[]): [string, number][] {
+  const m = new Map<string, number>()
+  for (const g of list) {
+    const named = /^[A-Za-z_$][\w$]*(\(|$)/.test(g.guard) && !/^(require|if|assert)\b/.test(g.guard)
+    const k = named ? g.guard.replace(/\(.*$/, '') : 'caller check in body'
+    m.set(k, (m.get(k) ?? 0) + 1)
+  }
+  return [...m.entries()].sort((a, b) => b[1] - a[1])
+}
+
+function MapNode({ k, title, a, chain, note, hot }: { k: string; title: ReactNode; a?: string | null; chain: ChainId; note?: ReactNode; hot?: boolean }) {
+  return (
+    <div className={`ln-node ${hot ? 'is-hot' : ''}`}>
+      <span className="label">{k}</span>
+      <span className="ln-node-t">{title}</span>
+      {a ? <Addr chain={chain} a={a} /> : null}
+      {note ? <span className="ln-node-n">{note}</span> : null}
+    </div>
+  )
+}
+
+function MapEdge({ label }: { label: string }) {
+  return (
+    <div className="ln-edge" aria-hidden>
+      <span className="mono">{label}</span>
+    </div>
+  )
+}
+
+/** Who controls the code: authority / admin → program or proxy → implementation, with the guards read from it. */
+function ControlMap({ r }: { r: LensReport }) {
+  if (r.solana) {
+    const s = r.solana
+    const roles = new Map<string, number>()
+    for (const x of s.signerRoles) roles.set(x.account, (roles.get(x.account) ?? 0) + 1)
+    const roleNote = roles.size
+      ? [...roles.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 4)
+          .map(([k, n]) => `${k} signs ${n}`)
+          .join(' · ')
+      : s.idl
+        ? 'no role signer in the IDL'
+        : 'no on-chain IDL'
+    return (
+      <div className="ln-map">
+        <MapNode
+          k="upgrade authority"
+          chain="solana"
+          title={s.upgradeable === false ? 'none' : s.upgradeAuthority ? 'can replace the code' : 'not read'}
+          a={s.upgradeAuthority}
+          note={s.upgradeable === false ? 'immutable: the code cannot change' : null}
+          hot={!!s.upgradeAuthority}
+        />
+        <MapEdge label={s.upgradeable === false ? 'none' : 'upgrades'} />
+        <MapNode k="program" chain="solana" title={r.name ?? 'unnamed'} a={r.address} note={s.loader ?? undefined} />
+        <MapEdge label="roles" />
+        <MapNode k="privileged" chain="solana" title={s.idl ? `${fmtN(r.summary.privileged)} instructions` : '—'} note={roleNote} hot={(r.summary.privileged ?? 0) > 0} />
+      </div>
+    )
+  }
+  const e = r.evm
+  if (!e) return null
+  const code = e.implementation ?? e.self
+  const guards = guardCounts([...e.self.privileged, ...(e.implementation?.privileged ?? [])])
+  const guardNote = guards.length
+    ? guards
+        .slice(0, 4)
+        .map(([g, n]) => `${g} ×${n}`)
+        .join(' · ')
+    : code.sources.length
+      ? 'no guarded function'
+      : 'no verified source'
+  if (!e.proxy)
+    return (
+      <div className="ln-map">
+        <MapNode
+          k="contract"
+          chain={r.chain}
+          title={code.name ?? 'unnamed'}
+          a={r.address}
+          note={r.summary.upgradeable === false ? 'no DELEGATECALL: the code cannot change' : 'uses DELEGATECALL; no standard proxy slot set'}
+        />
+        <MapEdge label="guards" />
+        <MapNode k="privileged" chain={r.chain} title={r.summary.privileged === null ? '—' : `${fmtN(r.summary.privileged)} functions`} note={guardNote} hot={(r.summary.privileged ?? 0) > 0} />
+      </div>
+    )
+  const delegated = r.kind === 'account'
+  return (
+    <div className="ln-map">
+      <MapNode
+        k={delegated ? 'account key' : 'admin'}
+        chain={r.chain}
+        title={delegated ? 'sets the delegation' : e.proxy.admin ? 'can upgrade' : 'not in a standard slot'}
+        a={delegated ? r.address : e.proxy.admin}
+        hot={!!e.proxy.admin || delegated}
+      />
+      <MapEdge label={delegated ? 'delegates' : 'upgrades'} />
+      <MapNode k={delegated ? 'account' : 'proxy'} chain={r.chain} title={e.self.name ?? e.proxy.label} a={r.address} note={e.proxy.label} />
+      <MapEdge label="delegatecall" />
+      <MapNode k="implementation" chain={r.chain} title={e.implementation?.name ?? 'not read'} a={e.proxy.implementation} note={guardNote} hot={guards.length > 0} />
+    </div>
+  )
+}
+
 function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
   const r = a.report
   const sol = r.chain === 'solana'
@@ -628,6 +771,7 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
             reload
           </button>
         </div>
+        <AlsoOn r={r} />
       </header>
 
       {delegated && (
@@ -640,7 +784,10 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
         </div>
       )}
       {isCode ? (
-        <Strip r={r} />
+        <>
+          <Strip r={r} />
+          <ControlMap r={r} />
+        </>
       ) : (
         <div className="ln-notcode">
           <span className="label hot">not code</span>

@@ -441,6 +441,93 @@
   color: var(--fg-1);
 }
 
+/* ─── control map ───────────────────────────────── */
+.ln-report > .ln-map {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr) 96px minmax(0, 1fr);
+  align-items: stretch;
+  padding: 18px var(--gutter);
+  background-color: var(--bg);
+  background-image: var(--hatch);
+}
+.ln-report > .ln-map:has(> :nth-child(3):last-child) {
+  grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr);
+}
+.ln-node {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-3);
+  background: var(--bg);
+  min-width: 0;
+  font-size: var(--t-xs);
+}
+.ln-node.is-hot {
+  border-color: var(--hot);
+  box-shadow: inset 3px 0 0 var(--hot);
+}
+.ln-node-t {
+  font-family: var(--f-display);
+  font-weight: 800;
+  font-stretch: 125%;
+  text-transform: uppercase;
+  font-size: var(--t-md);
+  overflow-wrap: anywhere;
+}
+.ln-node-n {
+  font-family: var(--f-mono);
+  font-size: var(--t-3xs);
+  color: var(--fg-2);
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.ln-edge {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 30px;
+}
+.ln-edge::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 8px;
+  top: 50%;
+  border-top: 1px dashed var(--line-4);
+}
+.ln-edge::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  top: calc(50% - 4px);
+  border-left: 7px solid var(--fg-2);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+}
+.ln-edge span {
+  position: relative;
+  z-index: 1;
+  padding: 1px 6px;
+  background: var(--bg);
+  font-size: var(--t-3xs);
+  letter-spacing: 0.06em;
+  color: var(--fg-1);
+}
+.ln-also {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: var(--t-3xs);
+  letter-spacing: 0.04em;
+}
+.ln-also .ln-chip {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
 /* ─── sections ───────────────────────────────────── */
 .ln-sec > summary {
   display: grid;
@@ -895,6 +982,28 @@
   }
 }
 @media (max-width: 640px) {
+  .ln-report > .ln-map,
+  .ln-report > .ln-map:has(> :nth-child(3):last-child) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ln-edge::before {
+    left: 50%;
+    right: auto;
+    top: 2px;
+    bottom: 8px;
+    border-top: 0;
+    border-left: 1px dashed var(--line-4);
+  }
+  .ln-edge::after {
+    right: auto;
+    left: calc(50% - 4px);
+    top: auto;
+    bottom: 1px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 7px solid var(--fg-2);
+    border-bottom: 0;
+  }
   .ln-hero-l {
     padding-top: 20px;
   }
