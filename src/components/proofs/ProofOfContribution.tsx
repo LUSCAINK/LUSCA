@@ -503,11 +503,11 @@ function PayoutPreview() {
 
   return (
     <div className="panel poc-prev">
-      <Head k="P" title="Payout preview" meta={data ? (data.mode === 'live' ? 'payouts live' : 'preview · payouts are off') : DASH} />
+      <Head k="P" title="Payout preview" meta={data ? (data.mode === 'live' ? 'payouts live' : 'preview') : DASH} />
       <div className="poc-prev-b">
         <p className="poc-p">
           Runs the payout engine's own <span className="mono">planPayout()</span> on your credits since the last closed period, against every verified wallet's.
-          {data?.mode !== 'live' && ' Payouts are off: this is a preview, nothing is sent.'}
+          {data?.mode !== 'live' && ' This is a preview: nothing is sent from here.'}
         </p>
         {!any && <p className="poc-res">Run a neuron on this browser or verify a wallet to see your share.</p>}
         {err && <p className="poc-res poc-badt">{err}</p>}
