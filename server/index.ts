@@ -57,6 +57,9 @@ import { createPayouts } from './payouts/index.ts'
 import { createCodeIndex } from './codebase/index.ts'
 import { createChainAgents } from './chain/index.ts'
 import { createWeightsExporter } from './model/export.ts'
+import { createProofs, resolveEpochMinutes, type ProofsApi } from './proofs/index.ts'
+import { payoutPreviewSource } from './proofs/preview.ts'
+import { loadHashSalt } from './neurons/issuance.ts'
 import { createHub, ansi, log, DEFAULT_HUB_LIMITS, type HealthReport } from './http.ts'
 import type { CrawlerApi, TrainerApi } from './contracts.ts'
 import type { LuscaCoordinator } from './neurons/coordinator.ts'
@@ -293,9 +296,14 @@ function diskStats() {
   return v
 }
 
+/** Contribution epochs (server/proofs), for the health report. */
+let proofsRef: ProofsApi | null = null
+
 function healthReport(trainer: TrainerApi): HealthReport {
   const now = Date.now()
   const degraded: string[] = []
+  const proofs = proofsRef ? proofsRef.status() : null
+  if (proofs && !proofs.ok) degraded.push('proof-chain-broken')
 
   // A save that landed after the failure clears it.
   if (ledgerState.failingSince && mtimeMs(path.join(DATA_DIR, 'ledger.json')) > ledgerState.failingSince) {
@@ -330,6 +338,7 @@ function healthReport(trainer: TrainerApi): HealthReport {
       },
       checkpoint: { ageS: ckpt ? Math.round((now - ckpt) / 1000) : null, training, limitS: Math.round(limitMs / 1000) },
       disk: disk ? { ...disk, minPct: HEALTH_DISK_PCT } : null,
+      proofs,
     },
   }
 }
@@ -411,6 +420,7 @@ async function main() {
   let coordinator: LuscaCoordinator
   let auth: Auth
   let payouts: ReturnType<typeof createPayouts>
+  let payoutConfigRef: ReturnType<typeof resolvePayoutConfig> | null = null
   try {
     auth = createAuth({
       dataDir: DATA_DIR,
@@ -446,6 +456,7 @@ async function main() {
       auth,
     })
     const payoutConfig = resolvePayoutConfig(process.env)
+    payoutConfigRef = payoutConfig
     PAYOUT_MODE = payoutConfig.mode
     payouts = createPayouts({
       ledger: coordinator.payouts,
@@ -501,7 +512,24 @@ async function main() {
     license: process.env.LUSCA_WEIGHTS_LICENSE?.trim() || 'MIT',
     log: (level, msg) => log[level]('model', msg),
   })
-  const modules = { crawler, trainer, coordinator, auth, payouts, code: codeIndex, chain: chainAgents, model: modelExport }
+  let proofs: ProofsApi | undefined
+  try {
+    proofs = createProofs({
+      dataDir: DATA_DIR,
+      epochs: coordinator.epochs,
+      salt: loadHashSalt(DATA_DIR, process.env.LUSCA_HASH_SALT, (level, msg) => log[level]('proofs', msg)),
+      epochMinutes: resolveEpochMinutes(process.env),
+      checkToken: (t) => auth.checkToken(t),
+      log: (level, msg) => log[level]('proofs', msg),
+    })
+    proofs.start() // verifies the stored chain (or writes genesis) before the server listens
+    proofsRef = proofs
+  } catch (e) {
+    log.error('proofs', 'contribution proofs unavailable:', (e as Error)?.stack ?? e)
+    proofs = undefined
+  }
+  const proofsModule = proofs ? { api: proofs, preview: (payoutConfigRef ? payoutPreviewSource(coordinator, payoutConfigRef) : null) } : undefined
+  const modules = { crawler, trainer, coordinator, auth, payouts, code: codeIndex, chain: chainAgents, model: modelExport, proofs: proofsModule }
   hub.bind(modules)
 
   let port: number
@@ -576,6 +604,7 @@ async function main() {
       step('code', () => codeIndex?.stop()), // aborts an in-flight download; committed shards stay
       step('chain', () => chainAgents?.stop()), // aborts in-flight RPC; index, frontier, feed and budgets saved
     ])
+    await step('proofs', () => proofs?.stop())
     await step('coordinator', () => coordinator.stop())
     log.info('process', 'bye.')
     process.exit(0)

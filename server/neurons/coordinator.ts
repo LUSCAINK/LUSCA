@@ -611,6 +611,45 @@ interface LedgerFile extends LedgerSnapshot {
   accounts: Record<string, LedgerAccount>
   payouts?: PayoutLedgerState
   escrow?: Record<string, EscrowRecord>
+  /** Open contribution epoch (server/proofs): confirmed credits per account since it started. */
+  epoch?: { index: number; startedAt: number; rows: Record<string, [number, number, number]>; closing?: unknown }
+}
+
+/** Confirmed credits of one ledger account inside the open contribution epoch. */
+export interface EpochRow {
+  /** Micro-credits (integer). */
+  credits: number
+  jobs: number
+  flops: number
+}
+
+/**
+ * Contribution epochs (server/proofs). The open epoch's per-account confirmed credits are kept in
+ * ledger.json itself, so they are saved atomically with the balances they explain: after a hard
+ * kill the open epoch holds exactly the credits the ledger kept. Escrowed (pending) credits never
+ * enter it; they are added when an audit confirms them, and forfeited escrow never is.
+ */
+export interface EpochLedger {
+  /** Open epoch as loaded / running; null until start() (or a ledger with one) set it. */
+  open(): { index: number; startedAt: number } | null
+  /** Write-ahead record of an epoch being closed (opaque to the coordinator), or null. */
+  closing(): unknown
+  clearClosing(): void
+  /** Every account with a confirmed balance (genesis backfill): raw key, micro-credits, jobs, flops. */
+  balances(): { key: string; credits: number; jobs: number; flops: number }[]
+  /** Lifetime confirmed credits issued (micro-credits). */
+  ledgerCredits(): number
+  /** (Re)start accumulating at `index`: rows are dropped. Persisted with the next save. */
+  start(index: number, startedAt: number): void
+  /**
+   * Close the open epoch in one synchronous call: build(rows) returns the closed epoch record
+   * (throws → nothing changes); the record is saved in ledger.json as the write-ahead `closing`
+   * together with the next open epoch, synchronously. Returns false when that save failed (the
+   * open epoch is restored and keeps its rows).
+   */
+  close(endedAt: number, build: (index: number, startedAt: number, rows: Map<string, EpochRow>) => unknown): boolean
+  /** Is ledger.json being saved at all (false after an unreadable ledger)? */
+  saving(): boolean
 }
 
 const num = (v: unknown, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d)
@@ -624,11 +663,35 @@ function displayName(a: LedgerAccount): string {
   return a.label
 }
 
+interface ParsedEpoch {
+  index: number
+  startedAt: number
+  rows: Map<string, EpochRow>
+  closing: unknown
+}
+
 interface ParsedLedger {
   totals: LedgerTotals
   accounts: Map<string, LedgerAccount>
   payouts: PayoutLedgerState
   escrow: Map<string, EscrowRecord>
+  epoch: ParsedEpoch | null
+}
+
+function parseEpoch(raw: unknown): ParsedEpoch | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const e = raw as { index?: unknown; startedAt?: unknown; rows?: unknown; closing?: unknown }
+  const index = num(e.index, -1)
+  if (!Number.isInteger(index) || index < 0) return null
+  const rows = new Map<string, EpochRow>()
+  if (e.rows && typeof e.rows === 'object' && !Array.isArray(e.rows)) {
+    for (const [k, v] of Object.entries(e.rows as Record<string, unknown>)) {
+      if (!Array.isArray(v)) continue
+      const credits = Math.max(0, Math.round(num(v[0])))
+      if (credits > 0) rows.set(k, { credits, jobs: Math.max(0, Math.round(num(v[1]))), flops: Math.max(0, num(v[2])) })
+    }
+  }
+  return { index, startedAt: num(e.startedAt, Date.now()), rows, closing: e.closing ?? null }
 }
 
 function parseEscrow(raw: unknown): Map<string, EscrowRecord> {
@@ -722,7 +785,7 @@ function parseLedger(raw: string): ParsedLedger {
   }
   const escrow = parseEscrow(f.escrow)
   for (const rec of escrow.values()) totals.inkPending += escrowTotal(rec)
-  return { totals, accounts, payouts, escrow }
+  return { totals, accounts, payouts, escrow, epoch: parseEpoch(f.epoch) }
 }
 
 // ─── coordinator ────────────────────────────────────────────────────────────
@@ -758,6 +821,8 @@ export interface LuscaCoordinator extends CoordinatorApi {
    * credits moved, or null when the token or the device id is not valid.
    */
   linkDevice(token: unknown, deviceId: unknown, ip: string): { wallet: string; ink: number } | null
+  /** Contribution epochs (server/proofs). */
+  epochs: EpochLedger
   /** Period INK of verified wallets, for the payout engine. */
   payouts: PayoutLedger
 }
@@ -932,6 +997,8 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
   let accounts = new Map<string, LedgerAccount>()
   let payoutState: PayoutLedgerState = { lastClosedId: null, lastClosedEndsAt: null }
   let escrow = new Map<string, EscrowRecord>() // strike identity -> gradient jobs + escrowed INK
+  let epochAcc: { index: number; startedAt: number; rows: Map<string, EpochRow> } | null = null // open contribution epoch
+  let epochClosing: unknown = null // write-ahead record of the epoch being closed (server/proofs)
   // ledger account key -> strike identities whose escrow record may hold items for it (a superset:
   // every insert is indexed, removals are dropped eagerly on confirm / forfeit and lazily on read)
   const escrowIdx = new Map<string, Set<string>>()
@@ -996,6 +1063,8 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     accounts = l.accounts
     payoutState = l.payouts
     escrow = l.escrow
+    epochAcc = l.epoch ? { index: l.epoch.index, startedAt: l.epoch.startedAt, rows: l.epoch.rows } : null
+    epochClosing = l.epoch?.closing ?? null
     escrowIdx.clear()
     for (const [sk, rec] of escrow) for (const [k, it] of Object.entries(rec.items)) indexEscrow(it.acct ?? k, sk)
     log('info', `ledger loaded${from === ledgerPath ? '' : ` from ${path.basename(from)}`}: ${accounts.size} accounts, ${round2(totals.inkIssued)} INK issued lifetime`)
@@ -1146,6 +1215,14 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       escrow: Object.fromEntries(
         [...escrow].map(([k, r]) => [k, { trainJobs: r.trainJobs, lastAt: r.lastAt, seq: r.seq ?? 0, items: Object.fromEntries(Object.entries(r.items).map(([a, it]) => [a, { ...it, ink: round6(it.ink) }])) }]),
       ),
+    }
+    if (epochAcc) {
+      file.epoch = {
+        index: epochAcc.index,
+        startedAt: epochAcc.startedAt,
+        rows: Object.fromEntries([...epochAcc.rows].map(([k, r]) => [k, [r.credits, r.jobs, r.flops] as [number, number, number]])),
+      }
+      if (epochClosing) file.epoch.closing = epochClosing
     }
     return JSON.stringify(file, null, 1)
   }
@@ -2059,6 +2136,7 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       acc.flops += p.flops
       acc.lastSeen = now
       touch(acc.key)
+      epochCredit(acc.key, ink, 1, p.flops)
     }
     // Append-only audit trail (salted hashes only; written asynchronously, never read back).
     issuance.write({
@@ -2382,7 +2460,61 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
     if (a.kind === 'device') a.earnNet = hid('net', accountNetKey(ip))
     a.flops += it.flops
     a.lastSeen = now
+    epochCredit(key, it.ink, it.jobs, it.flops)
     return a
+  }
+
+  /** A confirmed credit reached a ledger account: count it in the open contribution epoch. */
+  function epochCredit(key: string, ink: number, jobs: number, flops: number) {
+    if (!epochAcc) return
+    const credits = Math.round(ink * 1e6)
+    if (!(credits > 0)) return
+    const f = Number.isFinite(flops) && flops > 0 ? flops : 0
+    const r = epochAcc.rows.get(key)
+    if (r) {
+      r.credits += credits
+      r.jobs += jobs
+      r.flops += f
+    } else epochAcc.rows.set(key, { credits, jobs, flops: f })
+  }
+
+  const epochLedger: EpochLedger = {
+    open: () => (epochAcc ? { index: epochAcc.index, startedAt: epochAcc.startedAt } : null),
+    closing: () => epochClosing,
+    clearClosing() {
+      if (epochClosing === null) return
+      epochClosing = null
+      markDirty()
+    },
+    balances() {
+      const out: { key: string; credits: number; jobs: number; flops: number }[] = []
+      for (const a of accounts.values()) {
+        const credits = Math.round(a.ink * 1e6)
+        if (credits > 0) out.push({ key: a.key, credits, jobs: Math.max(0, Math.round(a.verified)), flops: Math.max(0, a.flops) })
+      }
+      return out
+    },
+    ledgerCredits: () => Math.max(0, Math.round(totals.inkIssued * 1e6)),
+    start(index, startedAt) {
+      epochAcc = { index, startedAt, rows: new Map() }
+      ledgerDirty = true
+      saveNowSync(`epoch ${index} start`)
+    },
+    close(endedAt, build) {
+      if (!epochAcc) throw new Error('no open epoch')
+      if (loadFailed) throw new Error('the ledger is not being saved (unreadable ledger.json); refusing to close an epoch')
+      const prev = epochAcc
+      const record = build(prev.index, prev.startedAt, prev.rows) // throws → nothing changes
+      epochAcc = { index: prev.index + 1, startedAt: endedAt, rows: new Map() }
+      epochClosing = record
+      ledgerDirty = true
+      if (saveNowSync(`epoch ${prev.index}`)) return true
+      // Not saved: keep collecting into the same epoch.
+      epochAcc = prev
+      epochClosing = null
+      return false
+    },
+    saving: () => !loadFailed,
   }
 
   /** Bound an escrow record's item count: merge per account (merged seq = newest, so release stays conservative). */
@@ -3216,5 +3348,6 @@ export function createCoordinator(opts: CoordinatorOptions & CoordinatorExtraOpt
       return { wallet, ink: round2(moved) }
     },
     payouts: payoutLedger,
+    epochs: epochLedger,
   }
 }
