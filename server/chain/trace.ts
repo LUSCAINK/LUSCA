@@ -148,22 +148,44 @@ export function createTraceRecorder(
   let t0: number | null = null
   let dropped = 0
 
-  const begin = (c: Omit<ScanCall, 't' | 'ms' | 'ok' | 'result'>): { at: number; entry: ScanCall | null } => {
+  interface Open {
+    at: number
+    /** When the request actually went out (rpc.ts onStart), after LUSCA's own pacing wait. */
+    sent: number | null
+    entry: ScanCall | null
+  }
+  const begin = (c: Omit<ScanCall, 't' | 'ms' | 'ok' | 'result'>): Open => {
     const at = clock()
     if (t0 === null) t0 = at
     if (list.length >= TRACE_MAX) {
       dropped++
-      return { at, entry: null }
+      return { at, sent: null, entry: null }
     }
     const entry: ScanCall = { ...c, t: Math.max(0, Math.round(at - t0)), ms: 0, ok: false, result: '' }
     list.push(entry)
-    return { at, entry }
+    return { at, sent: null, entry }
   }
-  const end = (b: { at: number; entry: ScanCall | null }, ok: boolean, result: string) => {
+  const end = (b: Open, ok: boolean, result: string) => {
     if (!b.entry) return
-    b.entry.ms = Math.max(0, Math.round(clock() - b.at))
+    const t = clock()
+    // the provider's time is the request alone; the wait for its turn is LUSCA's pacing, kept apart
+    const from = b.sent !== null && b.sent >= b.at ? b.sent : b.at
+    b.entry.ms = Math.max(0, Math.round(t - from))
+    const wait = Math.round(from - b.at)
+    if (wait > 0) b.entry.wait = wait
     b.entry.ok = ok
     b.entry.result = clip(result, 48)
+  }
+  /** The caller's options plus the hook rpc.ts calls when the request goes out. */
+  const withStart = <T extends { onStart?: () => void }>(b: Open, opts: T | undefined): T => {
+    const prev = opts?.onStart
+    return {
+      ...(opts ?? ({} as T)),
+      onStart: () => {
+        b.sent = clock()
+        prev?.()
+      },
+    }
   }
 
   const ctx: RpcCtx = {
@@ -171,7 +193,7 @@ export function createTraceRecorder(
       const key: BudgetKey = chain === 'solana' ? (opts?.discovery ? 'solana-discovery' : 'solana') : chain
       const b = begin({ kind: 'rpc', method: clip(method, 32), target: clip(targetOf(method, params, o.address)), provider: providerOf(key, 'RPC') })
       try {
-        const r = await inner.call(chain, method, params, opts)
+        const r = await inner.call(chain, method, params, withStart(b, opts))
         end(b, true, rpcResultOf(method, r))
         return r
       } catch (e) {
@@ -189,7 +211,7 @@ export function createTraceRecorder(
         provider: host ? providerOf(host, host === 'sourcify' ? 'Sourcify' : 'OtterSec') : 'registry',
       })
       try {
-        const r = await inner.fetchJson(url, opts)
+        const r = await inner.fetchJson(url, withStart(b, opts))
         end(b, true, host ? registryResultOf(host, r) : 'ok')
         return r
       } catch (e) {
@@ -235,6 +257,11 @@ export function scanDocOf(read: ChainRead, x: ScanExtras = {}): ScanDoc {
   if (read.programBytes !== null) d.programBytes = read.programBytes
   if (read.codeHash) d.codeHash = read.codeHash.slice(0, 64)
   if (read.bytecodeBytes !== null) d.bytecodeBytes = read.bytecodeBytes
+  if (read.chain !== 'solana' && read.codeHash) {
+    // server/chain/evm.ts notes either "metadata trailer (…) excluded from codeHash" or "no metadata trailer"
+    if (read.notes.some((n) => /metadata trailer \(.*\) excluded/i.test(n))) d.trailer = true
+    else if (read.notes.some((n) => /no metadata trailer/i.test(n))) d.trailer = false
+  }
   const st = read.securityTxt
   if (st) {
     const name = typeof st.name === 'string' ? clip(st.name, 48) : ''

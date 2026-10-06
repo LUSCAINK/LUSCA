@@ -359,22 +359,23 @@
   }
 }
 
-/* nine nav items: compact padding and no page counter until the drawer takes over at 1220px */
-@media (max-width: 1500px) {
+/* nine nav items in one row down to 1221px (the drawer takes over below), every label with its index
+   number: tighter padding and tracking first, then no page counter (the status bar shows it too) */
+@media (min-width: 1221px) and (max-width: 1500px) {
+  .nav > .nav-item {
+    padding: 0 11px;
+    gap: 6px;
+    letter-spacing: 0.06em;
+  }
+}
+@media (min-width: 1221px) and (max-width: 1360px) {
   .bar-stat {
     display: none;
   }
-  .nav-item {
-    padding: 0 12px;
-  }
-}
-/* narrow desktops: the index numbers go first so every label still fits in one row */
-@media (max-width: 1360px) {
   .nav > .nav-item {
-    padding: 0 11px;
-  }
-  .nav > .nav-item .nav-n {
-    display: none;
+    padding: 0 9px;
+    gap: 5px;
+    letter-spacing: 0.04em;
   }
 }
 

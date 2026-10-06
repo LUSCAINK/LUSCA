@@ -317,6 +317,9 @@ export type ClientMsg =
   // neuron.register: a valid session token (`auth`) → wallet:<w>, else `device` → device:<id>. One
   // watch per connection; a new watch replaces the previous one.
   | { t: 'account.watch'; device: string | null; auth?: string | null }
+  // The /scan page: on = chain events on this connection carry their call trace and decoded fields
+  // (ChainEvent.trace / .scan); every other connection gets the lean event. Send again after a reconnect.
+  | { t: 'chain.scan'; on: boolean }
   | { t: 'ping' };
 
 // REST

@@ -18,8 +18,9 @@ import path from 'node:path'
 import type { ChainId } from '../../shared/chain.ts'
 
 export interface RpcCtx {
-  call(chain: ChainId, method: string, params: unknown[], opts?: { discovery?: boolean; timeoutMs?: number; maxBytes?: number }): Promise<unknown>
-  fetchJson(url: string, opts?: { timeoutMs?: number; maxBytes?: number; host?: 'sourcify' | 'osec' }): Promise<unknown>
+  /** `onStart` runs when the request actually goes out, after any wait for its turn (in-flight limit, spacing, cool-down). */
+  call(chain: ChainId, method: string, params: unknown[], opts?: { discovery?: boolean; timeoutMs?: number; maxBytes?: number; onStart?: () => void }): Promise<unknown>
+  fetchJson(url: string, opts?: { timeoutMs?: number; maxBytes?: number; host?: 'sourcify' | 'osec'; onStart?: () => void }): Promise<unknown>
   usage(): Record<string, { used: number; limit: number }>
   canSpend(chain: ChainId, n?: number, discovery?: boolean): boolean
 }
@@ -364,6 +365,16 @@ export function createRpc(opts: RpcOptions): ChainRpc {
     }
   }
 
+  /** The caller's "request goes out now" hook (the /scan call trace); never lets it break the call. */
+  function started(fn: (() => void) | undefined) {
+    if (!fn) return
+    try {
+      fn()
+    } catch {
+      /* a trace hook is not the call's business */
+    }
+  }
+
   function release(g: Gate) {
     g.active = Math.max(0, g.active - 1)
     const w = g.waiters.shift()
@@ -443,7 +454,7 @@ export function createRpc(opts: RpcOptions): ChainRpc {
     chain: ChainId,
     method: string,
     params: unknown[],
-    o: { discovery?: boolean; timeoutMs?: number; maxBytes?: number } = {},
+    o: { discovery?: boolean; timeoutMs?: number; maxBytes?: number; onStart?: () => void } = {},
   ): Promise<unknown> {
     if (closed) throw new RpcError('closed', 'chain network layer closed')
     const key = budgetKey(chain, o.discovery === true)
@@ -458,6 +469,7 @@ export function createRpc(opts: RpcOptions): ChainRpc {
     await acquire(g, maxInFlight, minGapMs)
     try {
       charge(key)
+      started(o.onStart)
       const id = ++rpcId
       const { status, body } = await exchange(
         label,
@@ -504,7 +516,7 @@ export function createRpc(opts: RpcOptions): ChainRpc {
     }
   }
 
-  async function fetchJson(url: string, o: { timeoutMs?: number; maxBytes?: number; host?: 'sourcify' | 'osec' } = {}): Promise<unknown> {
+  async function fetchJson(url: string, o: { timeoutMs?: number; maxBytes?: number; host?: 'sourcify' | 'osec'; onStart?: () => void } = {}): Promise<unknown> {
     if (closed) throw new RpcError('closed', 'chain network layer closed')
     const key = hostKeyOf(url, o.host)
     if (!key) throw new RpcError('host', 'registry request to an unsupported host')
@@ -516,6 +528,7 @@ export function createRpc(opts: RpcOptions): ChainRpc {
     await acquire(g, 1, httpGapMs)
     try {
       charge(key)
+      started(o.onStart)
       const { status, body } = await exchange(
         label,
         url,

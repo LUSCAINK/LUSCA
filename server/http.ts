@@ -565,6 +565,8 @@ interface Client {
   /** Size and time of the last neuron job sent: the backlog it creates is expected, not a stall. */
   jobBytes: number
   jobAt: number
+  /** The /scan page is open on this socket ('chain.scan'): chain events arrive with their call trace and decoded fields. */
+  scan: boolean
 }
 
 export function createHub(opts: HubOptions): Hub {
@@ -739,18 +741,22 @@ export function createHub(opts: HubOptions): Hub {
     return true
   }
 
-  function broadcast(msg: ServerMsg) {
+  /** `only`: the clients this message is for (default: every client). */
+  function broadcast(msg: ServerMsg, only?: (c: Client) => boolean) {
     if (clients.size === 0) return
+    const n = only ? [...clients].filter(only).length : clients.size
+    if (n === 0) return
     const skippable = NON_ESSENTIAL.has(msg.t)
     const snapshot = SNAPSHOT.has(msg.t)
     // Shared CPU / memory pressure: sample out the live trace stream rather than stall the event loop.
-    if (skippable && (totalBuffered > TOTAL_BUFFER_LIMIT || !budget(clients.size, false))) return
-    if (!skippable) budget(clients.size, true)
+    if (skippable && (totalBuffered > TOTAL_BUFFER_LIMIT || !budget(n, false))) return
+    if (!skippable) budget(n, true)
     const data = JSON.stringify(msg) // serialize once for every client
     const cost = STREAM_RATE > 0 ? Buffer.byteLength(data) : 0
     const reserve = STREAM_RESERVE[msg.t] ?? 0
     const now = Date.now()
     for (const c of clients) {
+      if (only && !only(c)) continue
       if (c.ws.readyState !== WebSocket.OPEN) continue
       const buffered = c.ws.bufferedAmount
       if (!checkHard(c, buffered, now)) continue
@@ -791,6 +797,13 @@ export function createHub(opts: HubOptions): Hub {
           agentTimer = setTimeout(flushAgents, AGENT_COALESCE_MS)
           agentTimer.unref?.()
         }
+        return
+      }
+      if (msg.t === 'chain' && (msg.event?.trace || msg.event?.scan)) {
+        // the call trace and decoded fields are for /scan; every other page gets the lean event
+        const { trace: _t, scan: _s, ...lean } = msg.event
+        broadcast({ t: 'chain', event: lean }, (c) => !c.scan)
+        broadcast(msg, (c) => c.scan)
         return
       }
       broadcast(msg)
@@ -863,6 +876,7 @@ export function createHub(opts: HubOptions): Hub {
       throttled: 0,
       jobBytes: 0,
       jobAt: 0,
+      scan: false,
     }
     clients.add(client)
     perIp.set(ip, (perIp.get(ip) ?? 0) + 1)
@@ -899,6 +913,9 @@ export function createHub(opts: HubOptions): Hub {
             const m = modules
             safe('coordinator.handle', () => m.coordinator.handle(client.conn, msg as ClientMsg), undefined)
           }
+          return
+        case 'chain.scan': // the /scan page: chain events with their call trace from now on (or not)
+          client.scan = (msg as { on?: unknown }).on === true
           return
         default:
           return // 'ping' and unknown messages are ignored

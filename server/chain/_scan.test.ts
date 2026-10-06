@@ -305,5 +305,162 @@ await test('agents: every read carries its call trace and decoded fields; errors
   await store.close()
 })
 
+await test('trace: the wait for a turn (rpc.ts onStart) is kept apart from the provider time', async () => {
+  // a context that makes the call wait 60 ms for its turn, then answers in ~20 ms
+  const inner: RpcCtx = {
+    async call(_chain, _method, _params, opts) {
+      await wait(60)
+      opts?.onStart?.()
+      await wait(20)
+      return '0x6060'
+    },
+    async fetchJson(_url, opts) {
+      opts?.onStart?.()
+      await wait(5)
+      return { match: 'match' }
+    },
+    usage: () => ({}),
+    canSpend: () => true,
+  }
+  const rec = createTraceRecorder(inner, { provider: () => 'PublicNode' })
+  await rec.ctx.call('ethereum', 'eth_getCode', [EVM, 'latest'], { timeoutMs: 5000 })
+  await rec.ctx.fetchJson(`https://sourcify.dev/server/v2/contract/1/${EVM}`, { host: 'sourcify' })
+  const [a, b] = rec.calls()
+  assert.ok(a.wait !== undefined && a.wait >= 50, `wait recorded (${a.wait})`)
+  assert.ok(a.ms >= 15 && a.ms < 55, `ms is the request alone (${a.ms})`)
+  assert.equal(b.result, 'partial match')
+  assert.ok(!b.wait || b.wait < 5, 'no wait when the request went out at once')
+})
+
+await test('Helius end to end: real rpc.ts with a Helius endpoint names "Helius" in the event, never its URL or key', async () => {
+  const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+    const host = new URL(String(url)).hostname
+    if (host.includes('osec')) return new Response(JSON.stringify({ is_verified: false }), { status: 200, headers: { 'content-type': 'application/json' } })
+    const body = JSON.parse(String(init?.body ?? '{}')) as { id: number; method: string }
+    const result = body.method === 'getMultipleAccounts' ? { value: [{ data: ['', 'base64'], space: 1852 }, null, null, null] } : null
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }) as typeof fetch
+  const rpc = createRpc({ solanaRpc: SECRET, fetch: fetchFn, minGapMs: 0, httpGapMs: 0 })
+  const store = createChainStore({ dataDir: join(tmp, 'h'), log: quiet, saveDelayMs: 0 })
+  const queue: ChainCandidate[] = [{ chain: 'solana', address: SOL, via: 'block', score: 5 }]
+  const discovery: DiscoveryLike = {
+    start() {},
+    stop: async () => {},
+    next: (chain) => {
+      const i = queue.findIndex((c) => c.chain === chain)
+      return i >= 0 ? queue.splice(i, 1)[0] : null
+    },
+    push() {},
+    markRead() {},
+    stats: () => ({}),
+  }
+  const readSolana: ReadSolanaFn = async (address, ctx) => {
+    await ctx.call('solana', 'getMultipleAccounts', [[address, 'a', 'b', 'c'], { encoding: 'base64' }])
+    await ctx.fetchJson(`https://verify.osec.io/status/${address}`, { host: 'osec' })
+    return { read: mkRead('solana', address, { codeHash: 'h1', loader: 'bpf-upgradeable', upgradeable: true }), idlJson: null }
+  }
+  const readEvm: ReadEvmFn = async () => {
+    throw new Error('not used')
+  }
+  const sent: ChainEvent[] = []
+  const agents = createChainAgentsWith({
+    rpc,
+    discovery,
+    readSolana,
+    readEvm,
+    store,
+    broadcast: (m) => sent.push(m.event),
+    log: quiet,
+    agents: [{ id: 'sol-1', chain: 'solana' }],
+    minGapMs: 0,
+    idleMs: 20,
+    pace: false,
+    broadcastPerSec: 50,
+  })
+  agents.start()
+  const t0 = Date.now()
+  while (sent.length < 1 && Date.now() - t0 < 4000) await wait(10)
+  await agents.stop()
+  const ev = agents.feed(5).find((e) => e.chain === 'solana')
+  assert.ok(ev, 'a Solana read was emitted')
+  assert.equal(ev.trace![0].method, 'getMultipleAccounts')
+  assert.equal(ev.trace![0].provider, 'Helius', 'the Solana read names Helius')
+  assert.equal(ev.trace![1].provider, 'OtterSec')
+  assert.equal(agents.stats().providers?.solana, 'Helius', 'stats name the Solana provider')
+  const all = JSON.stringify([sent, agents.feed(5), agents.stats()])
+  assert.ok(!all.includes('helius-rpc'), 'no endpoint host')
+  assert.ok(!all.includes('0123456789abcdef'), 'no key')
+  await store.close()
+  await rpc.close()
+})
+
+await test('scan doc: EVM metadata trailer flag from the reader notes', () => {
+  const withTrailer = scanDocOf(mkRead('ethereum', EVM, { codeHash: 'c1', notes: ['runtime bytecode 900 bytes; metadata trailer (ipfs, solc, 53 bytes) excluded from codeHash'] }))
+  assert.equal(withTrailer.trailer, true)
+  const none = scanDocOf(mkRead('ethereum', EVM, { codeHash: 'c2', notes: ['runtime bytecode 45 bytes; no metadata trailer'] }))
+  assert.equal(none.trailer, false)
+  assert.equal(scanDocOf(mkRead('solana', SOL, { codeHash: 'c3' })).trailer, undefined)
+})
+
+await test('hub: chain events carry the trace only to sockets that sent chain.scan; the rest get the lean event', async () => {
+  const { createHub } = await import('../http.ts')
+  const { WebSocket } = await import('ws')
+  const hub = createHub({ distDir: null })
+  const port = await hub.listen(0, '127.0.0.1')
+  type Msg = { t: string; event?: ChainEvent }
+  const open = async () => {
+    const msgs: Msg[] = []
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+    ws.on('message', (d) => msgs.push(JSON.parse(String(d)) as Msg))
+    await new Promise((r) => ws.once('open', r))
+    return { ws, msgs }
+  }
+  const scan = await open()
+  const lean = await open()
+  scan.ws.send(JSON.stringify({ t: 'chain.scan', on: true }))
+  await wait(80)
+  const ev: ChainEvent = {
+    id: 'e1',
+    ts: Date.now(),
+    agent: 'sol-1',
+    chain: 'solana',
+    address: SOL,
+    name: 'amm',
+    kind: 'program',
+    via: 'block',
+    verdict: 'kept',
+    reason: 'on-chain IDL',
+    idl: true,
+    verifiedBy: null,
+    sourceFiles: 0,
+    sourceBytes: 0,
+    trace: [{ kind: 'rpc', method: 'getMultipleAccounts', target: 'program · programdata · IDL accounts', provider: 'Helius', t: 0, ms: 120, ok: true, result: '3 of 4 accounts' }],
+    scan: { loader: 'bpf-upgradeable' },
+  }
+  const chainOf = async (msgs: Msg[], id: string) => {
+    for (let i = 0; i < 100; i++) {
+      const m = msgs.find((x) => x.t === 'chain' && x.event?.id === id)
+      if (m?.event) return m.event
+      await wait(20)
+    }
+    throw new Error(`no chain event ${id}`)
+  }
+  hub.emit({ t: 'chain', event: ev })
+  const a = await chainOf(scan.msgs, 'e1')
+  const b = await chainOf(lean.msgs, 'e1')
+  assert.equal(a.trace?.[0].provider, 'Helius', 'the /scan socket gets the trace')
+  assert.deepEqual(a.scan, { loader: 'bpf-upgradeable' })
+  assert.equal(b.trace, undefined, 'other sockets get no trace')
+  assert.equal(b.scan, undefined)
+  scan.ws.send(JSON.stringify({ t: 'chain.scan', on: false }))
+  await wait(80)
+  hub.emit({ t: 'chain', event: { ...ev, id: 'e2' } })
+  const a2 = await chainOf(scan.msgs, 'e2')
+  assert.equal(a2.trace, undefined, 'chain.scan off: lean again')
+  scan.ws.close()
+  lean.ws.close()
+  await hub.close()
+})
+
 rmSync(tmp, { recursive: true, force: true })
 console.log(`\n${passed} passed${process.exitCode ? ', some FAILED' : ''}`)

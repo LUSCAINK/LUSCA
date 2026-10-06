@@ -213,7 +213,7 @@ export function createChainAgents(opts: {
         'info',
         `chain agents: ${DEFAULT_AGENTS.map((a) => a.id).join(', ')} (first read in ~20 s); Solana program reads via ${
           dedicatedSolana ? 'LUSCA_SOLANA_RPC' : 'the public RPC (LUSCA_SOLANA_RPC unset)'
-        }`,
+        } — /scan names it "${rpc.provider('solana')}"; EVM reads via ${(['ethereum', 'base', 'arbitrum'] as const).map((c) => `${c} ${rpc.provider(c)}`).join(', ')}`,
       )
     },
     async stop() {

@@ -785,7 +785,23 @@ export function createChainAgentsWith(d: ChainAgentsDeps): ChainAgents {
       frontier,
       budget: d.rpc.usage(),
       updatedAt: now(),
+      ...providersOf(),
     }
+  }
+
+  /** Who answers each chain's reads, by name (/scan names the source); absent without rpc.provider. */
+  function providersOf(): Pick<ChainStats, 'providers'> {
+    const name = d.rpc.provider
+    if (!name) return {}
+    const out: Partial<Record<ChainId, string>> = {}
+    for (const c of new Set(runs.map((r) => r.info.chain))) {
+      try {
+        out[c] = name(c === 'solana' ? 'solana' : c)
+      } catch {
+        /* unnamed: left out */
+      }
+    }
+    return { providers: out }
   }
 
   return {

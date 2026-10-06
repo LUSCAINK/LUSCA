@@ -245,6 +245,17 @@ a.sc-url-a:hover {
   min-height: 0;
   overflow: hidden;
 }
+/* rows scrolled up fade out under the address bar instead of being cut mid-glyph */
+.sc-doc.scrolled {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 22px, #000 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 22px, #000 100%);
+}
+/* reduced motion: nothing scrolls by itself; the reader scrolls */
+.sc-doc.by-hand {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
 .sc-doc-in {
   position: relative;
   padding: 14px 22px 30px;
@@ -358,6 +369,19 @@ a.sc-url-a:hover {
   text-transform: uppercase;
   overflow-wrap: anywhere;
 }
+/* long names (CamelCase contracts) step down a size rather than break mid-word */
+.sc-title.long {
+  font-size: clamp(18px, 1.65vw, 28px);
+}
+/* no name: the address itself, as it is (base58 is case-sensitive) */
+.sc-title.addr {
+  font-family: var(--f-mono);
+  font-stretch: normal;
+  font-weight: 500;
+  font-size: clamp(20px, 1.9vw, 30px);
+  letter-spacing: 0;
+  text-transform: none;
+}
 .sc-minis {
   display: flex;
   flex-wrap: wrap;
@@ -415,8 +439,9 @@ a.sc-url-a:hover {
   padding: 6px 14px;
   overflow: hidden;
   display: grid;
-  /* columns sized by the calls shown (subgrid rows), so a long method or provider name is never cut */
-  grid-template-columns: max-content minmax(0, 1fr) max-content max-content minmax(0, 1fr);
+  /* columns sized by the calls shown (subgrid rows): method, provider and duration never cut, the
+     result up to 34 characters on one line, the target wraps when space is short */
+  grid-template-columns: max-content minmax(14ch, 1fr) max-content max-content minmax(0, max-content);
   column-gap: 14px;
   align-content: start;
   flex: 1;
@@ -449,8 +474,17 @@ a.sc-url-a:hover {
   }
 }
 .sc-call > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
+}
+.sc-call .t,
+.sc-call .r {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.sc-call .w {
+  display: block;
+  font-size: var(--t-3xs);
+  color: var(--fg-3);
 }
 .sc-call .m {
   color: var(--hot);
@@ -578,22 +612,31 @@ a.sc-url-a:hover {
   color: var(--fg);
   font-weight: 500;
 }
+.sc-hub-l em {
+  font-style: normal;
+  color: var(--fg);
+}
+.sc-hub-l em.hot {
+  color: var(--hot);
+  font-weight: 600;
+}
 
 .sc-chips {
   position: absolute;
-  inset: 18px 28px 92px 14px;
+  inset: 0;
+  pointer-events: none;
 }
 .sc-chip {
   position: absolute;
-  left: var(--x);
-  top: var(--y);
+  left: 0;
+  top: 0;
   width: min(250px, 38%);
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 8px 12px 9px;
   border: 1px solid rgba(236, 235, 230, 0.22);
-  background: rgba(6, 6, 6, 0.9);
+  background: #070707;
   visibility: hidden;
 }
 .sc-chip.on {
@@ -612,6 +655,7 @@ a.sc-url-a:hover {
 }
 .sc-chip.hot {
   border-color: rgba(255, 77, 0, 0.7);
+  background: #0d0805;
   box-shadow: inset 0 0 26px rgba(255, 77, 0, 0.14);
 }
 .sc-chip .l {
@@ -632,6 +676,137 @@ a.sc-url-a:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* who answered: one node per provider, linked to the hub; a packet runs out per request and back per answer */
+.sc-srcs {
+  position: absolute;
+  top: 18px;
+  left: 56px;
+  right: 28px;
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  pointer-events: none;
+}
+.sc-src {
+  --src-bg: #080808;
+  position: relative;
+  flex: 0 1 280px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 12px 9px;
+  border: 1px solid var(--line-3);
+  background: var(--src-bg);
+  opacity: 0.5;
+  transition:
+    opacity 300ms var(--ease),
+    border-color 200ms var(--ease),
+    box-shadow 200ms var(--ease);
+}
+.sc-src.on {
+  opacity: 1;
+}
+.sc-src::before {
+  /* corner tick */
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: -1px;
+  width: 9px;
+  height: 9px;
+  border: 0 solid var(--fg-2);
+  border-width: 2px 0 0 2px;
+}
+.sc-src.hot {
+  --src-bg: #0e0705;
+  border-color: rgba(255, 77, 0, 0.6);
+}
+.sc-src.hot::before {
+  border-color: var(--hot);
+}
+.sc-src.busy {
+  border-color: var(--ice);
+  box-shadow: 0 0 0 1px rgba(159, 182, 255, 0.25);
+}
+.sc-src.hot.busy {
+  border-color: var(--hot);
+  box-shadow:
+    0 0 0 1px rgba(255, 77, 0, 0.35),
+    0 0 26px rgba(255, 77, 0, 0.28);
+}
+.sc-src.hit {
+  box-shadow: 0 0 22px rgba(159, 182, 255, 0.25);
+}
+.sc-src.hot.hit {
+  box-shadow: 0 0 30px rgba(255, 77, 0, 0.4);
+}
+.sc-src .k {
+  font-size: var(--t-3xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sc-src .n {
+  font-family: var(--f-display);
+  font-stretch: 125%;
+  font-weight: 900;
+  font-size: var(--t-lg);
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sc-src.hot .n {
+  color: var(--hot);
+}
+.sc-src .n.long {
+  font-size: var(--t-md);
+  line-height: 1.3;
+}
+.sc-src .c {
+  position: relative;
+  height: 1.5em;
+  font-size: var(--t-2xs);
+  letter-spacing: 0.02em;
+}
+.sc-src-c {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  background: var(--src-bg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-1);
+}
+.sc-src-c.on {
+  visibility: visible;
+}
+.sc-src-c .q::after {
+  content: ' …';
+  color: var(--fg-2);
+}
+.sc-src-c .a {
+  display: none;
+  color: var(--fg);
+}
+.sc-src-c.done .q {
+  display: none;
+}
+.sc-src-c.done .a {
+  display: inline;
+}
+.sc-src-c.fail .a {
+  color: var(--err);
 }
 
 .sc-stamp {
@@ -681,19 +856,26 @@ a.sc-url-a:hover {
 .sc-stamp.kept b {
   color: var(--hot);
 }
+.sc-stamp em {
+  font-style: normal;
+  font-size: var(--t-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
 .sc-stamp span {
   min-width: 0;
-  font-size: var(--t-2xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--t-xs);
+  letter-spacing: 0.02em;
   color: var(--fg-1);
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
 }
 
 /* ─── overlay: boxes + wires ──────────────────────── */
+/* front: boxes, and each wire's short run from its field to the window's edge (level with the field) */
 .sc-wires,
 .sc-boxes {
   position: absolute;
@@ -703,6 +885,25 @@ a.sc-url-a:hover {
   pointer-events: none;
   z-index: 3;
   overflow: visible;
+}
+/* back (inside the hub column, under chips, sources and the stamp): the rest of each wire, spokes,
+   chip-to-chip lines, provider links and their packets */
+.sc-back {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+.sc-run {
+  fill: none;
+  stroke: rgba(255, 77, 0, 0.9);
+  stroke-width: 1.5;
+}
+.sc-run.ice {
+  stroke: var(--ice-a);
+  stroke-width: 1;
 }
 .sc-wire {
   fill: none;
@@ -724,11 +925,45 @@ a.sc-url-a:hover {
 }
 .sc-net {
   fill: none;
-  stroke: rgba(236, 235, 230, 0.2);
+  stroke: rgba(236, 235, 230, 0.22);
   stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+.sc-src-link {
+  fill: none;
+  stroke: rgba(236, 235, 230, 0.28);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 5;
+}
+.sc-src-link.hot {
+  stroke: rgba(255, 77, 0, 0.55);
+}
+.sc-src-link.busy {
+  stroke: var(--ice);
+  stroke-width: 1.6;
+  animation: sc-flow 0.6s linear infinite;
+}
+.sc-src-link.hot.busy {
+  stroke: var(--hot);
+}
+@keyframes sc-flow {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+.sc-pk {
+  fill: var(--ice);
+  opacity: 0;
+}
+.sc-pk.hot {
+  fill: var(--hot);
+}
+.sc-pk.ret {
+  filter: drop-shadow(0 0 5px rgba(255, 77, 0, 0.9));
 }
 .sc-dot {
   fill: var(--hot);
+  opacity: 0;
 }
 .sc-dot.ice {
   fill: var(--ice);
@@ -779,6 +1014,21 @@ a.sc-url-a:hover {
   width: 6px;
   height: 6px;
 }
+.sc-box.mini {
+  outline-color: rgba(159, 182, 255, 0.35);
+  background: transparent;
+}
+.sc-box.mini > i {
+  width: 4px;
+  height: 4px;
+  border-width: 0;
+}
+.sc-box.mini > .a {
+  border-width: 1px 0 0 1px;
+}
+.sc-box.mini > .d {
+  border-width: 0 1px 1px 0;
+}
 .sc-tag {
   position: absolute;
   left: calc(100% + 10px);
@@ -796,6 +1046,14 @@ a.sc-url-a:hover {
 .sc-box.ice .sc-tag {
   background: var(--ice);
 }
+/* no room beside the field (long values, narrow screens): the tag sits on the box's top-right corner */
+.sc-box.flip .sc-tag {
+  left: auto;
+  right: -1px;
+  top: auto;
+  bottom: calc(100% + 3px);
+  transform: none;
+}
 
 /* ─── footer ──────────────────────────────────────── */
 .sc-foot {
@@ -811,10 +1069,30 @@ a.sc-url-a:hover {
   color: var(--fg-2);
   min-width: 0;
 }
+.sc-foot-t {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sc-provs {
+  flex: none;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.sc-provs b {
+  color: var(--fg);
+  font-weight: 500;
+}
+.sc-provs b.hot {
+  color: var(--hot);
+}
 .sc-agents {
+  flex: none;
   display: flex;
   gap: 14px;
-  flex-wrap: wrap;
 }
 .sc-agent {
   display: inline-flex;
@@ -840,6 +1118,11 @@ a.sc-url-a:hover {
 }
 .sc-still .sc-core .ring.r2 {
   display: none;
+}
+.sc-still .sc-src,
+.sc-still .sc-src-link.busy {
+  transition: none;
+  animation: none;
 }
 @media (prefers-reduced-motion: reduce) {
   .sc-beam {
@@ -916,12 +1199,18 @@ a.sc-url-a:hover {
   .sc-log-l {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* method + duration, then target, provider and result each on their own line: nothing cut */
   .sc-call {
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: 'm d' 't t' 'p r';
+    grid-template-areas: 'm d' 't t' 'p p' 'r r';
     gap: 1px 10px;
     padding: 5px 0;
     border-bottom: 1px solid var(--line);
+  }
+  .sc-call .m,
+  .sc-call .p {
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
   .sc-call .m {
     grid-area: m;
@@ -937,7 +1226,6 @@ a.sc-url-a:hover {
   }
   .sc-call .r {
     grid-area: r;
-    text-align: right;
   }
   .sc-right {
     display: flex;
@@ -972,6 +1260,19 @@ a.sc-url-a:hover {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
   }
+  .sc-srcs {
+    position: static;
+    order: -1;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .sc-src {
+    flex: 1 1 220px;
+  }
+  .sc-back {
+    display: none;
+  }
   .sc-chip {
     position: relative;
     left: auto;
@@ -995,10 +1296,19 @@ a.sc-url-a:hover {
     align-items: flex-start;
     padding: 10px var(--gutter);
   }
+  .sc-foot-t {
+    white-space: normal;
+  }
+  .sc-agents {
+    flex-wrap: wrap;
+  }
 }
 @media (max-width: 520px) {
   .sc-chips {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .sc-src {
+    flex-basis: 100%;
   }
   .sc-hud-l {
     gap: 8px 14px;

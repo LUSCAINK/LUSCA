@@ -20,7 +20,7 @@ const SERVER: Row[] = [
   ['ink', 'event: InkEvent · kind: sim | train · status: confirmed | pending | forfeited', 'every verdict, pass or fail, and every escrow change', 'all'],
   ['neuron.ok', 'neuron: NeuronInfo · auth: verified | invalid | none', 'answer to neuron.register', 'that neuron'],
   ['payout', 'overview: PayoutsOverview', 'a payout period closes or a payout transaction confirms', 'all'],
-  ['chain', 'event: ChainEvent (agent · chain · address · name · kind · via · verdict · reason · idl · verifiedBy · sourceFiles · sourceBytes)', 'a chain agent finishes a read (≤ 4/s)', 'all'],
+  ['chain', 'event: ChainEvent (agent · chain · address · name · kind · via · verdict · reason · idl · verifiedBy · sourceFiles · sourceBytes; trace · scan after chain.scan)', 'a chain agent finishes a read (≤ 4/s)', 'all'],
   ['account', 'scope: wallet | device | null · account: AccountView | null · at · device?: AccountView | null', 'answer to account.watch, then whenever that ledger account or its escrow changes (≤ 1/s); a wallet watch that names a device also carries that device’s account (credits that stay on it)', 'that client'],
   ['error', 'msg', 'a request could not be served', 'that client'],
 ]
@@ -32,6 +32,7 @@ const CLIENT: [string, string, string][] = [
   ['train.result', "result: { id, kind: 'train', grad (base64 encodeGrad), loss, ms }", 'answer the outstanding training job'],
   ['neuron.leave', '—', 'leave the pool; the socket stays open as a viewer'],
   ['account.watch', 'device: string | null · auth?: string | null', 'follow your own ledger account, no register needed: a valid session token (auth) → the wallet account, else the device id → the device account; one watch per socket, a new one replaces it'],
+  ['chain.scan', 'on: boolean', 'what /scan sends: on = chain events on this socket also carry the call trace and decoded fields of each read (≤ 8 KB each); other sockets get the lean event'],
   ['ping', '—', 'accepted and ignored (keep-alive)'],
 ]
 
@@ -50,7 +51,7 @@ const REST: [string, string, string, string][] = [
   ['POST', '/api/auth/link-device', '{ token, deviceId }', '{ wallet, ink } · moves the device’s current-period credits to the verified wallet (same network that earned them)'],
   ['GET', '/api/payouts', '—', 'PayoutsOverview { mode, treasury, period, history, rules } · cached 5 s'],
   ['GET', '/api/payouts/wallet/:address', '—', 'WalletPayouts: periods paid with amounts and tx signatures, current-period credits and estimated share'],
-  ['GET', '/api/chain/stats', '—', 'ChainStats: chain agents, reads, kept, rejections by reason, queues, daily call budgets · stored data, no RPC'],
+  ['GET', '/api/chain/stats', '—', 'ChainStats: chain agents, reads, kept, rejections by reason, queues, daily call budgets, the RPC provider of each chain by name · stored data, no RPC'],
   ['GET', '/api/chain/feed', 'limit ≤ 200 · scan=1', 'ChainEvent[] newest first; with scan=1 (≤ 50) each agent read also carries its call trace (method, target, provider, timing, result) and decoded fields, as /scan plays them'],
   ['GET', '/api/chain/items', 'chain · limit ≤ 200 · cursor', '{ items: ChainIndexItem[], next } kept programs and contracts, newest first'],
   ['GET', '/api/chain/item/:chain/:address', '—', '{ item, read } one kept item and its stored read; 404 when not kept'],
@@ -107,7 +108,7 @@ export function Protocol() {
         Client → server
       </H3>
       <p>
-        Neurons send these; any page may also send <C>account.watch</C> to follow its own credits. Inbound frames are limited to{' '}
+        Neurons send these; any page may also send <C>account.watch</C> to follow its own credits, and /scan sends <C>chain.scan</C>. Inbound frames are limited to{' '}
         {HUB.wsMaxPayloadMB} MB and {HUB.msgRate}/s sustained (burst {HUB.msgBurst}); binary frames and unknown types are ignored.
       </p>
       <Table label="ClientMsg">

@@ -25,12 +25,16 @@ export interface ChainEvent { id: string; ts: number; agent: string; chain: Chai
  * One network call of a read, as the agent made it: the method, what it asked for, who answered, when
  * (ms after the read's first call) and how long it took, and a short result. No URLs, no keys.
  */
-export interface ScanCall { kind: 'rpc' | 'registry'; method: string; target: string; provider: string; t: number; ms: number; ok: boolean; result: string }
+export interface ScanCall { kind: 'rpc' | 'registry'; method: string; target: string; provider: string; t: number; ms: number; ok: boolean; result: string
+  /** ms the call waited for its turn in LUSCA's own pacing (in-flight limit, spacing, cool-down) before the request went out; `ms` is the request alone. */
+  wait?: number }
 /** Decoded fields of one read (capped lists; `more` counts what was left out). Unknown fields are absent. */
 export interface ScanDoc {
   /** Calls left out of `trace` (over its cap). */
   traceMore?: number
   loader?: string; upgradeable?: boolean; authority?: string; deploySlot?: number; programBytes?: number; codeHash?: string; bytecodeBytes?: number
+  /** EVM: a compiler metadata trailer was found and left out of codeHash (false: the bytecode has none). */
+  trailer?: boolean
   /** security.txt name / project url (Solana). */
   project?: { name?: string; url?: string }
   proxy?: { standard: string; implementation: string; admin?: string }
@@ -45,6 +49,8 @@ export interface ScanDoc {
 }
 export interface ChainAgentInfo { id: string; chain: ChainId; state: 'reading' | 'idle' | 'waiting-budget' | 'error'; current: string | null; reads: number; kept: number; lastAt: number | null }
 export interface ChainIndexItem { chain: ChainId; address: string; name: string | null; kind: ReadKind; via: FoundVia; verifiedBy: 'osec' | 'sourcify' | null; idl: boolean; sourceFiles: number; sourceBytes: number; codeHash: string | null; firstSeen: number; readAt: number }
-export interface ChainStats { agents: ChainAgentInfo[]; reads: number; kept: number; rejected: Record<string, number>; programs: number; contracts: number; idls: number; verified: number; sourceBytes: number; byChain: Record<string, { reads: number; kept: number }>; frontier: Record<string, number>; budget: Record<string, { used: number; limit: number }>; updatedAt: number }
+export interface ChainStats { agents: ChainAgentInfo[]; reads: number; kept: number; rejected: Record<string, number>; programs: number; contracts: number; idls: number; verified: number; sourceBytes: number; byChain: Record<string, { reads: number; kept: number }>; frontier: Record<string, number>; budget: Record<string, { used: number; limit: number }>; updatedAt: number
+  /** Who answers each chain's reads, by name ('Helius', 'PublicNode' …); never a URL. */
+  providers?: Partial<Record<ChainId, string>> }
 // REST: GET /api/chain/stats -> ChainStats ; GET /api/chain/feed?limit=N (≤ 200) -> ChainEvent[] ; GET /api/chain/items?chain=&limit=&cursor= -> { items: ChainIndexItem[]; next: string | null } ; GET /api/chain/item/:chain/:address -> { item: ChainIndexItem; read: ChainRead } | 404   (all from stored data — NO live RPC per user request)
 // WS (shared/protocol.ts ServerMsg union gains): | { t: 'chain'; event: ChainEvent }   (broadcast, throttled ≤ 4/s)
