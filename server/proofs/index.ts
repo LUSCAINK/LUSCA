@@ -484,7 +484,8 @@ export function createProofs(opts: ProofsOptions): ProofsApi {
       }
     } else if (epochs.closing() != null) epochs.clearClosing()
 
-    const h = head()
+    // a close that could not be written yet (disk error) still counts as the head: tick() retries it
+    const h = pendingWrite ? pendingWrite.header : head()
     const open = epochs.open()
     if (!h) {
       // 2. genesis: the full confirmed balance of every account, once
