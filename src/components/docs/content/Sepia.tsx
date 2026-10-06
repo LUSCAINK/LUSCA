@@ -243,7 +243,9 @@ export function Sepia() {
             <td>
               <span className="tag solid">next</span>
             </td>
-            <td>GPT-style decoder, nanoGPT recipe, ~124M params, BPE tokens, trained on the full dataset</td>
+            <td>
+              GPT-style decoder, nanoGPT recipe, ~124M params, BPE tokens, trained on the LUSCA dataset and the protocol code index (listed on the <Link to="/sepia">Model</Link> page)
+            </td>
             <td>
               {bathy.zone}+ neurons (≥ {fmtInt(bathy.minGflops)} GFLOPS, {bathy.vram})
             </td>

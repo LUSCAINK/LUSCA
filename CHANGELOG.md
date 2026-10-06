@@ -7,6 +7,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Protocol code index for SEPIA-1.** The server collects source files from an allowlist of 110
+  public blockchain repositories (landmark protocols and core infrastructure across EVM, Solana,
+  Move, Cairo, Cosmos, Bitcoin and clients / VMs; no memecoins or token clones) into gzip JSONL
+  shards under `<data>/code`. One repository at a time, refreshed weekly when its commit moves;
+  large monorepos are pinned to their release branch or tag (Sui, Aptos, Agave, Bitcoin Core,
+  Osmosis, Anchor, OP Stack, Arbitrum Nitro, cosmos-sdk). Capped at 150 MB of shards
+  (`LUSCA_CODE_MAX_MB`; `LUSCA_CODE_INDEX=0` turns it off), filled in priority order; downloads
+  pause while GitHub rate-limits or fails. Core files over 200 KB that an entry names (Bitcoin
+  Core `validation.cpp`, the Agave bank, the Token-2022 processor, …) are kept up to 640 KB. The license
+  of every repository and file is recorded (SPDX id and tier); no repository is excluded by license.
+  A repository is skipped only when it is not public, its license or README forbids
+  machine-learning use, or it does not fit, and the reason is recorded (`server/codebase/`).
+- **`GET /api/code/stats`.** Status, commit, license, files and bytes per repository, with totals
+  per language and per ecosystem.
+- **Sepia page: "What SEPIA-1 will read".** Live totals, code by ecosystem and the repository list
+  with each license, from `GET /api/code/stats`.
+- **SEPIA-1 design notes** in `docs/SEPIA-1.md` and `docs/SEPIA-1-data.md`.
+
 ### Changed
 
 - **Credits.** The units earned for verified GPU work are now called credits everywhere in the

@@ -33,6 +33,8 @@
 //      LUSCA_TREASURY_SECRET · LUSCA_TREASURY_ADDRESS · LUSCA_PAYOUT_EVERY_H (12) · LUSCA_PAYOUT_SHARE (0.5)
 //      LUSCA_PAYOUT_RESERVE_SOL (0.05) · LUSCA_PAYOUT_MAX_SOL (5) · LUSCA_PAYOUT_MAX_WALLET_SOL (1)
 //      LUSCA_PAYOUT_MIN_SOL (0.001) — see server/payouts/config.ts
+//      LUSCA_CODE_INDEX (1; 0 = off) · LUSCA_CODE_MAX_MB (150; compressed shards under <data>/code)
+//      — protocol code index for SEPIA-1, see server/codebase
 //      NODE_ENV=development disables static serving of dist/.
 //
 // One process per data directory: <data>/.lock holds the owner's pid (refreshed every
@@ -49,6 +51,7 @@ import { createCoordinator } from './neurons/coordinator.ts'
 import { createAuth, type Auth } from './auth/auth.ts'
 import { resolvePayoutConfig } from './payouts/config.ts'
 import { createPayouts } from './payouts/index.ts'
+import { createCodeIndex } from './codebase/index.ts'
 import { createHub, ansi, log, DEFAULT_HUB_LIMITS, type HealthReport } from './http.ts'
 import type { CrawlerApi, TrainerApi } from './contracts.ts'
 import type { LuscaCoordinator } from './neurons/coordinator.ts'
@@ -107,6 +110,8 @@ const AGENTS = intEnv('LUSCA_AGENTS', 24, 1, 64) // the crawler caps agents at 6
 const PACE = floatEnv('LUSCA_PACE', 1, 0, 20)
 const DATASET_MAX_MB = intEnv('LUSCA_DATASET_MAX_MB', 2048, 0, 1_048_576)
 const DATASET_KEEP = intEnv('LUSCA_DATASET_KEEP', 0, 0, 100_000)
+const CODE_INDEX = !/^(0|false|no|off)$/i.test(process.env.LUSCA_CODE_INDEX?.trim() ?? '')
+const CODE_MAX_MB = floatEnv('LUSCA_CODE_MAX_MB', 150, 1, 100_000)
 const DATA_DIR = path.resolve(process.env.LUSCA_DATA?.trim() || path.join(ROOT, 'server', 'data'))
 const DIST_DIR = path.join(ROOT, 'dist')
 // default to loopback; set HOST=0.0.0.0 to expose on your LAN
@@ -449,7 +454,17 @@ async function main() {
     log.error('boot', 'failed to construct modules:', (e as Error)?.stack ?? e)
     process.exit(1)
   }
-  hub.bind({ crawler, trainer, coordinator, auth, payouts })
+  // Protocol code index (optional): a failure here never blocks the rest of the server.
+  let codeIndex: ReturnType<typeof createCodeIndex> | undefined
+  if (CODE_INDEX) {
+    try {
+      codeIndex = createCodeIndex({ dataDir: DATA_DIR, log: (level, msg) => log[level]('code', msg), maxMb: CODE_MAX_MB })
+    } catch (e) {
+      log.error('code', 'code index unavailable:', (e as Error)?.message ?? e)
+    }
+  }
+  // `code` serves GET /api/code/stats (CodeIndexStats); undefined when LUSCA_CODE_INDEX=0.
+  hub.bind({ crawler, trainer, coordinator, auth, payouts, code: codeIndex })
 
   let port: number
   try {
@@ -480,6 +495,11 @@ async function main() {
   } catch (e) {
     log.error('payouts', 'start failed:', (e as Error)?.stack ?? e)
   }
+  try {
+    codeIndex?.start() // first repository after 30 s, then one at a time
+  } catch (e) {
+    log.error('code', 'start failed:', (e as Error)?.stack ?? e)
+  }
 
   // ── graceful shutdown ──
   let stopping = false
@@ -506,7 +526,12 @@ async function main() {
     }
     await step('hub', () => hub.close())
     // Payouts first: an in-flight period close / send settles before the ledger's final save.
-    await Promise.all([step('payouts', () => payouts.stop()), step('crawler', () => crawler.stop()), step('trainer', () => trainer.stop())])
+    await Promise.all([
+      step('payouts', () => payouts.stop()),
+      step('crawler', () => crawler.stop()),
+      step('trainer', () => trainer.stop()),
+      step('code', () => codeIndex?.stop()), // aborts an in-flight download; committed shards stay
+    ])
     await step('coordinator', () => coordinator.stop())
     log.info('process', 'bye.')
     process.exit(0)

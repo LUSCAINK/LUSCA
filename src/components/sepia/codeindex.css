@@ -1,0 +1,560 @@
+/* ─── code index — what SEPIA-1 will read ───────────────────────────────── */
+
+.ci {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr);
+  grid-template-areas:
+    'alert alert'
+    'tot eco'
+    'repos repos'
+    'foot foot';
+  gap: 1px;
+  background: var(--line-2);
+  border: 1px solid var(--line-2);
+  min-width: 0;
+}
+.ci > .panel {
+  border: 0;
+  min-width: 0;
+}
+.ci-tot {
+  grid-area: tot;
+  display: flex;
+  flex-direction: column;
+}
+.ci-eco {
+  grid-area: eco;
+}
+.ci-repos {
+  grid-area: repos;
+}
+
+/* status line (error / unavailable) */
+.ci-alert {
+  grid-area: alert;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--bg-2);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+}
+.ci-alert-t {
+  min-width: 0;
+  line-height: 1.5;
+}
+.ci-alert-s {
+  color: var(--fg-3);
+}
+
+/* totals */
+.ci-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+}
+.ci-t {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 14px 16px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.ci-t:nth-child(even) {
+  border-right: 0;
+}
+.ci-t:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+.ci-t dt {
+  margin-bottom: auto;
+}
+.ci-t dd.num {
+  margin-top: 10px;
+  font-size: clamp(var(--t-xl), 2vw, 30px);
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ci-t.hot-t dd.num {
+  color: var(--hot);
+}
+.ci-t-s {
+  font-size: var(--t-3xs);
+  letter-spacing: 0.06em;
+  color: var(--fg-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ecosystem bars */
+.ci-bars {
+  list-style: none;
+}
+.ci-row,
+.ci-axis {
+  display: grid;
+  grid-template-columns: minmax(96px, 150px) minmax(0, 1fr) 72px 48px;
+  align-items: center;
+  column-gap: 14px;
+  padding: 9px 16px;
+}
+.ci-row {
+  border-bottom: 1px solid var(--line);
+}
+.ci-name {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.ci-n {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+.ci-row.lead .ci-n {
+  color: var(--hot);
+}
+.ci-s {
+  font-size: var(--t-3xs);
+  letter-spacing: 0.04em;
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+.ci-bar {
+  position: relative;
+  height: 14px;
+  background-image: var(--hatch);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.ci-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--fg-2);
+  transition: width var(--dur-3) var(--ease-expo);
+}
+.ci-row.lead .ci-bar i {
+  background: var(--hot);
+}
+.ci-v {
+  text-align: right;
+  font-size: var(--t-sm);
+  color: var(--fg);
+  white-space: nowrap;
+}
+.ci-pct {
+  text-align: right;
+  font-size: var(--t-2xs);
+  color: var(--fg-3);
+}
+.ci-axis {
+  padding-top: 8px;
+  padding-bottom: 12px;
+  font-size: var(--t-3xs);
+  color: var(--fg-3);
+}
+.ci-axis-in {
+  grid-column: 2;
+  display: flex;
+  justify-content: space-between;
+}
+
+.ci-empty {
+  padding: 18px 16px;
+  font-size: var(--t-xs);
+  color: var(--fg-3);
+}
+
+/* repository table — scrolls inside its panel on narrow screens */
+.ci-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-4) transparent;
+}
+.ci-scroll:focus-visible {
+  outline: 1px solid var(--hot);
+  outline-offset: -1px;
+}
+.ci-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  font-family: var(--f-mono);
+  font-size: var(--t-2xs);
+}
+.ci-table .w-repo {
+  width: auto;
+}
+.ci-table .w-cat {
+  width: 150px;
+}
+.ci-table .w-lic {
+  width: 150px;
+}
+.ci-table .w-sha {
+  width: 88px;
+}
+.ci-table .w-n {
+  width: 72px;
+}
+.ci-table .w-size {
+  width: 88px;
+}
+.ci-table .w-st {
+  width: 190px;
+}
+.ci-table thead th {
+  height: 30px;
+  padding: 0 12px;
+  text-align: left;
+  font-weight: 500;
+  font-size: var(--t-3xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  border-bottom: 1px solid var(--line-2);
+  white-space: nowrap;
+}
+.ci-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-1);
+  vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ci-table .c-n {
+  text-align: right;
+}
+.ci-table td.c-n {
+  color: var(--fg);
+}
+.ci-table tbody tr.ci-r:hover td {
+  background: var(--bg-3);
+}
+
+/* the repository column stays put while the rest scrolls sideways */
+.ci-table .c-repo {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg-1);
+}
+@media (max-width: 960px) {
+  .ci-table .c-repo {
+    box-shadow: inset -1px 0 0 var(--line-2);
+  }
+}
+
+.ci-grp th {
+  padding: 16px 12px 7px;
+  text-align: left;
+  font-weight: 500;
+  font-size: var(--t-3xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  border-bottom: 1px solid var(--line-2);
+  background: var(--bg-1);
+}
+.ci-grp-in {
+  position: sticky;
+  left: 12px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.ci-grp b {
+  font-family: var(--f-display);
+  font-stretch: 125%;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  color: var(--fg);
+}
+.ci-table tbody:first-of-type .ci-grp th {
+  padding-top: 12px;
+}
+
+.ci-repo {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg);
+  text-decoration: none;
+}
+a.ci-repo:hover,
+.ci-table td a:hover {
+  color: var(--hot);
+}
+.ci-owner {
+  color: var(--fg-2);
+}
+a.ci-repo:hover .ci-owner {
+  color: var(--hot-2);
+}
+.ci-table .c-cat {
+  color: var(--fg-2);
+}
+.ci-table .c-lic {
+  font-size: var(--t-3xs);
+  letter-spacing: 0.04em;
+  color: var(--fg-1);
+}
+.ci-table .c-sha a {
+  color: var(--fg-1);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--line-4);
+}
+.ci-table .c-sha {
+  color: var(--fg-3);
+}
+.ci-table td.c-st {
+  white-space: normal;
+}
+/* the status column next to the repository is for phones only */
+.ci-table .c-st-m {
+  display: none;
+}
+.ci-st {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-3xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+.ci-st.live {
+  color: var(--hot);
+}
+.ci-st.wait,
+.ci-st.skip {
+  color: var(--fg-2);
+}
+.ci-st.err {
+  color: var(--err);
+}
+.ci-note {
+  display: block;
+  margin-top: 3px;
+  font-size: var(--t-3xs);
+  color: var(--fg-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ci-r-wait td.c-repo .ci-repo,
+.ci-r-skip td.c-repo .ci-repo {
+  color: var(--fg-1);
+}
+
+/* footnote: recorded licenses + design notes */
+.ci-foot {
+  grid-area: foot;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 24px;
+  padding: 12px 16px;
+  background: var(--bg-1);
+  font-size: var(--t-2xs);
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+  color: var(--fg-2);
+}
+.ci-foot b {
+  color: var(--fg);
+  font-weight: 500;
+}
+.ci-foot a {
+  white-space: nowrap;
+  color: var(--fg);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line-4);
+}
+.ci-foot a:hover {
+  color: var(--hot);
+  border-bottom-color: var(--hot);
+}
+
+/* no ecosystem data yet (loading, unreachable, nothing listed): totals in one row, no empty chart area */
+@media (min-width: 1101px) {
+  .ci.bare {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'alert' 'tot' 'eco' 'repos' 'foot';
+  }
+  .ci.bare .ci-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-auto-rows: auto;
+  }
+  .ci.bare .ci-t,
+  .ci.bare .ci-t:nth-child(even) {
+    border-bottom: 0;
+    border-right: 1px solid var(--line);
+  }
+  .ci.bare .ci-t:last-child {
+    border-right: 0;
+  }
+  .ci.bare .ci-t dd.num {
+    font-size: var(--t-xl);
+  }
+}
+
+@media (max-width: 1100px) {
+  .ci {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'alert' 'tot' 'eco' 'repos' 'foot';
+  }
+  .ci-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .ci-t,
+  .ci-t:nth-child(even) {
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .ci-t:nth-child(3n) {
+    border-right: 0;
+  }
+  .ci-t:nth-last-child(-n + 3) {
+    border-bottom: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .ci-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .ci-t,
+  .ci-t:nth-child(3n) {
+    padding: 12px 14px;
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .ci-t:nth-child(even) {
+    border-right: 0;
+  }
+  .ci-t:nth-last-child(-n + 3) {
+    border-bottom: 1px solid var(--line);
+  }
+  .ci-t:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+  .ci-t dd.num {
+    font-size: var(--t-lg);
+  }
+  .ci-t-s {
+    white-space: normal;
+    overflow: visible;
+  }
+  .ci-row,
+  .ci-axis {
+    grid-template-columns: minmax(0, 1fr) 64px 44px;
+    grid-template-areas: 'name v pct' 'bar bar bar';
+    row-gap: 7px;
+    column-gap: 10px;
+    padding: 10px 14px;
+  }
+  .ci-name {
+    grid-area: name;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .ci-bar {
+    grid-area: bar;
+    height: 10px;
+  }
+  .ci-v {
+    grid-area: v;
+  }
+  .ci-pct {
+    grid-area: pct;
+  }
+  .ci-axis {
+    grid-template-areas: 'bar bar bar';
+  }
+  .ci-axis-in {
+    grid-area: bar;
+  }
+  /* Phones: repository · status · license · files · size. Category, commit and the desktop status
+     column are hidden; the visible cells take the first five <col> slots in order. */
+  .ci-table {
+    min-width: 534px;
+  }
+  .ci-table .c-cat,
+  .ci-table .c-sha,
+  .ci-table .c-st-d {
+    display: none;
+  }
+  .ci-table .c-st-m {
+    display: table-cell;
+  }
+  .ci-table col:nth-child(1) {
+    width: 150px;
+  }
+  .ci-table col:nth-child(2) {
+    width: 136px;
+  }
+  .ci-table col:nth-child(3) {
+    width: 120px;
+  }
+  .ci-table col:nth-child(4) {
+    width: 56px;
+  }
+  .ci-table col:nth-child(5) {
+    width: 72px;
+  }
+  .ci-table col:nth-child(6),
+  .ci-table col:nth-child(7) {
+    width: 0;
+  }
+  /* owner on its own line in a smaller size, so the repository name gets the whole column */
+  .ci-table td.c-repo {
+    white-space: normal;
+  }
+  .ci-repo {
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+  .ci-owner {
+    display: block;
+    font-size: var(--t-3xs);
+    color: var(--fg-3);
+  }
+  /* the table scrolls sideways: a soft edge on the right until its end is reached */
+  .ci-scroll {
+    background:
+      linear-gradient(to left, var(--bg-1) 30%, transparent) right center / 40px 100% no-repeat local,
+      linear-gradient(to left, color-mix(in oklab, var(--fg) 16%, transparent), transparent) right center / 18px 100% no-repeat scroll,
+      var(--bg-1);
+  }
+  .ci-foot {
+    flex-direction: column;
+    padding: 12px 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ci-bar i {
+    transition: none;
+  }
+}

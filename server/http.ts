@@ -17,6 +17,7 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws'
 import type { ClientMsg, Hello, ModelInfo, SectorInfo, ServerMsg, Stats } from '../shared/protocol.ts'
 import { SECTORS } from '../shared/sectors.ts'
 import type { PayoutsOverview, WalletPayouts } from '../shared/payouts.ts'
+import type { CodeIndexStats } from '../shared/codebase.ts'
 import { isSolanaAddress } from '../shared/base58.ts'
 import type { Auth } from './auth/auth.ts'
 import { SPAWN_TTL_MS, type CoordinatorApi, type CrawlerApi, type Emit, type NeuronConn, type TrainerApi } from './contracts.ts'
@@ -86,6 +87,8 @@ export interface Modules {
   auth?: Pick<Auth, 'issueNonce' | 'verify'>
   /** Payout engine. Without it /api/payouts* answers 503. */
   payouts?: HubPayouts
+  /** Protocol code index (server/codebase). Without it /api/code/stats answers 503. */
+  code?: { stats(): CodeIndexStats }
 }
 
 export interface HubOptions {
@@ -204,6 +207,7 @@ const LOOP_RESOLUTION_MS = 20
 const READ_CACHE_MS = 2_000               // /api/ledger, /api/neurons, traces: shared snapshot this old at most
 const READ_CACHE_MAX = 64
 const PAYOUTS_CACHE_MS = 5_000            // /api/payouts and /api/payouts/wallet/:address
+const CODE_STATS_CACHE_MS = 10_000        // /api/code/stats (the index changes once per repository)
 const DEVICE_ID_RE = /^[A-Za-z0-9_-]{6,64}$/ // browser / desktop neuron device ids (as the coordinator accepts them)
 const NON_ESSENTIAL = new Set<ServerMsg['t']>(['trace', 'agent', 'discover', 'reject'])
 /**
@@ -1452,6 +1456,17 @@ export function createHub(opts: HubOptions): Hub {
       if (!isSolanaAddress(address)) throw new HttpError(400, 'wallet must be a Solana address (base58, 32 bytes)')
       const payouts = m.payouts
       return sendJsonText(req, res, 200, cachedJson(`payouts:w:${address}`, () => payouts.wallet(address), PAYOUTS_CACHE_MS))
+    }
+
+    // ── protocol code index (what SEPIA-1 will read; read-only) ──
+
+    if (p === '/api/code/stats') {
+      allow(['GET', 'HEAD'])
+      const m = requireModules()
+      if (!m.code) throw new HttpError(503, 'the code index is not available on this server')
+      limit(readLimit, req, 'read')
+      const code = m.code
+      return sendJsonText(req, res, 200, cachedJson('code:stats', () => code.stats(), CODE_STATS_CACHE_MS))
     }
 
     throw new HttpError(404, 'not found')

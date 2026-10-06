@@ -33,7 +33,7 @@ export function Roadmap() {
       line: 'GPT-style decoder · nanoGPT recipe',
       rows: [
         ['params', '~124M'],
-        ['data', 'the full LUSCA dataset, tokenized'],
+        ['data', 'the LUSCA dataset + the protocol code index, tokenized'],
         ['compute', `${bathy.zone}+ neurons · ≥ ${fmtCompact(bathy.minGflops, 1)} GFLOPS · ${bathy.vram}`],
         ['state', 'not started — gated on neuron capacity'],
       ],

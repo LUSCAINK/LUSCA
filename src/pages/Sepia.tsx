@@ -5,6 +5,7 @@ import { Samples } from '@/components/sepia/Samples'
 import { Dataset } from '@/components/sepia/Dataset'
 import { Architecture } from '@/components/sepia/Architecture'
 import { Roadmap } from '@/components/sepia/Roadmap'
+import { CodeIndex } from '@/components/sepia/CodeIndex'
 import { Distributed } from '@/components/sepia/Distributed'
 import { HP, LN_VOCAB, MIN_CORPUS, fmtSci, lrAt } from '@/components/sepia/model'
 import { useLossHistory } from '@/components/sepia/history'
@@ -48,7 +49,7 @@ export default function Sepia() {
       <header className="sp-hero">
         <HeroCurve />
         <div className="sp-hero-bar mono">
-          <Kicker n="05" name="Model" />
+          <Kicker n="06" name="Model" />
           <span className="sp-mode" role="status">
             <span className={`led ${mode.led}`} />
             <b>{mode.tag}</b>
@@ -73,6 +74,7 @@ export default function Sepia() {
                 { id: 'sp-try', label: 'Try it' },
                 { id: 'sp-data', label: 'What it has read' },
                 { id: 'sp-arch', label: 'How it’s built' },
+                { id: 'sp-code', label: 'What SEPIA-1 will read' },
               ]}
             />
           </div>
@@ -138,6 +140,14 @@ export default function Sepia() {
 
       <Section id="sp-road" title="Roadmap" kicker="Three stages, each with its current status. No dates.">
         <Roadmap />
+      </Section>
+
+      <Section
+        id="sp-code"
+        title="What SEPIA-1 will read"
+        kicker="SEPIA-1, the next model, will learn to read real protocol code from public repositories. The list is live from the server; the indexed count rises as each repository is fetched."
+      >
+        <CodeIndex />
       </Section>
 
       <NextStep
