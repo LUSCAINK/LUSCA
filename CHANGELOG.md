@@ -9,6 +9,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Scan (`/scan`).** Watch the chain agents read programs and contracts as they happen, with
+  nothing to type: each read opens in a window on its Lens address, the calls it made play back in
+  their real order and relative timing (method, what was asked, the provider that answered — Helius
+  for Solana program reads in production —, duration, result), every decoded field gets a bounding
+  box and a wire to the LUSCA hub, and the read ends on its verdict. With no new read queued, the
+  latest reads are replayed and labelled with the time they were read.
+- **Call trace on chain-agent reads.** Every agent read records the calls it already makes (≤ 24,
+  no extra RPC, no URL or key: providers by name) and the fields it decoded, capped at 8 KB per
+  event; broadcast on the socket and served by `GET /api/chain/feed?scan=1` (the default feed stays
+  lean).
 - **Protocol code index for SEPIA-1.** The server collects source files from an allowlist of 110
   public blockchain repositories (landmark protocols and core infrastructure across EVM, Solana,
   Move, Cairo, Cosmos, Bitcoin and clients / VMs; no memecoins or token clones) into gzip JSONL

@@ -54,6 +54,7 @@ shows "—" and reconnects; it never substitutes recorded or generated data.
 | Run a neuron on your computer (one file, Node 20+) | https://lusca.ink/neuron.mjs |
 | Proof of contribution: verify the credit chain and your own leaf | https://lusca.ink/earn#ep-proofs |
 | Lens: read any Solana program or EVM contract, with a cited report | https://lusca.ink/lens |
+| Scan: watch the chain agents read contracts live, call by call | https://lusca.ink/scan |
 | SEPIA-1 tokenizer playground and release files | https://lusca.ink/sepia#sp-tok · `/models/sepia-1-tokenizer/` |
 | Manual (protocol, threat model, economics) | https://lusca.ink/docs |
 | Source | https://github.com/LUSCAINK/LUSCA |

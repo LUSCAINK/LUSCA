@@ -14,6 +14,7 @@
 import type { ChainAgentInfo, ChainEvent, ChainId, ChainIndexItem, ChainRead, ChainStats, FoundVia, ReadKind, Verdict } from '../../shared/chain.ts'
 import { BudgetError, RpcError, redact, type BudgetKey, type RpcCtx } from './rpc.ts'
 import { itemKey, shortAddr, type ChainStore } from './store.ts'
+import { capScan, createTraceRecorder, scanDocOf, type ScanExtras } from './trace.ts'
 
 type Log = (lvl: 'info' | 'warn' | 'error', msg: string) => void
 export type EvmChain = 'ethereum' | 'base' | 'arbitrum'
@@ -41,7 +42,7 @@ export interface DiscoveryLike {
 export type ReadSolanaFn = (
   address: string,
   ctx: RpcCtx,
-  opts?: { skipOsec?: (codeHash: string) => boolean },
+  opts?: { skipOsec?: (codeHash: string) => boolean; onElf?: (elf: Uint8Array) => void },
 ) => Promise<{ read: ChainRead; idlJson: unknown | null }>
 export type ReadEvmFn = (
   chain: EvmChain,
@@ -61,6 +62,18 @@ export type ReadEvmFn = (
 export type AgentRpc = RpcCtx & {
   remaining?(key: BudgetKey): number
   msUntilReset?(): number
+  /** Plain provider name for the public call trace ('Helius' …); never a URL. */
+  provider?(key: BudgetKey): string
+}
+
+/**
+ * Optional local analysis for the /scan page (no network): primitives a program binary imports, and
+ * the privileged functions / primitives of verified EVM source. index.ts wires server/lens's analysers
+ * with a small work budget; a failure or a budget overrun only leaves the fields out.
+ */
+export interface ScanAnalysers {
+  elfPrimitives?(elf: Uint8Array): string[]
+  evmSource?(files: { path: string; text: string }[], abiFunctions: string[]): { privileged: { fn: string; guard: string; file: string; line: number }[]; primitives: string[] } | null
 }
 
 export interface ChainAgentsDeps {
@@ -94,6 +107,8 @@ export interface ChainAgentsDeps {
   breakerMaxMs?: number
   /** Endpoint failures one candidate may go back into the frontier for before it is set aside (default 4). */
   endpointRetries?: number
+  /** Local analysis attached to the feed event for /scan (optional). */
+  analysers?: ScanAnalysers
   now?: () => number
 }
 
@@ -350,7 +365,8 @@ export function createChainAgentsWith(d: ChainAgentsDeps): ChainAgents {
 
   // ─── feed + broadcast ──────────────────────────────────────────────────────
 
-  function emit(ev: ChainEvent) {
+  function emit(raw: ChainEvent) {
+    const ev = raw.trace || raw.scan ? capScan(raw) : raw
     feedRing.push(ev)
     if (feedRing.length > FEED_MAX) feedRing.splice(0, feedRing.length - FEED_MAX)
     queue.push(ev)
@@ -376,9 +392,24 @@ export function createChainAgentsWith(d: ChainAgentsDeps): ChainAgents {
   function makeEvent(
     run: AgentRun,
     c: ChainCandidate,
-    o: { kind: ReadKind; name: string | null; verdict: Verdict; reason: string; idl: boolean; verifiedBy: 'osec' | 'sourcify' | null; sourceFiles: number; sourceBytes: number; address?: string },
+    o: {
+      kind: ReadKind
+      name: string | null
+      verdict: Verdict
+      reason: string
+      idl: boolean
+      verifiedBy: 'osec' | 'sourcify' | null
+      sourceFiles: number
+      sourceBytes: number
+      address?: string
+      trace?: ChainEvent['trace']
+      scan?: ChainEvent['scan']
+    },
   ): ChainEvent {
     const ts = now()
+    const extra: Pick<ChainEvent, 'trace' | 'scan'> = {}
+    if (o.trace?.length) extra.trace = o.trace
+    if (o.scan && Object.keys(o.scan).length) extra.scan = o.scan
     return {
       id: `${ts.toString(36)}-${(++evSeq).toString(36)}`,
       ts,
@@ -394,6 +425,7 @@ export function createChainAgentsWith(d: ChainAgentsDeps): ChainAgents {
       verifiedBy: o.verifiedBy,
       sourceFiles: o.sourceFiles,
       sourceBytes: o.sourceBytes,
+      ...extra,
     }
   }
 
@@ -402,7 +434,10 @@ export function createChainAgentsWith(d: ChainAgentsDeps): ChainAgents {
   async function readOne(run: AgentRun, c: ChainCandidate): Promise<'ok' | 'budget' | 'closed'> {
     const chain = run.info.chain
     const counts: Partial<Record<BudgetKey, number>> = {}
-    const ctx = countingCtx(counts)
+    // the calls of this read, recorded for the public trace (/scan): same calls, same budget
+    const rec = createTraceRecorder(countingCtx(counts), { provider: d.rpc.provider ? (k) => d.rpc.provider!(k) : undefined, address: c.address })
+    const ctx = rec.ctx
+    const elfScan: { prims: string[] | null } = { prims: null }
     setState(run, 'reading', c.address)
     let read: ChainRead
     let extras: {
@@ -416,7 +451,16 @@ export function createChainAgentsWith(d: ChainAgentsDeps): ChainAgents {
     try {
       if (chain === 'solana') {
         // program binary already kept: the read is a duplicate either way, so OtterSec is not asked
-        const r = await d.readSolana(c.address, ctx, { skipOsec: (h) => d.store.seenCode(h) !== null })
+        const onElf = d.analysers?.elfPrimitives
+          ? (elf: Uint8Array) => {
+              try {
+                elfScan.prims = d.analysers!.elfPrimitives!(elf)
+              } catch {
+                elfScan.prims = null
+              }
+            }
+          : undefined
+        const r = await d.readSolana(c.address, ctx, { skipOsec: (h) => d.store.seenCode(h) !== null, ...(onElf ? { onElf } : {}) })
         read = r.read
         extras = { idlJson: r.idlJson }
       } else {
@@ -462,7 +506,21 @@ export function createChainAgentsWith(d: ChainAgentsDeps): ChainAgents {
       d.store.countError(run.info.id, chain)
       run.info.reads++
       run.info.lastAt = now()
-      emit(makeEvent(run, c, { kind: 'account', name: null, verdict: 'error', reason: `${msg}${retry ? ' — will retry' : ''}`, idl: false, verifiedBy: null, sourceFiles: 0, sourceBytes: 0 }))
+      const failScan = rec.more() ? { traceMore: rec.more() } : undefined
+      emit(
+        makeEvent(run, c, {
+          kind: 'account',
+          name: null,
+          verdict: 'error',
+          reason: `${msg}${retry ? ' — will retry' : ''}`,
+          idl: false,
+          verifiedBy: null,
+          sourceFiles: 0,
+          sourceBytes: 0,
+          trace: rec.calls(),
+          scan: failScan,
+        }),
+      )
       setState(run, 'error', null)
       return 'ok'
     }
@@ -501,6 +559,9 @@ export function createChainAgentsWith(d: ChainAgentsDeps): ChainAgents {
       d.discovery.push({ chain, address: read.proxy.implementation, via: 'link', score: c.score + 1, hint: `implementation of ${shortAddr(c.address)}` })
     }
 
+    const scan = scanDocOf(read, scanExtras(run.info.chain, read, extras, res.verdict, elfScan.prims))
+    if (rec.more()) scan.traceMore = rec.more()
+
     const srcFiles = extras.sources?.length || read.sources.length
     const srcBytes = res.item?.sourceBytes ?? (extras.sources?.length ? extras.sources.reduce((s, f) => s + Buffer.byteLength(f.text ?? '', 'utf8'), 0) : read.sources.reduce((s, f) => s + f.bytes, 0))
     emit(
@@ -514,10 +575,41 @@ export function createChainAgentsWith(d: ChainAgentsDeps): ChainAgents {
         sourceFiles: srcFiles,
         sourceBytes: srcBytes,
         address: read.address || c.address,
+        trace: rec.calls(),
+        scan,
       }),
     )
     setState(run, res.verdict === 'error' ? 'error' : 'idle', null)
     return 'ok'
+  }
+
+  /** Local analysis for the /scan event: never throws, never calls the network. */
+  function scanExtras(
+    chain: ChainId,
+    read: ChainRead,
+    extras: { sources?: { path: string; text: string }[] },
+    verdict: Verdict,
+    elfPrims: string[] | null,
+  ): ScanExtras {
+    const x: ScanExtras = {}
+    if (extras.sources?.length) x.sourcePaths = extras.sources.map((f) => f.path)
+    if (chain === 'solana') {
+      if (elfPrims?.length) x.primitives = elfPrims
+      return x
+    }
+    // verified source worth showing: what the agents keep, and templates (their guards are the point)
+    const files = extras.sources ?? []
+    if (!files.length || !d.analysers?.evmSource || (verdict !== 'kept' && verdict !== 'boilerplate')) return x
+    try {
+      const a = d.analysers.evmSource(files, read.abi?.functions ?? [])
+      if (a) {
+        if (a.privileged.length) x.privileged = a.privileged
+        if (a.primitives.length) x.primitives = a.primitives
+      }
+    } catch {
+      /* over the work budget or unreadable: the fields stay out */
+    }
+    return x
   }
 
   /** A transient failure goes back into the frontier once (at half its score); anything else is marked read. */

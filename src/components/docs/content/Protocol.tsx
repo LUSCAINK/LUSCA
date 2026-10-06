@@ -51,7 +51,7 @@ const REST: [string, string, string, string][] = [
   ['GET', '/api/payouts', '—', 'PayoutsOverview { mode, treasury, period, history, rules } · cached 5 s'],
   ['GET', '/api/payouts/wallet/:address', '—', 'WalletPayouts: periods paid with amounts and tx signatures, current-period credits and estimated share'],
   ['GET', '/api/chain/stats', '—', 'ChainStats: chain agents, reads, kept, rejections by reason, queues, daily call budgets · stored data, no RPC'],
-  ['GET', '/api/chain/feed', 'limit ≤ 200', 'ChainEvent[] newest first'],
+  ['GET', '/api/chain/feed', 'limit ≤ 200 · scan=1', 'ChainEvent[] newest first; with scan=1 (≤ 50) each agent read also carries its call trace (method, target, provider, timing, result) and decoded fields, as /scan plays them'],
   ['GET', '/api/chain/items', 'chain · limit ≤ 200 · cursor', '{ items: ChainIndexItem[], next } kept programs and contracts, newest first'],
   ['GET', '/api/chain/item/:chain/:address', '—', '{ item, read } one kept item and its stored read; 404 when not kept'],
   ['GET', '/api/proofs', 'limit ≤ 100 · before', '{ head, headers, next, open, status, committed } contribution epochs, newest first (10.5)'],

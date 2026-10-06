@@ -1547,7 +1547,14 @@ export function createHub(opts: HubOptions): Hub {
         const n = raw === null || raw === '' ? 50 : Number(raw)
         if (!Number.isInteger(n) || n < 1) throw new HttpError(400, 'limit must be an integer from 1 to 200')
         const lim = Math.min(200, n)
-        return sendJsonText(req, res, 200, cachedJson(`chain:feed:${lim}`, () => chainApi.feed(lim), CHAIN_CACHE_MS), shortCache)
+        // ?scan=1: with each read's call trace and decoded fields (the /scan page; ≤ 50 events, ≤ 8 KB each)
+        const withScan = url.searchParams.get('scan') === '1'
+        if (withScan) {
+          const ls = Math.min(50, lim)
+          return sendJsonText(req, res, 200, cachedJson(`chain:feed:scan:${ls}`, () => chainApi.feed(ls), CHAIN_CACHE_MS), shortCache)
+        }
+        const lean = () => chainApi.feed(lim).map(({ trace: _t, scan: _s, ...ev }) => ev)
+        return sendJsonText(req, res, 200, cachedJson(`chain:feed:${lim}`, lean, CHAIN_CACHE_MS), shortCache)
       }
 
       if (p === '/api/chain/items') {
@@ -1626,7 +1633,7 @@ export function createHub(opts: HubOptions): Hub {
   }
 
   /** Client routes as declared in src/App.tsx (first segment → allowed extra segments). */
-  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, agents: 1, docs: 1, chain: 2, lens: 2 }
+  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, scan: 0, agents: 1, docs: 1, chain: 2, lens: 2 }
   function isClientRoute(segs: string[]): boolean {
     if (segs.length === 0) return true
     const first = segs[0].toLowerCase() // react-router matches case-insensitively

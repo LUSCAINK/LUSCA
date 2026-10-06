@@ -16,7 +16,33 @@ export interface ChainRead { chain: ChainId; address: string; kind: ReadKind; na
   abi: { functions: string[]; events: string[] } | null;
   verified: { by: 'osec' | 'sourcify'; match: 'full' | 'partial' | null; repo: string | null; commit: string | null; compiler: string | null } | null;
   sources: SourceFileInfo[]; notes: string[]; readAt: number; rpcCalls: number }
-export interface ChainEvent { id: string; ts: number; agent: string; chain: ChainId; address: string; name: string | null; kind: ReadKind; via: FoundVia; verdict: Verdict; reason: string; idl: boolean; verifiedBy: 'osec' | 'sourcify' | null; sourceFiles: number; sourceBytes: number }
+export interface ChainEvent { id: string; ts: number; agent: string; chain: ChainId; address: string; name: string | null; kind: ReadKind; via: FoundVia; verdict: Verdict; reason: string; idl: boolean; verifiedBy: 'osec' | 'sourcify' | null; sourceFiles: number; sourceBytes: number
+  /** The calls this read made, in the order they started (agent reads only; absent on older events and Lens reads). */
+  trace?: ScanCall[]
+  /** What the read decoded, enough to draw it without another request (agent reads only). */
+  scan?: ScanDoc }
+/**
+ * One network call of a read, as the agent made it: the method, what it asked for, who answered, when
+ * (ms after the read's first call) and how long it took, and a short result. No URLs, no keys.
+ */
+export interface ScanCall { kind: 'rpc' | 'registry'; method: string; target: string; provider: string; t: number; ms: number; ok: boolean; result: string }
+/** Decoded fields of one read (capped lists; `more` counts what was left out). Unknown fields are absent. */
+export interface ScanDoc {
+  /** Calls left out of `trace` (over its cap). */
+  traceMore?: number
+  loader?: string; upgradeable?: boolean; authority?: string; deploySlot?: number; programBytes?: number; codeHash?: string; bytecodeBytes?: number
+  /** security.txt name / project url (Solana). */
+  project?: { name?: string; url?: string }
+  proxy?: { standard: string; implementation: string; admin?: string }
+  verified?: { by: 'osec' | 'sourcify'; match?: 'full' | 'partial'; compiler?: string; repo?: string; commit?: string }
+  files?: { paths: string[]; more: number }
+  idl?: { source?: string; names: string[]; more: number; accounts: number; errors: number; events: number }
+  abi?: { names: string[]; more: number; events: number }
+  privileged?: { items: { fn: string; guard: string; at: string }[]; more: number }
+  primitives?: string[]
+  /** Up to a few of the read's own notes (immutable, verified build checked …). */
+  notes?: string[]
+}
 export interface ChainAgentInfo { id: string; chain: ChainId; state: 'reading' | 'idle' | 'waiting-budget' | 'error'; current: string | null; reads: number; kept: number; lastAt: number | null }
 export interface ChainIndexItem { chain: ChainId; address: string; name: string | null; kind: ReadKind; via: FoundVia; verifiedBy: 'osec' | 'sourcify' | null; idl: boolean; sourceFiles: number; sourceBytes: number; codeHash: string | null; firstSeen: number; readAt: number }
 export interface ChainStats { agents: ChainAgentInfo[]; reads: number; kept: number; rejected: Record<string, number>; programs: number; contracts: number; idls: number; verified: number; sourceBytes: number; byChain: Record<string, { reads: number; kept: number }>; frontier: Record<string, number>; budget: Record<string, { used: number; limit: number }>; updatedAt: number }

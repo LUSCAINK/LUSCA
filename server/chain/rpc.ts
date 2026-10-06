@@ -151,6 +151,8 @@ export interface ChainRpc extends RpcCtx {
   remaining(key: BudgetKey): number
   /** ms until the next 00:00 UTC (budget reset). */
   msUntilReset(): number
+  /** Who answers calls charged to `key`, as a plain name for the public trace ('Helius', 'PublicNode' …); never a URL. */
+  provider(key: BudgetKey): string
   /** Write budget.json now. */
   flush(): void
   /** Abort waits and in-flight requests; persist usage. */
@@ -168,6 +170,35 @@ interface Gate {
 const newGate = (): Gate => ({ active: 0, waiters: [], nextStart: 0, cooldownUntil: 0, strikes: 0 })
 
 const USER_AGENT = 'LUSCA-chain-agents/1.0 (+https://lusca.ink)'
+
+/** Known RPC providers by host substring: the public trace names the provider, never the URL (which may hold a key). */
+const PROVIDERS: [RegExp, string][] = [
+  [/helius/i, 'Helius'],
+  [/publicnode\.com$/i, 'PublicNode'],
+  [/(^|\.)solana\.com$/i, 'Solana public RPC'],
+  [/alchemy/i, 'Alchemy'],
+  [/infura\.io$/i, 'Infura'],
+  [/quiknode|quicknode/i, 'QuickNode'],
+  [/ankr\.com$/i, 'Ankr'],
+  [/llamarpc\.com$/i, 'LlamaRPC'],
+  [/drpc\.org$/i, 'dRPC'],
+  [/rpcpool\.com$|triton/i, 'Triton'],
+  [/(^|\.)base\.org$/i, 'Base public RPC'],
+  [/(^|\.)arbitrum\.io$/i, 'Arbitrum public RPC'],
+  [/^(localhost|127\.0\.0\.1|\[::1\])$/i, 'local RPC'],
+]
+
+/** Plain provider name of an endpoint URL ('Helius', 'PublicNode' …), or `fallback`. Never returns any part of the URL. */
+export function providerOfUrl(url: string | null | undefined, fallback = 'RPC'): string {
+  let host = ''
+  try {
+    host = new URL(String(url ?? '')).hostname.toLowerCase()
+  } catch {
+    return fallback
+  }
+  for (const [re, name] of PROVIDERS) if (re.test(host)) return name
+  return fallback
+}
 
 function hostKeyOf(url: string, explicit?: 'sourcify' | 'osec'): 'sourcify' | 'osec' | null {
   let host: string
@@ -204,6 +235,15 @@ export function createRpc(opts: RpcOptions): ChainRpc {
     arbitrum: opts.evmRpcs?.arbitrum?.trim() || DEFAULT_ENDPOINTS.arbitrum,
   }
   for (const u of Object.values(endpoints)) registerSecretUrl(u)
+  const providerNames: Record<BudgetKey, string> = {
+    solana: providerOfUrl(endpoints.solana, 'Solana RPC'),
+    'solana-discovery': providerOfUrl(endpoints['solana-discovery'], 'Solana RPC'),
+    ethereum: providerOfUrl(endpoints.ethereum, 'Ethereum RPC'),
+    base: providerOfUrl(endpoints.base, 'Base RPC'),
+    arbitrum: providerOfUrl(endpoints.arbitrum, 'Arbitrum RPC'),
+    sourcify: 'Sourcify',
+    osec: 'OtterSec',
+  }
 
   const limits: Record<BudgetKey, number> = { ...DEFAULT_LIMITS }
   for (const k of BUDGET_KEYS) {
@@ -525,6 +565,7 @@ export function createRpc(opts: RpcOptions): ChainRpc {
       return Math.max(0, limits[key] - used[key])
     },
     msUntilReset: () => DAY - (now() % DAY),
+    provider: (key) => providerNames[key],
     flush,
     async close() {
       if (closed) return

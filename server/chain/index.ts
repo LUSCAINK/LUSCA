@@ -26,6 +26,8 @@ import { readSolana } from './solana.ts'
 import { readEvm } from './evm.ts'
 import { createLens, DEFAULT_LENS_LIMITS, type Lens } from '../lens/index.ts'
 import { createProvenanceIndex } from '../lens/provenance.ts'
+import { AnalysisLimit, Work, findPrimitives, findPrivileged } from '../lens/evm-analysis.ts'
+import { scanElf, solanaPrimitives } from '../lens/elf-syscalls.ts'
 
 type Log = (lvl: 'info' | 'warn' | 'error', msg: string) => void
 
@@ -48,6 +50,38 @@ function intEnv(name: string, def: number, min: number, max: number): number {
 }
 
 const FEED_SAVE_MS = 15_000
+
+/** Source analysed for the /scan event at most (bytes); larger bundles are left to Lens. */
+const SCAN_SOURCE_MAX_BYTES = 1_500_000
+/** Work budget of that analysis: ~1/13 of Lens's, so a read never holds the event loop for long. */
+const SCAN_WORK = 30_000_000
+const SCAN_WORK_MS = 250
+
+/**
+ * Local analysis attached to agent feed events for /scan: the primitives a program binary imports and
+ * the privileged functions / primitives of verified EVM source (server/lens analysers, small budget).
+ */
+function scanAnalysers(log: Log) {
+  let warned = false
+  return {
+    elfPrimitives: (elf: Uint8Array) => solanaPrimitives(scanElf(elf)).map((p) => p.name),
+    evmSource: (files: { path: string; text: string }[], abiFunctions: string[]) => {
+      let bytes = 0
+      for (const f of files) bytes += f.text.length
+      if (bytes > SCAN_SOURCE_MAX_BYTES) return null
+      const w = new Work(SCAN_WORK, SCAN_WORK_MS)
+      try {
+        return { privileged: findPrivileged(files, abiFunctions, w), primitives: findPrimitives(files, w).map((p) => p.name) }
+      } catch (e) {
+        if (!(e instanceof AnalysisLimit) && !warned) {
+          warned = true
+          log('warn', `scan analysis failed: ${(e as Error)?.message ?? e}`)
+        }
+        return null
+      }
+    },
+  }
+}
 
 export function createChainAgents(opts: {
   solanaRpc: string
@@ -104,6 +138,7 @@ export function createChainAgents(opts: {
     broadcast: opts.broadcast,
     log,
     agents: DEFAULT_AGENTS,
+    analysers: scanAnalysers(log),
     // let the server finish booting and discovery sample its first blocks
     startDelayMs: 20_000,
   })

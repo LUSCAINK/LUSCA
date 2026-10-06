@@ -359,13 +359,22 @@
   }
 }
 
-/* seven nav items: compact padding and no page counter until the drawer takes over at 1220px */
-@media (max-width: 1360px) {
+/* nine nav items: compact padding and no page counter until the drawer takes over at 1220px */
+@media (max-width: 1500px) {
   .bar-stat {
     display: none;
   }
   .nav-item {
     padding: 0 12px;
+  }
+}
+/* narrow desktops: the index numbers go first so every label still fits in one row */
+@media (max-width: 1360px) {
+  .nav > .nav-item {
+    padding: 0 11px;
+  }
+  .nav > .nav-item .nav-n {
+    display: none;
   }
 }
 

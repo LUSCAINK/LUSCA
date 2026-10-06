@@ -52,7 +52,7 @@ export default function Sepia() {
       <header className="sp-hero">
         <HeroCurve />
         <div className="sp-hero-bar mono">
-          <Kicker n="06" name="Model" />
+          <Kicker n="08" name="Model" />
           <span className="sp-mode" role="status">
             <span className={`led ${mode.led}`} />
             <b>{mode.tag}</b>
