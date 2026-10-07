@@ -90,6 +90,9 @@ const PRESETS: { label: string; tool: string; args: Args }[] = [
   { label: 'What code is closest to pump?', tool: 'lusca_atlas_relatives', args: { chain: 'solana', address: PUMP, limit: '6' } },
   { label: 'What did the agents just read?', tool: 'lusca_scan_recent', args: { limit: '5' } },
   { label: 'How big is the corpus?', tool: 'lusca_stats', args: {} },
+  { label: 'Which kept contracts call selfdestruct?', tool: 'lusca_search', args: { query: 'selfdestruct(', limit: '5' } },
+  { label: 'Which OpenZeppelin advisories are in kept code?', tool: 'lusca_advisories', args: {} },
+  { label: 'What was read from program binaries?', tool: 'lusca_binary_interface', args: {} },
 ]
 
 /** Form values → JSON arguments (empty fields left out, numbers parsed). */

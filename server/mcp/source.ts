@@ -14,6 +14,9 @@ import type { AtlasItem } from '../../shared/atlas.ts'
 import type { LensAnswer } from '../../shared/lens.ts'
 import type { CodeIndexStats } from '../../shared/codebase.ts'
 import type { Stats } from '../../shared/protocol.ts'
+import type { SearchQuery, SearchResult } from '../../shared/search.ts'
+import type { AdvisoryItem, AdvisoryList, AdvisorySummary } from '../../shared/advisory.ts'
+import type { BinaryInterface, BinarySummary } from '../../shared/binary.ts'
 
 /** A feature the tool needs is switched off on this server, or the upstream did not answer. Shown to the model as a tool error. */
 export class SourceError extends Error {
@@ -63,6 +66,37 @@ export interface McpSource {
   controlList(q: { controller: string; limit: number }): Promise<ControlPage>
   controlSummary(): Promise<ControlSummary>
   atlasItem(chain: ChainId, address: string): Promise<AtlasItem | null>
+  // ── code search, advisory check, read-the-binary (optional: a source without them answers "not available") ──
+  /** Code search over kept sources and IDLs; refusals (invalid / refused regex, rate limit, busy) throw SourceError. */
+  search?(q: SearchQuery, ip: string): Promise<SearchResult>
+  advisorySummary?(): Promise<AdvisorySummary>
+  /** One kept EVM contract's advisory check; a contract not checked / not kept throws SourceError (404) with the reason. */
+  advisoryGet?(chain: ChainId, address: string): Promise<AdvisoryItem>
+  /** Kept contracts carrying a file of one advisory (GHSA id); unknown id throws SourceError (404). */
+  advisoryList?(q: { advisory: string; limit: number }): Promise<AdvisoryList>
+  binarySummary?(): Promise<BinarySummary>
+  /** The interface recovered from one Solana program's executable; null when none was recovered yet. */
+  binaryGet?(address: string): Promise<BinaryInterface | null>
+}
+
+/** URL parameters of GET /api/search for a query (the page's deep links use the same). */
+export function searchParams(q: SearchQuery): URLSearchParams {
+  const p = new URLSearchParams({ q: q.q })
+  if (q.re) p.set('re', '1')
+  if (q.case) p.set('case', '1')
+  if (q.chain) p.set('chain', q.chain)
+  if (q.custom) p.set('custom', '1')
+  if (q.path) p.set('path', q.path)
+  if (q.lang) p.set('lang', q.lang)
+  if (q.cursor) p.set('cursor', q.cursor)
+  return p
+}
+
+/** A search refusal (the route answers a SearchResult with .error, or { error }) as a SourceError. */
+function searchRefusal(status: number, body: unknown, retryAfterS: number | null): SourceError {
+  const b = body as { error?: string | { message?: string } } | null
+  const msg = typeof b?.error === 'string' ? b.error : b?.error?.message
+  return new SourceError(msg || `code search answered ${status}`, status, retryAfterS)
 }
 
 // ─── local: the live modules of this server ─────────────────────────────────
@@ -78,6 +112,9 @@ export interface LocalModules {
   radarDiff?: { get(id: string): Promise<{ json: string; ready: boolean } | null> } | null
   control?: { summary(): ControlSummary; list(q: { controller?: string; limit?: number }): ControlPage; get(chain: ChainId, address: string): ControlEntry | null } | null
   atlas?: { route(p: string): Route } | null
+  search?: { route(p: string, params: URLSearchParams, ip: string): Promise<Route> } | null
+  advisory?: { route(p: string, params: URLSearchParams): Route } | null
+  binary?: { route(p: string, params: URLSearchParams): Route } | null
 }
 
 export interface LocalExtras {
@@ -90,6 +127,11 @@ export interface LocalExtras {
 function need<T>(v: T | null | undefined, what: string): T {
   if (!v) throw new SourceError(`${what} is not available on this server`)
   return v
+}
+
+const retryOf = (r: Route): number | null => {
+  const ra = Number(r.headers?.['Retry-After'])
+  return Number.isFinite(ra) && ra > 0 ? ra : null
 }
 
 function parseRoute<T>(r: Route): { status: number; body: T | { error?: string } } {
@@ -186,6 +228,40 @@ export function localSource(getModules: () => LocalModules | null, extras: Local
       if (r.status === 404) return null
       if (r.status !== 200) throw new SourceError((r.body as { error?: string }).error ?? `the atlas answered ${r.status}`, r.status)
       return r.body as AtlasItem
+    },
+    async search(q, ip) {
+      const s = need(mods().search, 'code search')
+      // keyed by the client address: the same per-address search limits and regex pause as /api/search
+      const raw = await s.route('/api/search', searchParams(q), ip)
+      const r = parseRoute<SearchResult>(raw)
+      if (r.status !== 200) throw searchRefusal(r.status, r.body, retryOf(raw))
+      return r.body as SearchResult
+    },
+    async advisorySummary() {
+      const r = parseRoute<AdvisorySummary>(need(mods().advisory, 'the advisory check').route('/api/advisories/summary', new URLSearchParams()))
+      if (r.status !== 200) throw new SourceError((r.body as { error?: string }).error ?? `the advisory check answered ${r.status}`, r.status)
+      return r.body as AdvisorySummary
+    },
+    async advisoryGet(chain, address) {
+      const r = parseRoute<AdvisoryItem>(need(mods().advisory, 'the advisory check').route(`/api/advisories/${chain}/${address}`, new URLSearchParams()))
+      if (r.status !== 200) throw new SourceError((r.body as { error?: string }).error ?? `the advisory check answered ${r.status}`, r.status)
+      return r.body as AdvisoryItem
+    },
+    async advisoryList(q) {
+      const r = parseRoute<AdvisoryList>(need(mods().advisory, 'the advisory check').route('/api/advisories/items', new URLSearchParams({ advisory: q.advisory, limit: String(q.limit) })))
+      if (r.status !== 200) throw new SourceError((r.body as { error?: string }).error ?? `the advisory check answered ${r.status}`, r.status)
+      return r.body as AdvisoryList
+    },
+    async binarySummary() {
+      const r = parseRoute<BinarySummary>(need(mods().binary, 'the binary reader').route('/api/binary/summary', new URLSearchParams()))
+      if (r.status !== 200) throw new SourceError((r.body as { error?: string }).error ?? `the binary reader answered ${r.status}`, r.status)
+      return r.body as BinarySummary
+    },
+    async binaryGet(address) {
+      const r = parseRoute<BinaryInterface>(need(mods().binary, 'the binary reader').route(`/api/binary/${address}`, new URLSearchParams()))
+      if (r.status === 404) return null
+      if (r.status !== 200) throw new SourceError((r.body as { error?: string }).error ?? `the binary reader answered ${r.status}`, r.status)
+      return r.body as BinaryInterface
     },
   }
 }
@@ -337,6 +413,26 @@ export function remoteSource(o: RemoteOptions): McpSource {
     },
     async atlasItem(c, address) {
       return orNull<AtlasItem>(`/api/atlas/item/${c}/${enc(address)}`, 'atlas')
+    },
+    async search(q) {
+      const r = await get<SearchResult>(`/api/search?${searchParams(q)}`)
+      if (r.status !== 200) throw searchRefusal(r.status, r.body, r.retryAfterS)
+      return r.body
+    },
+    async advisorySummary() {
+      return ok<AdvisorySummary>('/api/advisories/summary', 'advisory summary')
+    },
+    async advisoryGet(c, address) {
+      return ok<AdvisoryItem>(`/api/advisories/${c}/${enc(address)}`, 'advisory check')
+    },
+    async advisoryList(q) {
+      return ok<AdvisoryList>(`/api/advisories/items?advisory=${enc(q.advisory)}&limit=${q.limit}`, 'advisory list')
+    },
+    async binarySummary() {
+      return ok<BinarySummary>('/api/binary/summary', 'binary summary')
+    },
+    async binaryGet(address) {
+      return orNull<BinaryInterface>(`/api/binary/${enc(address)}`, 'binary interface')
     },
   }
 }

@@ -286,8 +286,8 @@ try {
   await test('tools/list: strict schemas, annotations, output schemas (2025-06-18)', async () => {
     const r = await post(url, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
     const tools = r.json.result.tools as any[]
-    assert.equal(tools.length, 10)
-    assert.deepEqual(tools.map((t) => t.name).sort(), ['lusca_atlas_relatives', 'lusca_control', 'lusca_control_summary', 'lusca_controlled_by', 'lusca_kept_item', 'lusca_lens', 'lusca_radar', 'lusca_radar_event', 'lusca_scan_recent', 'lusca_stats'])
+    assert.equal(tools.length, 13)
+    assert.deepEqual(tools.map((t) => t.name).sort(), ['lusca_advisories', 'lusca_atlas_relatives', 'lusca_binary_interface', 'lusca_control', 'lusca_control_summary', 'lusca_controlled_by', 'lusca_kept_item', 'lusca_lens', 'lusca_radar', 'lusca_radar_event', 'lusca_scan_recent', 'lusca_search', 'lusca_stats'])
     for (const t of tools) {
       assert.equal(t.inputSchema.type, 'object', t.name)
       assert.equal(t.inputSchema.additionalProperties, false, `${t.name} schema is strict`)
@@ -708,7 +708,7 @@ try {
         },
       }),
     )
-    assert.equal(m.listTools().length, 11)
+    assert.equal(m.listTools().length, 14)
     const r = await m.callTool('lusca_echo', { word: 'octopus' }, { ip: '1' })
     assert.equal(r.content[0].text, 'octopus')
     assert.throws(() => m.registry.add(TOOLS[0]), /registered twice/)

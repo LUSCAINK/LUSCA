@@ -3,7 +3,8 @@
 //   MCP client ── POST /mcp (JSON-RPC) ──▶ http.ts (origin, limits, body cap, Accept)
 //                                            └▶ protocol.ts (initialize, ping, tools/list, tools/call)
 //                                                 └▶ tools.ts registry ─▶ source.ts ─▶ live modules
-//                                                    (lens · radar · radar diff · control · atlas · chain feed / stats)
+//                                                    (lens · radar · radar diff · control · atlas · chain feed / stats
+//                                                     · code search · advisory check · read-the-binary: tools-code.ts)
 //
 // Read-only. Every tool answers from data the REST API already serves; Lens reads go through server/lens
 // with its cache, limits and daily budget. Env: LUSCA_MCP=0 turns /mcp off · LUSCA_MCP_UPSTREAM=https://…
@@ -23,6 +24,7 @@ import fs from 'node:fs'
 import { createCore, DEFAULT_INSTRUCTIONS, type McpCore } from './protocol.ts'
 import { createMcpHttp, DEFAULT_SHARED_CLIENT_RANGES, sharedRanges, type McpHttp, type McpHttpLimits, type SharedRanges } from './http.ts'
 import { createRegistry, TOOLS, type ToolRegistry } from './tools.ts'
+import { CODE_TOOLS } from './tools-code.ts'
 import { localSource, remoteSource, type LocalExtras, type LocalModules, type McpSource } from './source.ts'
 
 export { defineTool, ToolError, type McpTool, type ToolContext, type ToolOutput } from './tools.ts'
@@ -63,7 +65,7 @@ export interface Mcp {
 }
 
 export function createMcp(o: McpOptions): Mcp {
-  const registry = createRegistry(TOOLS)
+  const registry = createRegistry([...TOOLS, ...CODE_TOOLS])
   // eslint-disable-next-line prefer-const
   let http: McpHttp
   const core = createCore({
