@@ -31,6 +31,7 @@ import type { LuscaCoordinator } from './neurons/coordinator.ts'
 import { parseV6 } from './ingest/netguard.ts'
 import { BOT_CONTACT, BOT_FROM, ROBOTS_UA, USER_AGENT } from './ingest/util.ts'
 import { playerFile, resolveShare } from './share/cards.ts'
+import { createMcp, mcpEnabled, mcpSite, mcpSourceFromEnv } from './mcp/index.ts'
 
 /** GET /api/bot: who LuscaBot is and where site owners reach its operator (env LUSCA_BOT_CONTACT). */
 const BOT_INFO = { userAgent: USER_AGENT, robotsToken: ROBOTS_UA, contact: BOT_CONTACT || null, from: BOT_FROM }
@@ -1331,6 +1332,17 @@ export function createHub(opts: HubOptions): Hub {
     return modules
   }
 
+  // ── MCP for AI agents (server/mcp): POST /mcp, read-only tools over the same stores as the API ──
+  const mcpLog = (level: 'info' | 'warn' | 'error', msg: string) => log[level]('mcp', msg)
+  const mcp = mcpEnabled()
+    ? createMcp({
+        source: mcpSourceFromEnv(() => modules, { stats: buildStats, audits: () => (modules ? modelInfo(modules.trainer).audits : null) }, mcpLog),
+        site: mcpSite(),
+        originAllowed,
+        log: mcpLog,
+      })
+    : null
+
   async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
     const method = req.method ?? 'GET'
     const p = url.pathname.replace(/\/+$/, '') || '/'
@@ -1788,7 +1800,7 @@ export function createHub(opts: HubOptions): Hub {
   }
 
   /** Client routes as declared in src/App.tsx (first segment → allowed extra segments). */
-  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, scan: 0, radar: 1, control: 0, atlas: 0, agents: 1, docs: 1, chain: 2, lens: 2 }
+  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, scan: 0, radar: 1, control: 0, atlas: 0, mcp: 0, agents: 1, docs: 1, chain: 2, lens: 2 }
   function isClientRoute(segs: string[]): boolean {
     if (segs.length === 0) return true
     const first = segs[0].toLowerCase() // react-router matches case-insensitively
@@ -1983,6 +1995,7 @@ ${tags.map(([k, n, v]) => `<meta ${k}="${n}" content="${attr(v)}">`).join('\n')}
         if (isApi) await handleApi(req, res, url)
         else if (url.pathname === '/ws') throw new HttpError(426, 'websocket upgrade required', { Upgrade: 'websocket' })
         else if (url.pathname.startsWith('/r/')) serveShare(req, res, url)
+        else if (mcp && (url.pathname === '/mcp' || url.pathname === '/mcp/') && !mcp.http.wantsDocs(req)) await mcp.http.handle(req, res, clientIp(req))
         else await serveStatic(req, res, url)
       } catch (e) {
         const he = e instanceof HttpError ? e : null
