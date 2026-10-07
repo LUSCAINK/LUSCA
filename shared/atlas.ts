@@ -21,6 +21,8 @@ export interface AtlasMap {
   vf: number[]
   /** firstSeen, unix seconds. */
   t: number[]
+  /** Index of the nearest neighbour when it shares ≥ 30 % of features (-1: none); drawn as faint links. */
+  e: number[]
 }
 
 /** GET /api/atlas/item/:chain/:address */

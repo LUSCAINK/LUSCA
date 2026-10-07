@@ -37,6 +37,7 @@ interface Pt {
   born: number // ms: fly-in start
   pulse: number // ms: last pulse
   pulseHot: boolean
+  nn: Pt | null
 }
 interface Cam { x: number; y: number; z: number }
 interface FeedRow { id: string; ts: number; chain: ChainId; address: string; name: string | null; verdict: string }
@@ -90,7 +91,7 @@ export default function Atlas() {
           x: m.x[i], y: m.y[i],
           px: first ? W / 2 + (m.x[i] - W / 2) * 0.04 : m.x[i], py: first ? W / 2 + (m.y[i] - W / 2) * 0.04 : m.y[i],
           born: first ? now + Math.min(1400, (Math.hypot(m.x[i] - W / 2, m.y[i] - W / 2) / W) * 2400) : now,
-          pulse: first ? 0 : now, pulseHot: !first,
+          pulse: first ? 0 : now, pulseHot: !first, nn: null,
         }
         p.x = m.x[i]; p.y = m.y[i]; p.k = m.k[i]; p.name = m.name[i]; p.vf = m.vf[i] === 1
         if (!old && !first) { // a new read flies in from just outside its spot
@@ -101,6 +102,7 @@ export default function Atlas() {
         if (pend != null) { p.pulse = now; p.pulseHot = true; pendingPulse.current.delete(key) }
         next.push(p); nextMap.set(key, p)
       }
+      next.forEach((p, i) => { const j = m.e?.[i] ?? -1; p.nn = j >= 0 ? next[j] ?? null : null })
       pts.current = next
       byKey.current = nextMap
       clustersRef.current = m.clusters
@@ -248,6 +250,19 @@ export default function Atlas() {
       for (let gy = Math.max(0, Math.floor(wy0 / step) * step); gy <= Math.min(W, wy1); gy += step) {
         const y = Math.round(h / 2 + (gy - c.y) * s) + 0.5
         ctx.moveTo(Math.max(0, w / 2 + (0 - c.x) * s), y); ctx.lineTo(Math.min(w, w / 2 + (W - c.x) * s), y)
+      }
+      ctx.stroke()
+
+      // nearest-neighbour links (faint constellation)
+      ctx.lineWidth = 1
+      ctx.strokeStyle = `rgba(236,235,230,${selRef.current ? 0.025 : 0.07})`
+      ctx.beginPath()
+      for (const p of pts.current) {
+        const q = p.nn
+        if (!q || now < p.born + 600 || now < q.born + 600) continue
+        if (Math.abs(p.px - q.px) + Math.abs(p.py - q.py) > 900) continue // long links read as noise
+        ctx.moveTo(w / 2 + (p.px - c.x) * s, h / 2 + (p.py - c.y) * s)
+        ctx.lineTo(w / 2 + (q.px - c.x) * s, h / 2 + (q.py - c.y) * s)
       }
       ctx.stroke()
 

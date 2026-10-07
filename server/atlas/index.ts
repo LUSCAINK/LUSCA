@@ -203,6 +203,7 @@ export function createAtlas(o: AtlasOptions): Atlas {
       a: nodes.map((nd) => nd.address),
       vf: nodes.map((nd) => (nd.verifiedBy ? 1 : 0)),
       t: nodes.map((nd) => Math.floor(nd.firstSeen / 1000)),
+      e: nodes.map((_, i) => { const nn = edges[i]?.[0]; return nn && nn.w >= 0.3 ? nn.j : -1 }),
     }
     mapCache = { v: version, json: JSON.stringify(m), map: m }
     return m

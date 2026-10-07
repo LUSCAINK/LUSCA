@@ -5,7 +5,7 @@ import type { ChainId, ChainRead } from '../../shared/chain.ts'
 export const MINHASH_K = 64
 
 /** Feature tokens of one read: ABI function / event names (EVM), IDL instruction / account names (Solana), shape tokens. */
-export function featuresOf(read: Pick<ChainRead, 'chain' | 'kind' | 'abi' | 'idl' | 'proxy' | 'loader' | 'upgradeable' | 'sources'>): string[] {
+export function featuresOf(read: Pick<ChainRead, 'chain' | 'kind' | 'abi' | 'idl' | 'proxy' | 'loader' | 'upgradeable' | 'sources'> & Partial<Pick<ChainRead, 'programBytes' | 'securityTxt'>>): string[] {
   const out = new Set<string>()
   const nameOf = (s: string) => s.split('(')[0].trim()
   for (const f of read.abi?.functions ?? []) { const n = nameOf(f); if (n) out.add(`fn:${n}`) }
@@ -17,6 +17,9 @@ export function featuresOf(read: Pick<ChainRead, 'chain' | 'kind' | 'abi' | 'idl
     out.add(read.idl ? 'sol:idl' : 'sol:no-idl')
     if (read.loader) out.add(`loader:${read.loader}`)
     if (read.upgradeable != null) out.add(read.upgradeable ? 'sol:upgradeable' : 'sol:immutable')
+    if (read.securityTxt) out.add('sol:security.txt')
+    // programs without an IDL: size band (half-octaves) keeps builds of one codebase together
+    if (!read.idl && read.programBytes && read.programBytes > 0) out.add(`size:${Math.round(Math.log2(read.programBytes) * 2)}`)
   }
   // source file stems (OtterSec-verified programs without an IDL still share crate layouts)
   for (const s of read.sources ?? []) {
@@ -164,7 +167,9 @@ export function labelClusters(nodes: AtlasNode[], cl: number[]): string[] {
       const noIdl = has('sol:no-idl') >= ms.length * 0.5
       if (noIdl) {
         const imm = has('sol:immutable') >= ms.length * 0.5
-        head = `Solana · no IDL${imm ? ' · immutable' : ''}`
+        const sizes = ms.map((i) => nodes[i].tokens.find((t) => t.startsWith('size:'))).filter((t): t is string => !!t).map((t) => Number(t.slice(5))).sort((a, b) => a - b)
+        const kb = sizes.length >= ms.length * 0.5 ? Math.round(2 ** (sizes[sizes.length >> 1] / 2) / 1024) : 0
+        head = `Solana · no IDL${imm ? ' · immutable' : ''}${kb ? ` · ~${kb} KB` : ''}`
       }
     }
     const local = new Map<string, number>()
@@ -202,31 +207,50 @@ export function layout(nodes: AtlasNode[], edges: Edge[][], prev: Map<string, [n
     const p = prev.get(nodes[i].key)
     if (p) { pos[2 * i] = p[0]; pos[2 * i + 1] = p[1]; placed[i] = 1; warm++ }
   }
-  const R0 = Math.sqrt(n) * 1.2 + 4
-  // new nodes: next to the best placed neighbour, else on a seeded disc
-  for (let pass = 0; pass < 3; pass++) {
+  const R0 = Math.sqrt(n) * 1.1 + 4
+  // cold start: a random projection of the IDF-weighted feature set (seeded per token) — similar sets land close,
+  // unrelated ones spread as an organic cloud instead of a lattice
+  const df = new Map<string, number>()
+  for (const nd of nodes) for (const t of nd.tokens) df.set(t, (df.get(t) ?? 0) + 1)
+  const gauss = (t: string): [number, number] => {
+    const r = rng(fnv1a(t))
+    const u = Math.max(1e-9, r()), v = r()
+    const m = Math.sqrt(-2 * Math.log(u))
+    return [m * Math.cos(2 * Math.PI * v), m * Math.sin(2 * Math.PI * v)]
+  }
+  const proj = (nd: AtlasNode): [number, number] => {
+    let x = 0, y = 0, norm = 0
+    for (const t of nd.tokens) {
+      const w = Math.log((n + 1) / (df.get(t) ?? 1)) + 0.05
+      const [gx, gy] = gauss(t)
+      x += gx * w; y += gy * w; norm += w * w
+    }
+    const k = norm > 0 ? R0 / 2.6 / Math.sqrt(norm) : 0
+    return [x * k, y * k]
+  }
+  for (let pass = 0; pass < 2; pass++) {
     for (let i = 0; i < n; i++) {
       if (placed[i]) continue
-      const e = edges[i].find((x) => placed[x.j])
+      const e = warm ? edges[i].find((x) => placed[x.j]) : undefined
       const a = rand() * Math.PI * 2
       if (e) {
-        const r = 0.6 + rand() * 0.8
+        const r = 0.4 + rand() * 0.6
         pos[2 * i] = pos[2 * e.j] + Math.cos(a) * r
         pos[2 * i + 1] = pos[2 * e.j + 1] + Math.sin(a) * r
         placed[i] = 1
-      } else if (pass === 2) {
-        const r = Math.sqrt(rand()) * R0
-        pos[2 * i] = Math.cos(a) * r
-        pos[2 * i + 1] = Math.sin(a) * r
+      } else if (pass === 1 || !warm) {
+        const [x, y] = proj(nodes[i])
+        pos[2 * i] = x + Math.cos(a) * 0.3
+        pos[2 * i + 1] = y + Math.sin(a) * 0.3
         placed[i] = 1
       }
     }
   }
-  const iters = iterations ?? (warm > n * 0.8 ? 60 : 260)
+  const iters = iterations ?? (warm > n * 0.8 ? 50 : 160)
   const disp = new Float64Array(n * 2)
-  const cell = 1.6 // repulsion radius
+  const cell = 1.0 // repulsion radius
   for (let it = 0; it < iters; it++) {
-    const temp = (warm > n * 0.8 ? 0.25 : 1.2) * (1 - it / iters) + 0.02
+    const temp = (warm > n * 0.8 ? 0.2 : 0.6) * (1 - it / iters) + 0.02
     disp.fill(0)
     // springs
     for (let i = 0; i < n; i++) {
@@ -257,7 +281,7 @@ export function layout(nodes: AtlasNode[], edges: Edge[][], prev: Map<string, [n
           let d = Math.hypot(dx, dy)
           if (d >= cell) continue
           if (d < 1e-6) { const a = ((i * 7919 + j * 104729) % 6283) / 1000; dx = Math.cos(a) * 1e-3; dy = Math.sin(a) * 1e-3; d = 1e-3 }
-          const f = 0.35 * (cell - d) / cell / d
+          const f = 0.3 * (cell - d) / cell / d
           disp[2 * i] += dx * f; disp[2 * i + 1] += dy * f
           disp[2 * j] -= dx * f; disp[2 * j + 1] -= dy * f
         }
@@ -265,8 +289,8 @@ export function layout(nodes: AtlasNode[], edges: Edge[][], prev: Map<string, [n
     }
     // gravity + capped step
     for (let i = 0; i < n; i++) {
-      disp[2 * i] -= pos[2 * i] * 0.004
-      disp[2 * i + 1] -= pos[2 * i + 1] * 0.004
+      disp[2 * i] -= pos[2 * i] * 0.002
+      disp[2 * i + 1] -= pos[2 * i + 1] * 0.002
       const dx = disp[2 * i], dy = disp[2 * i + 1]
       const d = Math.hypot(dx, dy)
       const s = d > temp ? temp / d : 1
