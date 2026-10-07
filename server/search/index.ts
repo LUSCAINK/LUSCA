@@ -12,13 +12,15 @@
 //
 // REST: GET /api/search?q=&re=1&case=1&chain=&custom=1&path=&lang=&cursor= -> SearchResult
 //       GET /api/search/file?id= -> { file: SearchFileRefs }   (every kept contract that includes one unique file)
+//       GET /api/search/source?id=&q=&re=&case= -> { source: SearchSourceFile, marks, moreMarks }  (one unique file's text, ≤ 600 000 characters)
 //       GET /api/search/stats -> SearchStats
-// Module API (MCP): search(query: SearchQuery): Promise<SearchResult> ; file(id): Promise<SearchFileRefs | null> ; stats(): SearchStats
+// Module API (MCP): search(query: SearchQuery): Promise<SearchResult> ; file(id): Promise<SearchFileRefs | null> ;
+//                   source(id): Promise<SearchSourceFile | null> ; stats(): SearchStats
 import fs from 'node:fs'
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
 import type { ChainId, ChainIndexItem } from '../../shared/chain.ts'
-import { SEARCH_LANGS, type SearchFileRefs, type SearchLang, type SearchQuery, type SearchResult, type SearchStats } from '../../shared/search.ts'
+import { SEARCH_LANGS, type SearchFileRefs, type SearchLang, type SearchQuery, type SearchResult, type SearchSourceFile, type SearchStats } from '../../shared/search.ts'
 import { refuseRegex } from './common.mjs'
 
 type Log = (lvl: 'info' | 'warn' | 'error', msg: string) => void
@@ -53,6 +55,8 @@ export interface CodeSearch {
   search(q: SearchQuery): Promise<SearchResult>
   /** Every kept contract that includes one unique file (SearchFileHit.id), at most 500; null when unknown. */
   file(id: number): Promise<SearchFileRefs | null>
+  /** The text of one unique file (at most 600 000 characters) and, with a query, its matching lines; null when unknown. */
+  source(id: number, q?: SearchQuery | null): Promise<{ source: SearchSourceFile; marks: { n: number; hits: [number, number][] }[]; moreMarks: number; matches: number } | null>
   stats(): SearchStats
   /** HTTP: /api/search and /api/search/stats. */
   route(p: string, params: URLSearchParams, ip: string): Promise<{ status: number; json: string; headers?: Record<string, string> }>
@@ -67,13 +71,14 @@ export interface CodeSearch {
 const MB = 1048576
 const CHAINS: ChainId[] = ['solana', 'ethereum', 'base', 'arbitrum']
 const CACHE_MAX = 300
+const CACHE_MAX_BYTES = 24 * MB
 const CACHE_TTL_MS = 10 * 60_000
 const POOL = 2
 const QUEUE_MAX = 12
 const QUEUE_WAIT_MS = 4000
 
 interface NormQuery { q: string; re: boolean; case: boolean; chain: ChainId | null; custom: boolean; path: string | null; lang: SearchLang | null; offset: number }
-interface Job { id: number; q: NormQuery | { file: number }; resolve: (r: WorkerOut) => void; queuedAt: number; timer: NodeJS.Timeout | null }
+interface Job { id: number; q: NormQuery | { file: number } | { source: number; q: NormQuery | null }; resolve: (r: WorkerOut) => void; queuedAt: number; timer: NodeJS.Timeout | null }
 type WorkerOut = { ok: true; result: Record<string, unknown> } | { ok: false; code: 'timeout' | 'busy' | 'invalid'; message: string }
 interface QW { w: Worker; job: Job | null; dead: boolean }
 
@@ -154,6 +159,22 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
   let busyBuilding = false
   let saveWaiters: (() => void)[] = []
   const cache = new Map<string, { at: number; json: string; status: number }>()
+  let cacheBytes = 0
+  /** LRU of answered queries, bounded by entries and by bytes. */
+  function cachePut(key: string, e: { at: number; json: string; status: number }) {
+    const old = cache.get(key)
+    if (old) {
+      cacheBytes -= old.json.length
+      cache.delete(key)
+    }
+    cache.set(key, e)
+    cacheBytes += e.json.length
+    while (cache.size > CACHE_MAX || cacheBytes > CACHE_MAX_BYTES) {
+      const k = cache.keys().next().value as string
+      cacheBytes -= cache.get(k)!.json.length
+      cache.delete(k)
+    }
+  }
   const hits = new Map<string, number[]>()
   let statsCache: { at: number; json: string } | null = null
 
@@ -266,7 +287,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     }
   }
 
-  function runJob(q: NormQuery | { file: number }): Promise<WorkerOut> {
+  function runJob(q: NormQuery | { file: number } | { source: number; q: NormQuery | null }): Promise<WorkerOut> {
     if (queue.length >= QUEUE_MAX) return Promise.resolve({ ok: false, code: 'busy', message: 'search is busy — try again in a few seconds' })
     return new Promise((resolve) => {
       queue.push({ id: ++jobSeq, q, resolve, queuedAt: Date.now(), timer: null })
@@ -378,6 +399,17 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     return (out.result as { file: SearchFileRefs | null }).file
   }
 
+  async function source(id: number, raw?: SearchQuery | null): Promise<{ source: SearchSourceFile; marks: { n: number; hits: [number, number][] }[]; moreMarks: number; matches: number } | null> {
+    if (!Number.isSafeInteger(id) || id < 0 || !stats().ready) return null
+    const n = raw && raw.q ? normalizeQuery(raw) : null
+    let out = await runJob({ source: id, q: n && n.ok ? n.q : null })
+    // the query ran out of time on this file: send the text without marks rather than nothing
+    if (!out.ok && n && n.ok && out.code === 'timeout') out = await runJob({ source: id, q: null })
+    if (!out.ok) return null
+    const r = out.result as { source: SearchSourceFile | null; marks: { n: number; hits: [number, number][] }[]; moreMarks: number; matches: number }
+    return r.source ? { source: r.source, marks: r.marks, moreMarks: r.moreMarks, matches: r.matches } : null
+  }
+
   const cacheKey = (q: NormQuery) => `${gen}|${JSON.stringify([q.q, q.re, q.case, q.chain, q.custom, q.path, q.lang, q.offset])}`
 
   function takeIp(ip: string): number {
@@ -410,9 +442,18 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
       const f = await file(Number(raw))
       const json = JSON.stringify(f ? { file: f } : { error: 'no such file in the index (it may have been rebuilt: search again)' })
       const status = f ? 200 : 404
-      cache.set(key, { at: Date.now(), json, status })
-      while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value as string)
+      cachePut(key, { at: Date.now(), json, status })
       return { status, json, headers: f ? { 'Cache-Control': 'public, max-age=60' } : undefined }
+    }
+    if (p === '/api/search/source') {
+      // not kept in the server cache (a file can be large): the worker inflates it in a few ms; browsers cache it
+      const raw = params.get('id') ?? ''
+      if (!/^\d{1,7}$/.test(raw)) return { status: 400, json: JSON.stringify({ error: 'id must be a file id from a search result' }) }
+      const wait = takeIp(ip)
+      if (wait > 0) return { status: 429, json: JSON.stringify({ error: `${perIp} searches a minute per address — wait ${Math.ceil(wait / 1000)} s` }), headers: { 'Retry-After': String(Math.ceil(wait / 1000)) } }
+      const src = await source(Number(raw), params.get('q') ? queryFromParams(params) : null)
+      if (!src) return { status: 404, json: JSON.stringify({ error: 'no such file in the index (it may have been rebuilt: search again)' }) }
+      return { status: 200, json: JSON.stringify(src), headers: { 'Cache-Control': 'public, max-age=300' } }
     }
     if (p !== '/api/search') return { status: 404, json: JSON.stringify({ error: 'not found' }) }
     const raw = queryFromParams(params)
@@ -421,8 +462,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     const key = cacheKey(n.q)
     const hit = cache.get(key)
     if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
-      cache.delete(key)
-      cache.set(key, hit)
+      cachePut(key, hit)
       const j = JSON.parse(hit.json) as SearchResult
       j.cached = true
       return { status: hit.status, json: JSON.stringify(j), headers: { 'Cache-Control': 'public, max-age=60' } }
@@ -440,8 +480,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     const json = JSON.stringify(r)
     // results and timeouts are cached (a pattern that timed out is not run again for a while); busy / not-ready are not
     if (!r.error || r.error.code === 'timeout') {
-      cache.set(key, { at: Date.now(), json, status })
-      while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value as string)
+      cachePut(key, { at: Date.now(), json, status })
     }
     return { status, json, headers: status === 200 ? { 'Cache-Control': 'public, max-age=60' } : undefined }
   }
@@ -480,6 +519,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     },
     search,
     file,
+    source,
     stats,
     route,
     idle() {

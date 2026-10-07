@@ -3,6 +3,7 @@
 //
 // REST: GET /api/search?q=&re=1&case=1&chain=&custom=1&path=&lang=&cursor= -> SearchResult
 //       GET /api/search/file?id= -> { file: SearchFileRefs }
+//       GET /api/search/source?id=&q=&re=&case= -> { source: SearchSourceFile; marks: SearchLine-like matches; moreMarks }
 //       GET /api/search/stats -> SearchStats
 import type { ChainId } from './chain.ts'
 
@@ -118,6 +119,22 @@ export interface SearchFileRefs {
   /** At most 500, by chain then name; `more` counts the rest. */
   list: (SearchItem & { path: string })[]
   more: number
+}
+
+/** One unique file's text (GET /api/search/source?id=), cut at 600 000 characters. */
+export interface SearchSourceFile {
+  id: number
+  path: string
+  lang: SearchLang
+  lines: number
+  bytes: number
+  /** The contract the file is listed under; `contracts` kept contracts include it. */
+  item: SearchItem
+  contracts: number
+  library: boolean
+  codeIndex: boolean
+  text: string
+  truncated: boolean
 }
 
 export interface SearchTopFile { id: number; path: string; contracts: number; chains: Partial<Record<ChainId, number>>; lines: number; library: boolean; codeIndex: boolean; sample: SearchItem | null }

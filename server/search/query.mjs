@@ -126,7 +126,9 @@ function matchText(/** @type {string} */ s, /** @type {RegExp} */ rx, /** @type 
         for (let n = line + 1; ls < mEnd && n <= line + 12; n++) {
           const le = s.indexOf(NL, ls)
           const e = Math.min(mEnd, le < 0 ? s.length : le)
-          if (e > ls) (cur.more ??= []).push([n, 0, e - ls])
+          let a = ls
+          while (a < e && (s.charCodeAt(a) === 32 || s.charCodeAt(a) === 9)) a++
+          if (e > a) (cur.more ??= []).push([n, a - ls, e - ls])
           if (le < 0) break
           ls = le + 1
         }
@@ -193,6 +195,21 @@ function blocksOf(/** @type {string} */ s, /** @type {{ n: number; hits: [number
     }
   }
   return blocks
+}
+
+const item = (/** @type {number} */ iid) => {
+  const it = items[iid]
+  return { chain: it.chain, address: it.address, name: it.name }
+}
+/** The contract a shared file is listed under: the most recently kept one (a named one first). */
+const primaryOf = (/** @type {[number, number][]} */ refs) => {
+  let best = refs[0]
+  for (const r of refs) {
+    const a = items[r[0]]
+    const b = items[best[0]]
+    if ((!!a.name && !b.name) || (!!a.name === !!b.name && a.readAt > b.readAt)) best = r
+  }
+  return best
 }
 
 /**
@@ -268,21 +285,6 @@ function run(q) {
     }
     matchCache.set(ck, m)
     while (matchCache.size > 6) matchCache.delete(/** @type {string} */ (matchCache.keys().next().value))
-  }
-
-  const item = (/** @type {number} */ iid) => {
-    const it = items[iid]
-    return { chain: it.chain, address: it.address, name: it.name }
-  }
-  /** The contract a shared file is listed under: the most recently kept one (a named one first). */
-  const primaryOf = (/** @type {[number, number][]} */ refs) => {
-    let best = refs[0]
-    for (const r of refs) {
-      const a = items[r[0]]
-      const b = items[best[0]]
-      if ((!!a.name && !b.name) || (!!a.name === !!b.name && a.readAt > b.readAt)) best = r
-    }
-    return best
   }
 
   // one page of file results, grouped by their primary contract
@@ -373,11 +375,65 @@ function fileRefs(/** @type {number} */ id) {
   return { gen, file: { id, lines: f.lines, bytes: f.len, contracts: list.length, chains, list: list.slice(0, 500), more: Math.max(0, list.length - 500) } }
 }
 
+const SOURCE_MAX = 600_000
+
+/**
+ * One unique file's text (at most SOURCE_MAX characters) with the contract it is listed under, and, with a query,
+ * the matching lines of that file (at most 2 000, ranges included; a match over several lines marks each of them).
+ */
+function sourceOf(/** @type {number} */ id, /** @type {any} */ q) {
+  const f = files[id]
+  if (!f || f.idl || !f.refs.length) return { gen, source: null }
+  const text = decode(f)
+  const [piid, ppid] = primaryOf(f.refs)
+  /** @type {{ n: number; hits: [number, number][] }[]} */
+  const marks = []
+  let more = 0
+  let matchesCount = 0
+  if (q) {
+    const rx = new RegExp(q.re ? q.q : escapeRe(q.q), `gm${q.case ? '' : 'i'}`)
+    const r = matchText(text, rx, 2000, Infinity, Date.now() + SOFT_MS)
+    /** @type {Map<number, [number, number][]>} */
+    const at = new Map()
+    const add = (/** @type {number} */ n, /** @type {[number, number]} */ h) => {
+      const a = at.get(n)
+      if (a) a.push(h)
+      else at.set(n, [h])
+    }
+    for (const l of r.lines) {
+      for (const h of l.hits) add(l.n, h)
+      for (const [n, a, b] of l.more ?? []) add(n, [a, b])
+    }
+    for (const [n, hits] of [...at].sort((a, b) => a[0] - b[0])) marks.push({ n, hits })
+    more = Math.max(0, r.count - r.lines.length)
+    matchesCount = r.count
+  }
+  return {
+    gen,
+    marks,
+    moreMarks: more,
+    matches: matchesCount,
+    source: {
+      id,
+      path: paths[ppid],
+      lang: ['solidity', 'vyper', 'yul'].includes(f.lang) ? f.lang : 'other',
+      lines: f.lines,
+      bytes: f.len,
+      item: item(piid),
+      contracts: new Set(f.refs.map((r) => r[0])).size,
+      library: f.lib,
+      codeIndex: f.ci,
+      text: text.length > SOURCE_MAX ? text.slice(0, SOURCE_MAX) : text,
+      truncated: text.length > SOURCE_MAX,
+    },
+  }
+}
+
 port.on('message', (/** @type {any} */ msg) => {
   if (msg?.type === 'delta') apply(msg.delta)
   else if (msg?.type === 'query') {
     try {
-      port.postMessage({ type: 'result', id: msg.id, result: msg.q.file !== undefined ? fileRefs(msg.q.file) : run(msg.q) })
+      port.postMessage({ type: 'result', id: msg.id, result: msg.q.file !== undefined ? fileRefs(msg.q.file) : msg.q.source !== undefined ? sourceOf(msg.q.source, msg.q.q) : run(msg.q) })
     } catch (e) {
       port.postMessage({ type: 'error', id: msg.id, message: /** @type {Error} */ (e)?.message ?? String(e) })
     }

@@ -3,10 +3,10 @@
 // file. Literal or regex, case toggle, chain / custom-code / path / language filters. Deep links: /search?q=…
 //
 // Data: GET /api/search?q=&re=&case=&chain=&custom=&path=&lang=&cursor= (SearchResult), GET /api/search/stats.
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import type { ChainId } from '@shared/chain'
-import type { SearchFileHit, SearchFileRefs, SearchGroup, SearchIdlHit, SearchItem, SearchLang, SearchLine, SearchResult, SearchStats } from '@shared/search'
+import type { SearchFileHit, SearchFileRefs, SearchGroup, SearchIdlHit, SearchItem, SearchLang, SearchLine, SearchResult, SearchSourceFile, SearchStats } from '@shared/search'
 import { Kicker } from '@/components/docs/pagekit'
 import { CHAINS, CHAIN_LABEL, CHAIN_SHORT, explorerName, explorerUrl, shortAddress } from '@/lib/chain'
 import { DASH, fmtBytes, fmtInt } from '@/lib/format'
@@ -83,14 +83,20 @@ function Hl({ text, hits }: { text: string; hits: [number, number][] }) {
   return <>{out}</>
 }
 
-function Snippet({ blocks }: { blocks: SearchLine[][] }) {
+function Snippet({ blocks, onLine }: { blocks: SearchLine[][]; onLine?: (n: number) => void }) {
   return (
     <div className="sx-code mono">
       {blocks.map((b, i) => (
         <div key={i} className="sx-block">
           {b.map((l) => (
             <div key={l.n} className={`sx-line ${l.hits.length ? 'hit' : ''}`}>
-              <span className="sx-ln">{l.n}</span>
+              {onLine ? (
+                <button className="sx-ln" onClick={() => onLine(l.n)} title={`Open the file at line ${l.n}`}>
+                  {l.n}
+                </button>
+              ) : (
+                <span className="sx-ln">{l.n}</span>
+              )}
               <code>
                 <Hl text={l.text} hits={l.hits} />
               </code>
@@ -112,15 +118,16 @@ function SharedBadge({ f }: { f: SearchFileHit }) {
   )
 }
 
-function FileHit({ f, open, toggle }: { f: SearchFileHit; open: boolean; toggle: () => void }) {
+function FileHit({ f, open, toggle, onView }: { f: SearchFileHit; open: boolean; toggle: () => void; onView: (id: number, line: number | null) => void }) {
   const firstHit = f.blocks[0]?.find((l) => l.hits.length)?.n
   return (
     <div className={`sx-file ${f.shared.contracts > 1 ? 'shared' : ''}`}>
       <div className="sx-file-h">
-        <span className="sx-path mono" title={f.path}>
+        <button className="sx-path sx-open mono" title={`Open ${f.path}`} onClick={() => onView(f.id, firstHit ?? null)}>
           {f.path}
           {firstHit ? <i>:{firstHit}</i> : null}
-        </span>
+          <span className="sx-open-t">open file</span>
+        </button>
         <span className="sx-file-meta mono">
           {f.library ? (
             <span className="sx-lib" title="Library path (@openzeppelin, lib/, node_modules/ …): Custom only leaves it out">
@@ -137,7 +144,7 @@ function FileHit({ f, open, toggle }: { f: SearchFileHit; open: boolean; toggle:
         </span>
         <SharedBadge f={f} />
       </div>
-      <Snippet blocks={f.blocks} />
+      <Snippet blocks={f.blocks} onLine={(n) => onView(f.id, n)} />
       {(f.moreMatches > 0 || f.alsoIn.length > 0) && (
         <div className="sx-file-f mono">
           {f.moreMatches > 0 ? <span className="dim">+{fmtInt(f.moreMatches)} more matching line{f.moreMatches === 1 ? '' : 's'} in this file</span> : <span />}
@@ -201,7 +208,7 @@ function RefsList({ id, preview, others }: { id: number; preview: (SearchItem & 
   )
 }
 
-function Group({ g, openSet, toggle }: { g: SearchGroup; openSet: Set<number>; toggle: (id: number) => void }) {
+function Group({ g, openSet, toggle, onView }: { g: SearchGroup; openSet: Set<number>; toggle: (id: number) => void; onView: (id: number, line: number | null) => void }) {
   const ext = explorerUrl(g.item.chain, g.item.address)
   return (
     <li className="sx-group">
@@ -219,7 +226,7 @@ function Group({ g, openSet, toggle }: { g: SearchGroup; openSet: Set<number>; t
       </div>
       <div className="sx-files">
         {g.files.map((f) => (
-          <FileHit key={f.id} f={f} open={openSet.has(f.id)} toggle={() => toggle(f.id)} />
+          <FileHit key={f.id} f={f} open={openSet.has(f.id)} toggle={() => toggle(f.id)} onView={onView} />
         ))}
       </div>
     </li>
@@ -249,6 +256,109 @@ function IdlCard({ h }: { h: SearchIdlHit }) {
         {h.moreEntries > 0 && <li className="dim">+{fmtInt(h.moreEntries)} more entries</li>}
       </ul>
     </li>
+  )
+}
+
+type SourceAnswer = { source: SearchSourceFile; marks: { n: number; hits: [number, number][] }[]; moreMarks: number; matches: number }
+
+/** The whole file, its matches marked by the server (same query, same time budget). Esc closes. */
+function SourceViewer({ id, line, query, onClose }: { id: number; line: number | null; query: string; onClose: () => void }) {
+  const [src, setSrc] = useState<SourceAnswer | 'loading' | 'error'>('loading')
+  const bodyRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const ac = new AbortController()
+    setSrc('loading')
+    fetch(`/api/search/source?id=${id}${query ? `&${query}` : ''}`, { signal: ac.signal })
+      .then((r) => (r.ok ? (r.json() as Promise<SourceAnswer>) : Promise.reject(new Error(String(r.status)))))
+      .then((j) => setSrc(j))
+      .catch(() => !ac.signal.aborted && setSrc('error'))
+    return () => ac.abort()
+  }, [id, query])
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', k)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', k)
+      document.body.style.overflow = prev
+    }
+  }, [onClose])
+  const view = useMemo(() => {
+    if (typeof src !== 'object') return null
+    const marks = new Map(src.marks.map((m) => [m.n, m.hits]))
+    return { lines: src.source.text.split('\n'), marks, first: src.marks[0]?.n ?? null }
+  }, [src])
+  useEffect(() => {
+    const n = line ?? view?.first
+    if (!view || !n) return
+    bodyRef.current?.querySelector(`[data-n="${n}"]`)?.scrollIntoView({ block: 'center' })
+  }, [view, line])
+  const s = typeof src === 'object' ? src.source : null
+  const marked = typeof src === 'object' ? src.matches : 0
+  const ext = s ? explorerUrl(s.item.chain, s.item.address) : null
+  return (
+    <div className="sx-view" role="dialog" aria-modal="true" aria-label={s ? s.path : 'source file'} onClick={onClose}>
+      <div className="sx-view-p" onClick={(e) => e.stopPropagation()}>
+        <div className="sx-view-h">
+          <div className="sx-view-t">
+            <span className="sx-path mono">{s ? s.path : 'loading…'}</span>
+            {s && (
+              <span className="sx-view-m mono">
+                <span className="sx-chip">{CHAIN_SHORT[s.item.chain]}</span>
+                <Link to={`/lens/${s.item.chain}/${s.item.address}`} onClick={onClose}>
+                  {s.item.name ?? shortAddress(s.item.address, 6, 6)}
+                </Link>
+                {ext && (
+                  <a href={ext} target="_blank" rel="noreferrer noopener">
+                    {explorerName(s.item.chain)} ↗
+                  </a>
+                )}
+                <span className="dim">
+                  {fmtInt(s.lines)} lines · {fmtBytes(s.bytes)}
+                  {marked ? ` · ${fmtInt(marked)} matching line${marked === 1 ? '' : 's'}` : ''}
+                  {s.library ? ' · library' : s.codeIndex ? ' · in code index' : ''}
+                </span>
+              </span>
+            )}
+          </div>
+          {s && s.contracts > 1 ? (
+            <span className="sx-badge mono">
+              <b className="num">{fmtInt(s.contracts)}</b> contracts
+            </span>
+          ) : s ? (
+            <span className="sx-badge one mono">only in this contract</span>
+          ) : null}
+          <button className="sx-view-x mono" onClick={onClose} aria-label="Close">
+            esc ×
+          </button>
+        </div>
+        <div className="sx-view-b sx-code mono" ref={bodyRef}>
+          {src === 'loading' ? (
+            <p className="sx-empty">loading the file…</p>
+          ) : src === 'error' || !view ? (
+            <p className="sx-empty">this file could not be loaded — search again</p>
+          ) : (
+            <div className="sx-block">
+              {view.lines.map((t, i) => {
+                const h = view.marks.get(i + 1)
+                return (
+                  <div key={i} data-n={i + 1} className={`sx-line ${h ? 'hit' : ''} ${line === i + 1 ? 'at' : ''}`}>
+                    <span className="sx-ln">{i + 1}</span>
+                    <code>
+                      <Hl text={t} hits={h ?? []} />
+                    </code>
+                  </div>
+                )
+              })}
+              {s?.truncated && <p className="sx-empty">the file is cut at 600 000 characters here</p>}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -310,6 +420,9 @@ export default function Search() {
   const [open, setOpen] = useState<Set<number>>(new Set())
   const [moreBusy, setMoreBusy] = useState(false)
   const [topOpen, setTopOpen] = useState<number | null>(null)
+  const [viewing, setViewing] = useState<{ id: number; line: number | null } | null>(null)
+  const onView = useCallback((id: number, line: number | null) => setViewing({ id, line }), [])
+  const closeView = useCallback(() => setViewing(null), [])
   const inputRef = useRef<HTMLInputElement>(null)
   const active = useMemo(() => formOf(sp), [sp])
   const activeKey = paramsOf(active).toString()
@@ -428,6 +541,13 @@ export default function Search() {
   ]
 
   const t = res?.total
+  const viewQuery = useMemo(() => {
+    if (active.q.trim().length < 2) return ''
+    const p = new URLSearchParams({ q: active.q })
+    if (active.re) p.set('re', '1')
+    if (active.cs) p.set('case', '1')
+    return p.toString()
+  }, [active.q, active.re, active.cs])
   const nChains = t ? CHAINS.filter((c) => (t.chains[c] ?? 0) > 0).length : 0
   const live = statsErr
     ? 'server unreachable'
@@ -648,7 +768,7 @@ export default function Search() {
               </div>
               <ol className="sx-groups">
                 {groups.map((g, i) => (
-                  <Group key={`${g.item.chain}:${g.item.address}:${i}`} g={g} openSet={open} toggle={toggle} />
+                  <Group key={`${g.item.chain}:${g.item.address}:${i}`} g={g} openSet={open} toggle={toggle} onView={onView} />
                 ))}
               </ol>
             </div>
@@ -700,6 +820,8 @@ export default function Search() {
           )}
         </section>
       )}
+
+      {viewing && <SourceViewer id={viewing.id} line={viewing.line} query={viewQuery} onClose={closeView} />}
 
       <footer className="sx-foot mono">
         <span>
