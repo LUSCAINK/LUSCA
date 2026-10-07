@@ -77,7 +77,7 @@ export function EvidenceLine({ e }: { e: AdvisoryEvidence }) {
   const { dir, base } = split(e.path)
   return (
     <span className="av-ev">
-      <span className={`av-ev-m mono ${e.method}`} title={e.method === 'hash' ? 'Byte-identical to the release file (line endings aside)' : 'Not a byte-identical copy: the OpenZeppelin header of this code (in a flattened source, the header right above it) names an affected release'}>
+      <span className={`av-ev-m mono ${e.method}`} title={e.method === 'hash' ? 'Byte-identical to the release file (line endings aside)' : 'Not a byte-identical copy: the OpenZeppelin header of this code (in a flattened source, the header right above it) names an affected release, and the code still has what the fix changed'}>
         {e.method === 'hash' ? '≡' : 'hdr'}
       </span>
       <code className="av-ev-p">
@@ -87,7 +87,7 @@ export function EvidenceLine({ e }: { e: AdvisoryEvidence }) {
       </code>
       {e.symbol && <span className="av-ev-s mono">{e.symbol}</span>}
       <span className="av-ev-r mono">
-        {e.method === 'hash' ? `identical to ${e.pkg.replace('@openzeppelin/', '')} ${e.releases}` : `header says v${e.header} · ${e.pkg.replace('@openzeppelin/', '')} ${e.pkgPath}`}
+        {e.method === 'hash' ? `identical to ${e.pkg.replace('@openzeppelin/', '')} ${e.releases}` : `header says v${e.header}${e.fix ? ` · ${e.fix}` : ''} · ${e.pkg.replace('@openzeppelin/', '')} ${e.pkgPath}`}
         {e.release && (
           <>
             {' · '}
@@ -206,14 +206,22 @@ export function AdvisoryCard({ st, lensLink = true }: { st: CardState; lensLink?
   )
 }
 
-/** The Lens report's advisory section (EVM): same markup as the report's own sections (lens.css). */
-export function LensAdvisories({ chain, address, n }: { chain: ChainId; address: string; n: string }) {
+/**
+ * The Lens report's advisory section (EVM): same markup as the report's own sections (lens.css). For a proxy, `address`
+ * is the implementation (the code judged) and `proxy` the address read: both are checked and shown, labelled, since an
+ * advisory can be about the proxy contract itself (TransparentUpgradeableProxy).
+ */
+export function LensAdvisories({ chain, address, proxy, n }: { chain: ChainId; address: string; proxy?: string; n: string }) {
+  const isProxy = !!proxy && proxy.toLowerCase() !== address.toLowerCase()
   const st = useAdvisoryItem(chain, address)
+  const px = useAdvisoryItem(chain, isProxy ? proxy! : null)
+  const ids = new Set([...(st.k === 'ok' ? st.it.advisories : []), ...(isProxy && px.k === 'ok' ? px.it.advisories : [])].map((a) => a.id))
+  const solc = [st, ...(isProxy ? [px] : [])].flatMap((x) => (x.k === 'ok' && x.it.solc ? [x.it.solc.version] : []))
   const meta =
-    st.k === 'ok' ? (
-      <span className={`mono ${st.it.advisories.length ? 'hot' : 'dim'}`}>
-        {st.it.advisories.length ? `${st.it.advisories.length} advisor${st.it.advisories.length === 1 ? 'y' : 'ies'}` : 'none'}
-        {st.it.solc ? ` · solc ${st.it.solc.version}` : ''}
+    st.k === 'ok' || (isProxy && px.k === 'ok') ? (
+      <span className={`mono ${ids.size ? 'hot' : 'dim'}`}>
+        {ids.size ? `${ids.size} advisor${ids.size === 1 ? 'y' : 'ies'}` : 'none'}
+        {solc.length ? ` · solc ${[...new Set(solc)].join(' / ')}` : ''}
       </span>
     ) : (
       <span className="mono dim">{st.k === 'loading' ? '…' : '—'}</span>
@@ -227,7 +235,20 @@ export function LensAdvisories({ chain, address, n }: { chain: ChainId; address:
         <span className="ln-sec-x" aria-hidden />
       </summary>
       <div className="ln-sec-b">
-        <AdvisoryCard st={st} lensLink={false} />
+        {isProxy ? (
+          <>
+            <p className="av-card-who mono">
+              <span className="hot">■</span> proxy · <span className="dim">{proxy}</span>
+            </p>
+            <AdvisoryCard st={px} lensLink={false} />
+            <p className="av-card-who mono">
+              <span className="hot">■</span> implementation · <span className="dim">{address}</span>
+            </p>
+            <AdvisoryCard st={st} lensLink={false} />
+          </>
+        ) : (
+          <AdvisoryCard st={st} lensLink={false} />
+        )}
         <p className="dim ln-p">
           Checked against every published OpenZeppelin Contracts advisory and the Solidity compiler bug list. <Link to="/advisories">All kept contracts →</Link>
         </p>

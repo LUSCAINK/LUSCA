@@ -4,10 +4,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import type { AdvisoryInfo, AdvisoryRange, AdvisorySeverity, SolcBug } from '../../shared/advisory.ts'
-import { cmpVer, inAnyRange, parseVer, rangeLabel, unpackIdx, type VerRange } from './core.ts'
+import { cmpVer, inAnyRange, parseVer, rangeLabel, unpackIdx, type FixMarker, type VerRange } from './core.ts'
 
 /** Bump when the matching rules change: persisted results are recomputed. */
-export const MATCHER_VERSION = 4
+export const MATCHER_VERSION = 6
 
 export interface FingerprintDoc {
   v: 1
@@ -17,7 +17,12 @@ export interface FingerprintDoc {
   /** hash → [pkgIdx, path, "headerVersion|headerPath" | "", packed version indices] */
   files: Record<string, [number, string, string, string][]>
 }
-export interface AdvisoryFileDef { path: string; anchor: string[]; evidence: string; ref: string; ranges?: AdvisoryRange[] }
+/**
+ * One affected package file. `fix` names the code the fix changed (checked against every published copy of the file by
+ * scripts/advisory/check-fix-markers.ts): a file that is not a published copy counts by its header only when it still
+ * has that code; a file without `fix` is matched by byte-identical copies only.
+ */
+export interface AdvisoryFileDef { path: string; anchor: string[]; evidence: string; ref: string; ranges?: AdvisoryRange[]; fix?: FixMarker; fixNote?: string }
 export interface AdvisoryDef { id: string; aliases: string[]; severity: AdvisorySeverity; title: string; url: string; note?: string; packages: { name: string; ranges: AdvisoryRange[]; files: AdvisoryFileDef[] }[] }
 export interface AdvisoryDoc { v: 1; reviewedAt: string; advisories: AdvisoryDef[] }
 export interface SolcDoc { v: 1; generatedAt: string; bugs: SolcBug[]; versions: Record<string, { released: string; bugs: number[] }> }

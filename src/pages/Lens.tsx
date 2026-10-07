@@ -905,7 +905,7 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
       </Section>
       )}
 
-      {!sol && isCode && <LensAdvisories chain={r.chain} address={d.address} n="07" />}
+      {!sol && isCode && <LensAdvisories chain={r.chain} address={d.address} proxy={r.address} n="07" />}
 
       <Section n={!sol && !isCode ? '07' : '08'} title="SEPIA-1 dataset" id="ln-data" meta={<span className={`ln-verdict ${VERDICT_CLASS[d.verdict] ?? ''}`}>{VERDICT_LABEL[d.verdict]}</span>}>
         <Row k="address judged">

@@ -7,7 +7,7 @@ date it was generated. Nothing downloaded is executed: tarballs and JSON are rea
 | File | What it holds | Source | Regenerate |
 | --- | --- | --- | --- |
 | `oz-fingerprints.json` | sha256 (first 128 bits, after BOM removal and CRLF/CR → LF) of every `.sol` file of every published version of `@openzeppelin/contracts` and `@openzeppelin/contracts-upgradeable`, deduplicated: hash → (package, path, release header, versions) | npm registry metadata + tarballs, each checked against the registry's sha512 `integrity` | `npx tsx scripts/advisory/build-fingerprints.ts` |
-| `oz-advisories.json` | Every published OpenZeppelin Contracts advisory (GHSA, CVE, severity, affected ranges, fixed versions) mapped by hand to the package file(s) that define the affected contract, with a reference link per mapping | osv.dev (`ecosystem: npm`), api.github.com/advisories, the OpenZeppelin repositories' security advisories | reviewed by hand; `npx tsx scripts/advisory/check-advisories.ts` compares it with osv.dev and the fingerprints (exit 1 on any difference) |
+| `oz-advisories.json` | Every published OpenZeppelin Contracts advisory (GHSA, CVE, severity, affected ranges, fixed versions) mapped by hand to the package file(s) that define the affected contract, with a reference link per mapping and the code each fix changed (`fix` marker) | osv.dev (`ecosystem: npm`), api.github.com/advisories, the OpenZeppelin repositories' security advisories | reviewed by hand; `npx tsx scripts/advisory/check-advisories.ts` compares it with osv.dev and the fingerprints, `npx tsx scripts/advisory/check-fix-markers.ts` checks every `fix` marker against every published copy of its file (both exit 1 on any difference) |
 | `solc-bugs.json` | Every known Solidity compiler bug (name, summary, severity, conditions, link) and the bugs of every released solc version | `ethereum/solidity` `docs/bugs.json` and `docs/bugs_by_version.json` (develop branch) | `npx tsx scripts/advisory/build-solc-bugs.ts` |
 
 ## Matching rules
@@ -18,8 +18,12 @@ date it was generated. Nothing downloaded is executed: tarballs and JSON are rea
   aside). A copy that also ships in a fixed release is never counted, so a match means the fix changed that file.
   `-solc-0.7` builds are compared as their base version.
 - **Header.** A file that is not a published copy but whose `// OpenZeppelin Contracts (last updated vX.Y.Z) (path)`
-  header names a release counts only when every release carrying that header for that file is affected; the
-  evidence says `header` so it is never confused with an identical copy. In a flattened source (several OpenZeppelin
+  header names a release counts only when every release carrying that header for that file is affected **and** the
+  code still has what the fix changed (the file's reviewed `fix` marker in `oz-advisories.json`, compared on the code
+  with comments and whitespace removed). OpenZeppelin bumps headers only at release, so a checkout made after a fix
+  keeps the last release's header: the header alone is not evidence. A mapped file without a marker (`fixNote` says
+  why, e.g. the fix was in another file) is matched by identical copies only. The evidence says `header` and the
+  marker found (`has `signature.length == 64``), so it is never confused with an identical copy. In a flattened source (several OpenZeppelin
   files in one), flatteners do not always keep a header next to its code, so a header there counts only when the
   advisory's anchor (the affected function or contract) lies between that header and the next one.
 - **Compiler.** The exact solc version from the verified metadata → that version's listed bugs. Bug conditions
@@ -30,3 +34,7 @@ the contract uses it.
 
 Generated on 2026-10-06/07: 184 published versions (104 + 80), 23,171 `.sol` files, 6,988 distinct; 23 advisories;
 66 compiler bugs over 121 solc versions.
+
+Fix markers (2026-10-07): 51 markers agree with 903 published copies (`check-fix-markers.ts`); 4 mapped files have none
+(the fix was in another file). One prerelease, 4.4.0-rc.0 of `ERC1155Supply.sol`, was cut before the 4.3.3 fix and
+carries the old code outside the published range; it is never matched.

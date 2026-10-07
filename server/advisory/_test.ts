@@ -40,9 +40,9 @@ const advDoc: AdvisoryDoc = {
   v: 1,
   reviewedAt: '2026-10-06',
   advisories: [
-    { id: 'GHSA-aaaa-bbbb-cccc', aliases: ['CVE-2099-1'], severity: 'high', title: 'Thing.run returns x', url: 'https://example.invalid/a', packages: [{ name: '@openzeppelin/contracts', ranges: [{ introduced: '4.0.0', fixed: '4.2.0' }], files: [{ path: 'utils/Thing.sol', anchor: ['function run('], evidence: 'Thing.run', ref: 'https://example.invalid/fix' }] }] },
+    { id: 'GHSA-aaaa-bbbb-cccc', aliases: ['CVE-2099-1'], severity: 'high', title: 'Thing.run returns x', url: 'https://example.invalid/a', packages: [{ name: '@openzeppelin/contracts', ranges: [{ introduced: '4.0.0', fixed: '4.2.0' }], files: [{ path: 'utils/Thing.sol', anchor: ['function run('], evidence: 'Thing.run', ref: 'https://example.invalid/fix', fix: { all: ['return x;'] } }] }] },
     // fixed in 4.3.0, but the 4.2.0 copy... is only in 4.2.0: A (4.0–4.1) and B (4.2) both count
-    { id: 'GHSA-dddd-eeee-ffff', aliases: [], severity: 'low', title: 'Thing again', url: 'https://example.invalid/b', packages: [{ name: '@openzeppelin/contracts', ranges: [{ introduced: '4.1.0', fixed: '4.3.0' }], files: [{ path: 'utils/Thing.sol', anchor: ['function nope(', 'library Thing'], evidence: 'Thing', ref: 'https://example.invalid/fix2' }] }] },
+    { id: 'GHSA-dddd-eeee-ffff', aliases: [], severity: 'low', title: 'Thing again', url: 'https://example.invalid/b', packages: [{ name: '@openzeppelin/contracts', ranges: [{ introduced: '4.1.0', fixed: '4.3.0' }], files: [{ path: 'utils/Thing.sol', anchor: ['function nope(', 'library Thing'], evidence: 'Thing', ref: 'https://example.invalid/fix2', fix: { all: ['library Thing'], none: ['x + 1'] } }] }] },
   ],
 }
 const solcDoc: SolcDoc = {
@@ -133,25 +133,28 @@ await test('hash matching: byte-identical (CRLF) copy → evidence with file:lin
   assert.equal(ev.method, 'hash')
   assert.equal(ev.path, '@openzeppelin/contracts/utils/Thing.sol')
   assert.equal(ev.pkgPath, 'utils/Thing.sol')
-  assert.equal(ev.line, 7) // "function run(" in COPY_A
+  assert.equal(ev.line, 8) // "return x;" in COPY_A: the code the fix changed (function run( is line 7)
+  assert.equal(ev.fix, 'has `return x;`')
   assert.equal(ev.symbol, 'run')
   assert.equal(ev.releases, '4.0.0-rc.0 – 4.1.0 (3 releases)')
   assert.equal(ev.header, '4.0.0')
   assert.equal(ev.release, '4.1.0')
-  assert.equal(releaseFileUrl(ev.pkg, ev.release!, ev.pkgPath, ev.line), 'https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.1.0/contracts/utils/Thing.sol#L7')
+  assert.equal(releaseFileUrl(ev.pkg, ev.release!, ev.pkgPath, ev.line), 'https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.1.0/contracts/utils/Thing.sol#L8')
   assert.equal(releaseFileUrl('@openzeppelin/contracts-upgradeable', '4.3.3', 'utils/cryptography/ECDSAUpgradeable.sol'), 'https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/blob/v4.3.3/contracts/utils/cryptography/ECDSAUpgradeable.sol')
   assert.deepEqual(r.ozReleases, [{ pkg: '@openzeppelin/contracts', label: '4.0.0-rc.0 – 4.1.0 (3 releases)', files: 1 }])
   assert.deepEqual(r.solc, { version: '0.8.19', compiler: 'solc 0.8.19+commit.7dd6d404', bugs: [0, 1] })
 })
 
 await test('header matching: a modified file whose header names an affected release; none for a fixed release', () => {
-  const edited = COPY_A.replace('return x;', 'return x * 2;')
+  // not a published copy (pragma edited), its header names an affected release and it still has the pre-fix code
+  const edited = COPY_A.replace('pragma solidity ^0.8.0;', 'pragma solidity ^0.8.4;')
   const r = checkSources(ds, [{ path: 'contracts/Thing.sol', text: edited }], 'solc 0.8.31')
   assert.equal(r.ozFiles, 0)
   assert.equal(r.advisories.length, 1)
   assert.equal(r.advisories[0].files[0].method, 'header')
   assert.equal(r.advisories[0].files[0].header, '4.0.0')
   assert.equal(r.advisories[0].files[0].release, '4.0.0')
+  assert.equal(r.advisories[0].files[0].fix, 'has `return x;`')
   assert.deepEqual(r.solc?.bugs, [])
   const fixedHdr = COPY_C.replace('return x + 1;', 'return x + 2;')
   assert.equal(checkSources(ds, [{ path: 'Thing.sol', text: fixedHdr }], null).advisories.length, 0)
@@ -167,7 +170,7 @@ await test('header matching: a modified file whose header names an affected rele
   assert.deepEqual(rf.advisories.map((a) => a.id), ['GHSA-aaaa-bbbb-cccc'])
   assert.equal(rf.advisories[0].files[0].method, 'header')
   assert.equal(rf.advisories[0].files[0].path, 'Mine.sol')
-  assert.equal(rf.advisories[0].files[0].line, lineOf(flat, 'function run('))
+  assert.equal(rf.advisories[0].files[0].line, lineOf(flat, 'return x;'))
   // the fixed release flattened → nothing; a single header deep in a file still counts
   assert.equal(checkSources(ds, [{ path: 'Mine.sol', text: flat.replace('v4.0.0) (utils/Thing.sol)', 'v4.3.0) (utils/Thing.sol)') }], null).advisories.length, 0)
   // stacked headers (a header, then a dependency's header and code, then the code): the code is not in the
@@ -177,9 +180,69 @@ await test('header matching: a modified file whose header names an affected rele
   assert.equal(checkSources(ds, [{ path: 'Mine.sol', text: stacked }], null).advisories.length, 0)
   const deep = `${'// padding\n'.repeat(80)}${edited}`
   const rd = checkSources(ds, [{ path: 'Big.sol', text: deep }], null)
-  assert.equal(rd.advisories[0]?.files[0].line, lineOf(deep, 'function run('))
+  assert.equal(rd.advisories[0]?.files[0].line, lineOf(deep, 'return x;'))
   assert.deepEqual(anchorLine('a\nb\nfunction x(\n', ['nope(', 'function x(']), { line: 3, symbol: 'x' })
   assert.deepEqual(anchorLine('a', ['zzz']), { line: 1, symbol: null })
+})
+
+await test('header matching needs the pre-fix code: an affected header over fixed code is not a match', () => {
+  // a checkout made after the fix keeps the last release's header ("last updated v4.0.0") until the next release
+  const afterFix = COPY_A.replace('return x;', 'return x + 0;')
+  assert.equal(checkSources(ds, [{ path: 'Thing.sol', text: afterFix }], null).advisories.length, 0)
+  const flat = `pragma solidity ^0.8.0;\n${OTHER}\n${afterFix}\ncontract Mine {}\n`
+  assert.equal(checkSources(ds, [{ path: 'Mine.sol', text: flat }], null).advisories.length, 0)
+  // the marker is read from code only: the pre-fix line in a comment does not count
+  const commented = afterFix.replace('return x + 0;', 'return x + 0; // was: return x;')
+  assert.equal(checkSources(ds, [{ path: 'Thing.sol', text: commented }], null).advisories.length, 0)
+  // formatting does not matter
+  const reformatted = COPY_A.replace('return x;', 'return   x ;').replace('pragma solidity ^0.8.0;', 'pragma solidity ^0.8.4;')
+  assert.equal(checkSources(ds, [{ path: 'Thing.sol', text: reformatted }], null).advisories.length, 1)
+  // a mapping without a fix marker is matched by identical copies only
+  const noMarker = buildDataset(fp, { ...advDoc, advisories: advDoc.advisories.map((a) => ({ ...a, packages: a.packages.map((p) => ({ ...p, files: p.files.map(({ fix: _f, ...f }) => f) })) })) }, solcDoc)
+  assert.equal(checkSources(noMarker, [{ path: 'Thing.sol', text: COPY_A.replace('pragma solidity ^0.8.0;', 'pragma solidity ^0.8.4;') }], null).advisories.length, 0)
+  assert.equal(checkSources(noMarker, [{ path: 'Thing.sol', text: COPY_A }], null).advisories.length, 1)
+
+  // the real case: ECDSA.sol with the v4.7.0 header, once with the compact-signature branch and once after fix d693d89
+  const real = loadDataset()
+  const ecdsa = (branch: boolean) => [
+    '// SPDX-License-Identifier: MIT',
+    '// OpenZeppelin Contracts (last updated v4.7.0) (utils/cryptography/ECDSA.sol)',
+    'pragma solidity ^0.8.0;',
+    'library ECDSA {',
+    '    enum RecoverError { NoError, InvalidSignature, InvalidSignatureLength, InvalidSignatureS, InvalidSignatureV // Deprecated in v4.8',
+    '    }',
+    '    function tryRecover(bytes32 hash, bytes memory signature) internal pure returns (address, RecoverError) {',
+    '        if (signature.length == 65) {',
+    '            bytes32 r; bytes32 s; uint8 v;',
+    '            return tryRecover(hash, v, r, s);',
+    ...(branch ? ['        } else if (signature.length == 64) {', '            bytes32 r; bytes32 vs;', '            return tryRecover(hash, r, vs);'] : []),
+    '        } else {',
+    '            return (address(0), RecoverError.InvalidSignatureLength);',
+    '        }',
+    '    }',
+    '}',
+  ].join('\n')
+  const fixed = checkSources(real, [{ path: 'lib/openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol', text: ecdsa(false) }], 'v0.8.17+commit.8df45f5f')
+  assert.equal(fixed.advisories.length, 0, 'v4.7.0 header + fixed body is not a match')
+  const pre = checkSources(real, [{ path: 'lib/openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol', text: ecdsa(true) }], 'v0.8.17+commit.8df45f5f')
+  assert.deepEqual(pre.advisories.map((a) => a.id), ['GHSA-4h98-2769-gh6h'])
+  assert.equal(pre.advisories[0].files[0].method, 'header')
+  assert.equal(pre.advisories[0].files[0].line, 11) // the `else if (signature.length == 64)` line
+  assert.equal(pre.advisories[0].files[0].fix, 'has `signature.length == 64`')
+})
+
+await test('cost is linear: blank-line floods and header floods stay far under the event-loop budget', () => {
+  const t = (fn: () => void) => { const t0 = performance.now(); fn(); return performance.now() - t0 }
+  const real = loadDataset()
+  for (const text of ['\n'.repeat(1 << 20), ' \n'.repeat(1 << 19), '\t\r\n'.repeat(1 << 18)]) {
+    const ms = t(() => checkSources(real, [{ path: 'Flood.sol', text }], null))
+    assert.ok(ms < 150, `blank-line flood took ${ms.toFixed(0)} ms`)
+  }
+  const many = Array.from({ length: 3000 }, (_, i) => `// OpenZeppelin Contracts (last updated v4.7.0) (utils/cryptography/ECDSA.sol)\nlibrary ECDSA${i} { function tryRecover(bytes32 hash, bytes memory signature) internal { if (signature.length == 64) {} } }\n`).join('')
+  let r: ReturnType<typeof checkSources> | null = null
+  const ms = t(() => { r = checkSources(real, [{ path: 'Headers.sol', text: many }], null) })
+  assert.ok(ms < 1000, `3,000 headers took ${ms.toFixed(0)} ms`)
+  assert.equal(r!.advisories[0].files.length, 1) // one evidence per file path
 })
 
 await test('vendored data: every advisory maps to files with affected copies; known facts hold', () => {
@@ -187,6 +250,8 @@ await test('vendored data: every advisory maps to files with affected copies; kn
   assert.ok(real.fp.stats.versions >= 180, 'every published version fingerprinted')
   assert.ok(real.advisories.advisories.length >= 22)
   for (const af of real.affected) assert.ok(af.hashes.size > 0, `${af.adv.id} ${af.pkgName}/${af.path} has no affected copy`)
+  // every mapped file names the code its fix changed (checked against every published copy by scripts/advisory/check-fix-markers.ts), or says why not
+  for (const af of real.affected) assert.ok(af.def.fix || af.def.fixNote, `${af.adv.id} ${af.path}: no fix marker and no fixNote`)
   for (const a of real.info) for (const p of a.packages) for (const f of p.files) assert.match(f.ref, /^https:\/\/github\.com\/OpenZeppelin\//)
   const ids = new Set(real.info.map((a) => a.id))
   for (const id of ['GHSA-4h98-2769-gh6h', 'GHSA-699g-q6qh-q4v8', 'GHSA-9c22-pwxw-p6hx', 'GHSA-q4h9-46xg-m3x9', 'GHSA-vrw4-w73r-6mm8', 'GHSA-7j52-6fjp-58gr', 'GHSA-9rcw-c2f9-2j55']) assert.ok(ids.has(id), id)
@@ -247,7 +312,7 @@ await test('background check: census math, lists, item, routes, persistence', as
   assert.equal(l1.next, '1')
   assert.equal((chk.list({ cursor: '1' }) as AdvisoryList).items[0].address, B)
   const la = chk.list({ advisory: 'GHSA-aaaa-bbbb-cccc' }) as AdvisoryList
-  assert.equal(la.items[0].files[0].line, 7)
+  assert.equal(la.items[0].files[0].line, 8)
   assert.equal((chk.list({ bug: 'BugLow' }) as AdvisoryList).total, 2)
   assert.equal((chk.list({ bug: 'BugLow', chain: 'base' }) as AdvisoryList).total, 1)
   assert.equal(chk.list({ advisory: 'GHSA-zzzz-zzzz-zzzz' }), null)

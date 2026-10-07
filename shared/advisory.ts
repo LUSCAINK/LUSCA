@@ -39,7 +39,7 @@ export interface AdvisoryInfo {
 export interface AdvisoryEvidence {
   /** Path of the file inside the contract's verified source. */
   path: string
-  /** 1-based line of the advisory's named function / contract in that file (1 when not found). */
+  /** 1-based line of the code the fix changed (e.g. ECDSA.sol:74, the compact-signature branch), else of the advisory's named function / contract (1 when not found). */
   line: number
   symbol: string | null
   /** The package and path of the release file it matches. */
@@ -52,6 +52,8 @@ export interface AdvisoryEvidence {
   header: string | null
   /** One release that ships this exact copy (the newest; hash) or the header's own release (header): the file at that tag on GitHub has the same line. */
   release: string | null
+  /** The code the fix changed, as found in this file ("has `signature.length == 64`", "no `proofPos == proofLen`"); always set for header matches. */
+  fix?: string | null
 }
 
 export interface ItemAdvisory { id: string; severity: AdvisorySeverity; files: AdvisoryEvidence[] }

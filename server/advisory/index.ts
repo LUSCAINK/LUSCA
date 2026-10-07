@@ -124,7 +124,7 @@ export function createAdvisoryCheck(o: AdvisoryOptions): AdvisoryCheck {
     for (const k of [...entries.keys()]) if (!live.has(k)) { entries.delete(k); dirty = true }
     const todo = evm.filter((it) => { const e = entries.get(keyOf(it.chain, it.address)); return !e || e.readAt !== it.readAt })
     progress = { done: evm.length - todo.length, total: evm.length }
-    let checked = 0
+    let checked = 0, unreadable = 0
     for (const it of todo) {
       if (stopped) break
       const k = keyOf(it.chain, it.address)
@@ -132,8 +132,9 @@ export function createAdvisoryCheck(o: AdvisoryOptions): AdvisoryCheck {
       try { rec = await o.source.record(it.chain, it.address) } catch (e) { log('warn', `advisory: record ${it.address.slice(0, 10)}… unreadable: ${(e as Error)?.message ?? e}`) }
       const base = { chain: it.chain, address: it.address, name: it.name, readAt: it.readAt, firstSeen: it.firstSeen, checkedAt: Date.now() }
       if (!rec) {
-        entries.set(k, { ...base, r: null, skip: 'no-source' })
-        dirty = true
+        // the store answers null for an unreadable record too (I/O, gunzip, parse): nothing is saved for it, so the
+        // next pass reads it again instead of counting it as "without stored source" until the item is re-read
+        unreadable++
         progress.done++
         continue
       }
@@ -157,7 +158,7 @@ export function createAdvisoryCheck(o: AdvisoryOptions): AdvisoryCheck {
     if (checked) {
       version++
       save(true)
-      log('info', `advisory: checked ${checked} contracts in ${((Date.now() - t0) / 1000).toFixed(1)} s (${entries.size} on record)`)
+      log('info', `advisory: checked ${checked} contracts in ${((Date.now() - t0) / 1000).toFixed(1)} s (${entries.size} on record${unreadable ? `, ${unreadable} unreadable, retried next pass` : ''})`)
     } else if (dirty) { version++; save(true) }
   }
 

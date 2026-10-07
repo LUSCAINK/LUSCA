@@ -1,7 +1,7 @@
 // ADVISORY CHECK matching: one contract's stored sources → OpenZeppelin files it contains, advisory-affected files
 // (with file:line evidence) and the known bugs of its solc version. Pure (no I/O); cost is one sha256 per .sol file.
 import type { AdvisoryEvidence, AdvisorySeverity } from '../../shared/advisory.ts'
-import { cmpVer, fileHash, ozHeader, ozHeaders, solcVersionOf, type OzHeader } from './core.ts'
+import { cmpVer, fileHash, fixCheck, ozHeader, ozHeaders, solcVersionOf, type FixMarker, type OzHeader } from './core.ts'
 import { releasesLabel, type AffectedFile, type Dataset } from './dataset.ts'
 
 export interface CheckResult {
@@ -27,11 +27,15 @@ export function anchorLine(text: string, anchors: string[]): { line: number; sym
 }
 
 const base = (p: string) => p.split('/').pop() ?? p
-/** 1-based line of a character offset. */
-function lineAt(text: string, at: number): number {
-  let line = 1
-  for (let i = text.indexOf('\n'); i >= 0 && i < at; i = text.indexOf('\n', i + 1)) line++
-  return line
+/** OpenZeppelin files are under 100 KB: a header claims at most this much code after it. */
+export const MAX_SEGMENT = 256 * 1024
+
+/** What the fix marker found, in words: "has `signature.length == 64`" / "no `proofPos == proofLen`". */
+export function fixWords(fix: FixMarker, marker: string | null): string {
+  const has = [...(fix.all ?? []), ...(marker && fix.any?.includes(marker) ? [marker] : [])].map((m) => 'has `' + m + '`')
+  // `none` lists spellings of the check the fix added; the first one names it
+  const lacks = (fix.none ?? []).slice(0, 1).map((m) => 'no `' + m + '`')
+  return [...has, ...lacks].join(' · ')
 }
 
 export function checkSources(ds: Dataset, sources: { path: string; text: string }[], compiler: string | null): CheckResult {
@@ -62,7 +66,9 @@ export function checkSources(ds: Dataset, sources: { path: string; text: string 
         const e = entries.find((x) => x.pkg === af.pkg && x.path === af.path)!
         const vers = ds.fp.packages[af.pkg].versions
         const rel = e.versions.map((i) => vers[i]).sort(cmpVer)
-        add(af, { path: f.path, ...anchorLine(f.text, af.def.anchor), pkg: af.pkgName, pkgPath: af.path, method: 'hash', releases: releasesLabel(rel), header: hd?.version ?? null, release: rel[rel.length - 1] ?? null })
+        const an = anchorLine(f.text, af.def.anchor)
+        const fx = af.def.fix ? fixCheck(f.text, af.def.fix) : null
+        add(af, { path: f.path, line: fx?.line ?? an.line, symbol: an.symbol, pkg: af.pkgName, pkgPath: af.path, method: 'hash', releases: releasesLabel(rel), header: hd?.version ?? null, release: rel[rel.length - 1] ?? null, fix: fx?.pre && af.def.fix ? fixWords(af.def.fix, fx.marker) : null })
       }
       continue
     }
@@ -72,14 +78,17 @@ export function checkSources(ds: Dataset, sources: { path: string; text: string 
     const all = ozHeaders(f.text)
     if (all.length > 1 || (all.length === 1 && !hd)) {
       for (let i = 0; i < all.length; i++) {
-        const seg = f.text.slice(all[i].at, i + 1 < all.length ? all[i + 1].at : f.text.length)
-        byHeader(f.path, all[i], seg, lineAt(f.text, all[i].at) - 1, base(all[i].path), true)
+        const end = Math.min(i + 1 < all.length ? all[i + 1].at : f.text.length, all[i].at + MAX_SEGMENT)
+        byHeader(f.path, all[i], f.text.slice(all[i].at, end), all[i].line - 1, base(all[i].path), true)
       }
       continue
     }
-    if (hd) byHeader(f.path, hd, f.text, 0, base(f.path), false)
+    if (hd) byHeader(f.path, hd, f.text.length > MAX_SEGMENT ? f.text.slice(0, MAX_SEGMENT) : f.text, 0, base(f.path), false)
   }
-  // not a published copy, but its header names a release: count it only when every release carrying that header is affected
+  // not a published copy, but its header names a release: count it only when every release carrying that header is
+  // affected AND the code still has what the fix changed (the advisory file's `fix` marker, checked against every
+  // published copy of the file). Checkouts made between releases keep the last release's header after the fix landed,
+  // so a header alone is not evidence; a file whose advisory has no marker is matched by identical copies only.
   function byHeader(filePath: string, hd: OzHeader, text: string, lineOffset: number, name: string, needAnchor: boolean) {
     const key = `${hd.version}|${hd.path}`
     let cands = ds.headerAffected.get(key) ?? []
@@ -88,13 +97,16 @@ export function checkSources(ds: Dataset, sources: { path: string; text: string 
     const seen = new Set<string>()
     for (const af of cands) {
       if (seen.has(af.adv.id)) continue
+      if (!af.def.fix) continue
       const at = anchorLine(text, af.def.anchor)
       if (needAnchor && !at.symbol) continue
+      const fx = fixCheck(text, af.def.fix)
+      if (!fx.pre) continue
       seen.add(af.adv.id)
       const vers = ds.fp.packages[af.pkg].versions
       const carrying: string[] = []
       for (const h2 of af.hashes) for (const e of ds.byHash.get(h2) ?? []) if (e.pkg === af.pkg && e.path === af.path && e.header === key) carrying.push(...e.versions.map((i) => vers[i]))
-      add(af, { path: filePath, line: at.line + lineOffset, symbol: at.symbol, pkg: af.pkgName, pkgPath: af.path, method: 'header', releases: releasesLabel(carrying.length ? carrying : [hd.version]), header: hd.version, release: carrying.includes(hd.version) ? hd.version : (carrying.sort(cmpVer)[0] ?? null) })
+      add(af, { path: filePath, line: (fx.line ?? at.line) + lineOffset, symbol: at.symbol, fix: fixWords(af.def.fix, fx.marker), pkg: af.pkgName, pkgPath: af.path, method: 'header', releases: releasesLabel(carrying.length ? carrying : [hd.version]), header: hd.version, release: carrying.includes(hd.version) ? hd.version : (carrying.sort(cmpVer)[0] ?? null) })
     }
   }
   const ozReleases = [...inter.entries()].map(([pi, { set, files }]) => {

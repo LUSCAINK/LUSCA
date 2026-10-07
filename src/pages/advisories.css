@@ -53,7 +53,7 @@
   color: var(--fg-1);
 }
 .av-title {
-  font-size: clamp(52px, 8.4vw, 132px);
+  font-size: clamp(48px, 7.6vw, 120px);
   color: var(--fg);
 }
 .av-lede {
@@ -690,7 +690,7 @@
 .av-bugrow-n {
   font-size: var(--t-sm);
   color: var(--fg);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 .av-bugrow-s {
   font-size: var(--t-sm);

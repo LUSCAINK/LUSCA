@@ -5,7 +5,7 @@
 //
 // Data: GET /api/advisories/summary (census, polled every 30 s), /api/advisories/items?advisory=|bug=&chain=&cursor=,
 //       /api/advisories/:chain/:address (lookup).
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import type { ChainId } from '@shared/chain'
 import type { AdvisoryList, AdvisorySummary } from '@shared/advisory'
@@ -20,9 +20,26 @@ import './advisories.css'
 const ADVISORIES_NAV_N = '13'
 const EVM: ChainId[] = ['ethereum', 'base', 'arbitrum']
 
+/** A non-2xx answer: the status and the server's own error text (e.g. 503 "the advisory check is not available on this server"). */
+class ApiError extends Error {
+  readonly status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const r = await fetch(url, { signal })
-  if (!r.ok) throw new Error(String(r.status))
+  if (!r.ok) {
+    let msg = ''
+    try {
+      const b = (await r.json()) as { error?: unknown }
+      if (typeof b?.error === 'string') msg = b.error.slice(0, 200)
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(r.status, msg)
+  }
   return (await r.json()) as T
 }
 const fmtPct = (n: number, d: number) => {
@@ -31,6 +48,14 @@ const fmtPct = (n: number, d: number) => {
   return `${v >= 10 || v === 0 ? Math.round(v) : v.toFixed(1)}%`
 }
 const fmtDay = (iso: string) => (iso ? iso.slice(0, 10) : DASH)
+/** A CamelCase compiler bug name with break opportunities between its words (no mid-word breaks on a phone). */
+const camelBreak = (name: string) =>
+  name.split(/(?<=[a-z0-9])(?=[A-Z])/).map((w, i) => (
+    <Fragment key={i}>
+      {i > 0 && <wbr />}
+      {w}
+    </Fragment>
+  ))
 
 export default function Advisories() {
   useEffect(() => {
@@ -38,6 +63,8 @@ export default function Advisories() {
   }, [])
   const [sum, setSum] = useState<AdvisorySummary | null>(null)
   const [sumErr, setSumErr] = useState(false)
+  /** The server answered that the check is off (503 with its reason): shown as is, no polling. */
+  const [off, setOff] = useState<string | null>(null)
   const [open, setOpen] = useState<string | null>(null)
   const [bugOpen, setBugOpen] = useState<string | null>(null)
   const [chain, setChain] = useState<ChainId | ''>('')
@@ -54,9 +81,15 @@ export default function Advisories() {
           setSum(s)
           setSumErr(false)
         })
-        .catch(() => alive && !ac.signal.aborted && setSumErr(true))
-    void pull()
+        .catch((e: unknown) => {
+          if (!alive || ac.signal.aborted) return
+          if (e instanceof ApiError && e.status === 503 && e.message) {
+            setOff(e.message)
+            window.clearInterval(t)
+          } else setSumErr(true)
+        })
     const t = window.setInterval(pull, 30_000)
+    void pull()
     return () => {
       alive = false
       ac.abort()
@@ -88,8 +121,8 @@ export default function Advisories() {
         <div className="av-hero-l">
           <Kicker n={ADVISORIES_NAV_N} name="Advisories" className="av-kick">
             <span className="av-live mono">
-              <span className={sum && !sumErr ? 'led on' : 'led'} aria-hidden="true" />
-              {sumErr ? 'server unreachable' : sum ? (running ? `checking · ${fmtInt(sum.progress.done)} of ${fmtInt(sum.progress.total)}` : `up to date · ${fmtInt(sum.progress.total)} kept EVM contracts`) : 'loading'}
+              <span className={sum && !sumErr && !off ? 'led on' : 'led'} aria-hidden="true" />
+              {off ? 'not available on this server' : sumErr ? 'server unreachable' : sum ? (running ? `checking · ${fmtInt(sum.progress.done)} of ${fmtInt(sum.progress.total)}` : `up to date · ${fmtInt(checked)} of ${fmtInt(sum.progress.total)} checked`) : 'loading'}
             </span>
           </Kicker>
           <h1 className="av-title display">
@@ -145,7 +178,7 @@ export default function Advisories() {
           <span>kept contracts</span>
         </div>
         {!sum ? (
-          <p className="av-empty mono">{sumErr ? 'Can’t reach the LUSCA server — retrying…' : 'Loading…'}</p>
+          <p className="av-empty mono">{off ? `The server answered: ${off}.` : sumErr ? 'Can’t reach the LUSCA server — retrying…' : 'Loading…'}</p>
         ) : (
           <ol className="av-rows">
             {shown.map((a) => {
@@ -272,7 +305,7 @@ export default function Advisories() {
                   <button className="av-bugrow-b" aria-expanded={isOpen} onClick={() => setBugOpen(isOpen ? null : b.name)}>
                     <span className={`av-bsev mono s-${b.severity.replace(/[^a-z]/g, '')}`}>{b.severity}</span>
                     <span className="av-bugrow-t">
-                      <span className="av-bugrow-n mono">{b.name}</span>
+                      <span className="av-bugrow-n mono">{camelBreak(b.name)}</span>
                       <span className="av-bugrow-s">{b.summary.replace(/``/g, '')}</span>
                       <Conditions c={b.conditions} />
                     </span>

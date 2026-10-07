@@ -306,3 +306,17 @@ a.av-bug-n:hover {
     gap: 6px;
   }
 }
+
+/* Lens: proxy and implementation cards */
+.av-card-who {
+  margin: 14px 0 6px;
+  font-size: var(--t-3xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  overflow-wrap: anywhere;
+}
+.av-card-who .dim {
+  text-transform: none;
+  letter-spacing: 0.02em;
+}

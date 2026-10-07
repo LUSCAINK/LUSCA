@@ -68,7 +68,11 @@ export function rangeLabel(r: VerRange): string {
 // "// OpenZeppelin Contracts v4.4.1 (token/ERC20/ERC20.sol)"                  (4.4)
 // "// OpenZeppelin Contracts Upgradeable / "OpenZeppelin Contracts (last updated v5.0.0) (...)"
 export interface OzHeader { version: string; path: string }
-const HEADER_RE = /^\s*\/\/\s*OpenZeppelin Contracts(?: Upgradeable)?(?:\s*\(last updated v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\)|\s+v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?))\s*\(([^)\s]+\.sol)\)/m
+// Only spaces and tabs around the tokens: `\s` would also span newlines, and with the `m` flag a run of blank lines
+// would then be rescanned from every line start (quadratic on a crafted source).
+const HEADER_RE = /^[ \t]*\/\/[ \t]*OpenZeppelin Contracts(?: Upgradeable)?(?:[ \t]*\(last updated v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\)|[ \t]+v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?))[ \t]*\(([^)\s]+\.sol)\)/m
+/** A flattened source carries one header per OpenZeppelin file; more than this many is not a real flattened source. */
+export const MAX_HEADERS = 400
 
 /** The OpenZeppelin header of a source file, looked for in its first 600 characters (after the SPDX line). */
 export function ozHeader(text: string): OzHeader | null {
@@ -77,12 +81,99 @@ export function ozHeader(text: string): OzHeader | null {
   return { version: m[1] ?? m[2], path: m[3] }
 }
 
-/** Every OpenZeppelin header in a source, in order, with its character offset (a flattened source carries one per file). */
-export function ozHeaders(text: string): (OzHeader & { at: number })[] {
+/** Every OpenZeppelin header in a source, in order, with its character offset and 1-based line (at most MAX_HEADERS). */
+export function ozHeaders(text: string, max = MAX_HEADERS): (OzHeader & { at: number; line: number })[] {
   const re = new RegExp(HEADER_RE.source, 'gm')
-  const out: (OzHeader & { at: number })[] = []
-  for (const m of text.matchAll(re)) out.push({ version: m[1] ?? m[2], path: m[3], at: m.index ?? 0 })
+  const out: (OzHeader & { at: number; line: number })[] = []
+  let line = 1, pos = 0
+  for (const m of text.matchAll(re)) {
+    const at = m.index ?? 0
+    // headers come in offset order: count newlines forward from the previous one (one pass over the text)
+    for (let i = text.indexOf('\n', pos); i >= 0 && i < at; i = text.indexOf('\n', i + 1)) line++
+    pos = at
+    out.push({ version: m[1] ?? m[2], path: m[3], at, line })
+    if (out.length >= max) break
+  }
   return out
+}
+
+// ── code view: comments and whitespace removed, offsets kept ──
+/**
+ * The code of a Solidity source with comments and all whitespace removed, plus each kept character's offset in the
+ * original text: markers are compared on this view, so formatting and comments never decide a match. One linear pass.
+ */
+export function codeView(text: string): { code: string; pos: Int32Array } {
+  const n = text.length
+  const pos = new Int32Array(n)
+  const parts: string[] = []
+  let k = 0, run = -1
+  const flush = (end: number) => {
+    if (run < 0) return
+    parts.push(text.slice(run, end))
+    for (let j = run; j < end; j++) pos[k++] = j
+    run = -1
+  }
+  const space = (c: number) => c === 32 || c === 9 || c === 10 || c === 13 || c === 12 || c === 11
+  for (let i = 0; i < n; i++) {
+    const c = text.charCodeAt(i)
+    if (c === 47 /* / */ && (text.charCodeAt(i + 1) === 47 || text.charCodeAt(i + 1) === 42)) {
+      flush(i)
+      if (text.charCodeAt(i + 1) === 47) { const e = text.indexOf('\n', i); i = e < 0 ? n : e }
+      else { const e = text.indexOf('*/', i + 2); i = e < 0 ? n : e + 1 }
+      continue
+    }
+    if (space(c)) { flush(i); continue }
+    if (c === 34 || c === 39) { // a string literal: no comment starts inside it; its whitespace is dropped like the rest
+      if (run < 0) run = i
+      for (i++; i < n; i++) {
+        const d = text.charCodeAt(i)
+        if (d === 10 || d === c) break
+        if (space(d)) { flush(i); continue }
+        if (run < 0) run = i
+        if (d === 92 /* \ */ && i + 1 < n && text.charCodeAt(i + 1) !== 10) i++
+      }
+      if (i >= n || text.charCodeAt(i) === 10) flush(i) // unterminated: the string ends with its line
+      else if (run < 0) run = i // the closing quote
+      continue
+    }
+    if (run < 0) run = i
+  }
+  flush(n)
+  return { code: parts.join(''), pos: pos.subarray(0, k) }
+}
+
+/** Code markers of an advisory's fix, compared on the code view (no comments, no whitespace). */
+export interface FixMarker {
+  /** Every one of these is in the code before the fix (e.g. the branch the fix removed). */
+  all?: string[]
+  /** At least one of these is in the code before the fix. */
+  any?: string[]
+  /** None of these is in the code before the fix (e.g. the check the fix added). */
+  none?: string[]
+  /** The evidence line: the first of these found (default: the first `all` / `any` marker found). */
+  at?: string[]
+}
+
+const squash = (s: string) => s.replace(/\s+/g, '')
+
+/** Whether a source still has the code the fix changed, and the 1-based line of the evidence marker (null if none). */
+export function fixCheck(text: string, fix: FixMarker): { pre: boolean; line: number | null; marker: string | null } {
+  const { code, pos } = codeView(text)
+  const has = (m: string) => code.indexOf(squash(m)) >= 0
+  const pre = (fix.all ?? []).every(has) && (!fix.any?.length || fix.any.some(has)) && !(fix.none ?? []).some(has)
+  for (const m of fix.at ?? [...(fix.all ?? []), ...(fix.any ?? [])]) {
+    const at = code.indexOf(squash(m))
+    if (at < 0) continue
+    return { pre, line: lineOf(text, pos[at]), marker: m }
+  }
+  return { pre, line: null, marker: null }
+}
+
+/** 1-based line of a character offset (one forward scan). */
+export function lineOf(text: string, at: number): number {
+  let line = 1
+  for (let i = text.indexOf('\n'); i >= 0 && i < at; i = text.indexOf('\n', i + 1)) line++
+  return line
 }
 
 // ── solc versions ──
