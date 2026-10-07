@@ -17,6 +17,7 @@
 //      (the radar's daily slice, default 25 % / 10 % / 15 %) · LUSCA_RADAR_LOG_CALLS (20000/day per EVM log
 //      endpoint) · LUSCA_RADAR_WS_MB (daily Helius websocket allowance, default 200) ·
 //      LUSCA_RADAR_ETH_LOGS / _BASE_LOGS / _ARB_LOGS (comma lists) — server/radar
+//      LUSCA_BINARY=0 (read-the-binary off) · LUSCA_BINARY_SOL_CALLS (its daily Solana slice, default 250) — server/binary
 //      LUSCA_CONTROL=0 (control map off) · LUSCA_CONTROL_EVM_CALLS (its daily EVM slice per chain, default 10 %) — server/control
 //
 // The REST routes read stored data only (stats / feed / items / item): no RPC per request.
@@ -38,6 +39,7 @@ import { createRadarDiff, type RadarDiffService } from '../radar/code-diff.ts'
 import { createAtlas, type Atlas } from '../atlas/index.ts'
 import type { RadarEvent } from '../../shared/radar.ts'
 import { createControl, type Control } from '../control/index.ts'
+import { createBinary, type BinaryService } from '../binary/index.ts'
 
 type Log = (lvl: 'info' | 'warn' | 'error', msg: string) => void
 
@@ -58,6 +60,8 @@ export interface ChainAgentsApi {
   control: Control | null
   /** CODE ATLAS (server/atlas): map of kept items from stored reads only (no RPC); null when LUSCA_ATLAS=0. */
   atlas: Atlas | null
+  /** READ THE BINARY (server/binary): interfaces recovered from program executables without an IDL; null when LUSCA_BINARY=0. */
+  binary: BinaryService | null
 }
 
 function intEnv(name: string, def: number, min: number, max: number): number {
@@ -149,6 +153,18 @@ export function createChainAgents(opts: {
     ? createDiscovery({ rpc, dataDir: opts.dataDir, log })
     : { start() {}, stop: async () => {}, next: () => null, push() {}, markRead() {}, stats: () => ({}) }
 
+  // READ THE BINARY: executables the agents / radar read anyway, plus a small background slice (LUSCA_BINARY_SOL_CALLS)
+  const binaryOn = !/^(0|false|no|off)$/i.test(process.env.LUSCA_BINARY?.trim() ?? '')
+  let binary: BinaryService | null = null
+  let feedOf: (n: number) => ChainEvent[] = () => []
+  if (binaryOn) {
+    const binCalls = intEnv('LUSCA_BINARY_SOL_CALLS', -1, -1, 1_000_000)
+    binary = createBinary({ rpc, store, feed: (n) => feedOf(n), dataDir: opts.dataDir, log, ...(binCalls >= 0 ? { limits: { solCalls: binCalls } } : {}) })
+  }
+  const analysers = scanAnalysers(log)
+  const binaryRef = binary
+  const agentAnalysers = binaryRef ? { ...analysers, binary: (read: ChainRead, elf: Uint8Array) => binaryRef.offer(read, elf, 'agent') } : analysers
+
   const agents: ChainAgents = createChainAgentsWith({
     rpc,
     discovery,
@@ -158,7 +174,7 @@ export function createChainAgents(opts: {
     broadcast: opts.broadcast,
     log,
     agents: DEFAULT_AGENTS,
-    analysers: scanAnalysers(log),
+    analysers: agentAnalysers,
     // let the server finish booting and discovery sample its first blocks
     startDelayMs: 20_000,
   })
@@ -222,6 +238,7 @@ export function createChainAgents(opts: {
         logEndpoints: { ethereum: list('LUSCA_RADAR_ETH_LOGS'), base: list('LUSCA_RADAR_BASE_LOGS'), arbitrum: list('LUSCA_RADAR_ARB_LOGS') },
         limits: rl,
         backfill: !/^(0|false|no|off)$/i.test(process.env.LUSCA_RADAR_BACKFILL?.trim() ?? ''),
+        ...(binaryRef ? { onSolanaElf: (read: ChainRead, elf: Uint8Array) => binaryRef.offer(read, elf, 'radar') } : {}),
       })
     } catch (e) {
       log('error', `upgrade radar unavailable: ${(e as Error)?.message ?? e}`)
@@ -239,6 +256,8 @@ export function createChainAgents(opts: {
   const control: Control | null = controlOn
     ? createControl({ rpc, store, dataDir: opts.dataDir, log, ...(controlCalls >= 0 ? { evmCalls: controlCalls } : {}) })
     : null
+
+  feedOf = (n) => agents.feed(n)
 
   // the feed survives restarts (newest 200 events)
   const feedFile = path.join(opts.dataDir, 'chain', 'feed.json')
@@ -273,6 +292,7 @@ export function createChainAgents(opts: {
       radarDiff?.start()
       control?.start() // stored reads first; EVM proxies under its own slice
       atlas?.start()
+      binary?.start() // stored IDLs → dictionary, then the background reader under its own slice
       radar?.start() // listens whether or not the chain agents run (LUSCA_RADAR=0 turns it off)
       if (!enabled) {
         log('info', 'chain agents off (LUSCA_CHAIN_AGENTS=0); stored chain data is still served')
@@ -301,6 +321,7 @@ export function createChainAgents(opts: {
       await radar?.stop()
       await control?.stop()
       await atlas?.stop()
+      await binary?.stop()
       const agentsDone = agents.stop() // wakes sleeping agents; in-flight reads end with the RPC close below
       await rpc.close()
       await agentsDone
@@ -318,5 +339,6 @@ export function createChainAgents(opts: {
     radarDiff,
     control,
     atlas,
+    binary,
   }
 }

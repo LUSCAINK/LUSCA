@@ -585,6 +585,8 @@ export interface ChainStore {
   summary(): ChainStoreSummary
   items(q: { chain?: ChainId; limit?: number; cursor?: string }): { items: ChainIndexItem[]; next: string | null }
   item(chain: ChainId, address: string): { item: ChainIndexItem; read: ChainRead } | null
+  /** The stored record of one kept item (full IDL / ABI / sources), read from its shard; null when not kept. */
+  record(chain: ChainId, address: string): ChainRecord | null
   /** Every training record, in file order (tests and tools). */
   records(): ChainRecord[]
   flush(): void
@@ -1119,6 +1121,24 @@ export function createChainStore(o: ChainStoreOptions): ChainStore {
     }
   }
 
+  function getRecord(chain: ChainId, address: string): ChainRecord | null {
+    const it = items.get(itemKey(chain, address))
+    if (!it) return null
+    let fd: number | null = null
+    try {
+      fd = fs.openSync(path.join(shardDir, it.shard), 'r')
+      const buf = Buffer.alloc(it.len)
+      const n = fs.readSync(fd, buf, 0, it.len, it.off)
+      if (n !== it.len) return null
+      return JSON.parse(zlib.gunzipSync(buf, { maxOutputLength: 64 * MB }).toString('utf8')) as ChainRecord
+    } catch (e) {
+      log('warn', `chain record ${shortAddr(address)} unreadable: ${(e as Error).message}`)
+      return null
+    } finally {
+      if (fd !== null) fs.closeSync(fd)
+    }
+  }
+
   function records(): ChainRecord[] {
     const out: ChainRecord[] = []
     const names = safeList(shardDir)
@@ -1140,6 +1160,7 @@ export function createChainStore(o: ChainStoreOptions): ChainStore {
     summary,
     items: listItems,
     item: getItem,
+    record: getRecord,
     records,
     flush() {
       if (saveTimer) {

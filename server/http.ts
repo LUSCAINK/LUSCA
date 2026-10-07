@@ -105,6 +105,8 @@ export interface Modules {
   /** LUSCA Lens (server/lens): validates, limits, caches and answers /api/lens/* itself. Without it 503. */
   /** CODE ATLAS (server/atlas): map of kept items, built in the background from stored reads. */
   atlas?: { route(p: string): { status: number; json: string; headers?: Record<string, string> } } | null
+  /** READ THE BINARY (server/binary): interfaces recovered from program executables; stored results only. */
+  binary?: { route(p: string, params: URLSearchParams): { status: number; json: string; headers?: Record<string, string> } } | null
   lens?: { route(p: string, ip: string): Promise<{ status: number; json: string; headers?: Record<string, string> }> } | null
   /** UPGRADE RADAR (server/radar): stored events only. Without it /api/radar* answers 503. */
   radar?: HubRadar | null
@@ -1768,6 +1770,16 @@ export function createHub(opts: HubOptions): Hub {
       return sendJsonText(req, res, r.status, r.json, r.headers)
     }
 
+    // ── READ THE BINARY: interfaces recovered from program executables (server/binary; stored results, no RPC) ──
+    if (p === '/api/binary' || p.startsWith('/api/binary/')) {
+      allow(['GET', 'HEAD'])
+      const m = requireModules()
+      if (!m.binary) throw new HttpError(503, 'the binary reader is not available on this server')
+      limit(readLimit, req, 'read')
+      const r = m.binary.route(p, url.searchParams)
+      return sendJsonText(req, res, r.status, r.json, r.headers)
+    }
+
     // ── LUSCA Lens: on-demand reads of one program / contract (server/lens; its own limits and budget) ──
     if (p.startsWith('/api/lens/')) {
       allow(['GET', 'HEAD'])
@@ -1788,7 +1800,7 @@ export function createHub(opts: HubOptions): Hub {
   }
 
   /** Client routes as declared in src/App.tsx (first segment → allowed extra segments). */
-  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, scan: 0, radar: 1, control: 0, atlas: 0, agents: 1, docs: 1, chain: 2, lens: 2 }
+  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, scan: 0, radar: 1, control: 0, atlas: 0, binary: 1, agents: 1, docs: 1, chain: 2, lens: 2 }
   function isClientRoute(segs: string[]): boolean {
     if (segs.length === 0) return true
     const first = segs[0].toLowerCase() // react-router matches case-insensitively

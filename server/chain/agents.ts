@@ -73,6 +73,8 @@ export type AgentRpc = RpcCtx & {
  */
 export interface ScanAnalysers {
   elfPrimitives?(elf: Uint8Array): string[]
+  /** READ THE BINARY (server/binary): handed every program executable an agent read, after the read (no extra RPC). */
+  binary?(read: ChainRead, elf: Uint8Array): void
   evmSource?(files: { path: string; text: string }[], abiFunctions: string[]): { privileged: { fn: string; guard: string; file: string; line: number }[]; primitives: string[] } | null
 }
 
@@ -451,18 +453,29 @@ export function createChainAgentsWith(d: ChainAgentsDeps): ChainAgents {
     try {
       if (chain === 'solana') {
         // program binary already kept: the read is a duplicate either way, so OtterSec is not asked
-        const onElf = d.analysers?.elfPrimitives
-          ? (elf: Uint8Array) => {
-              try {
-                elfScan.prims = d.analysers!.elfPrimitives!(elf)
-              } catch {
-                elfScan.prims = null
+        const elfHeld: { b: Uint8Array | null } = { b: null }
+        const onElf =
+          d.analysers?.elfPrimitives || d.analysers?.binary
+            ? (elf: Uint8Array) => {
+                if (d.analysers?.binary) elfHeld.b = elf
+                if (!d.analysers?.elfPrimitives) return
+                try {
+                  elfScan.prims = d.analysers.elfPrimitives(elf)
+                } catch {
+                  elfScan.prims = null
+                }
               }
-            }
-          : undefined
+            : undefined
         const r = await d.readSolana(c.address, ctx, { skipOsec: (h) => d.store.seenCode(h) !== null, ...(onElf ? { onElf } : {}) })
         read = r.read
         extras = { idlJson: r.idlJson }
+        if (elfHeld.b && d.analysers?.binary) {
+          try {
+            d.analysers.binary(read, elfHeld.b)
+          } catch {
+            /* the binary reader's own failure never fails the read */
+          }
+        }
       } else {
         // bytecode already kept, or already judged boilerplate / unverified at another address: the
         // verdict is known, so the registry is not asked. Boilerplate is a property of the bytecode

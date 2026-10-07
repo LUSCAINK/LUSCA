@@ -154,6 +154,8 @@ export interface RadarOptions {
   readSolana?: typeof defaultReadSolana
   readEvm?: typeof defaultReadEvm
   now?: () => number
+  /** Handed the executable of every program the radar re-reads (READ THE BINARY: a new code hash is read again). */
+  onSolanaElf?: (read: ChainRead, elf: Uint8Array) => void
 }
 
 export interface RadarListQuery {
@@ -652,8 +654,10 @@ export function createRadar(o: RadarOptions): Radar {
     } else if (canSol(p.backfill)) {
       try {
         let prims: string[] | null = null
+        const held: { elf: Uint8Array | null } = { elf: null }
         const res = await readSolana(p.program, tracer.ctx, {
           onElf: (elf) => {
+            if (o.onSolanaElf) held.elf = elf
             try {
               prims = solanaPrimitives(scanElf(elf)).map((x) => x.name)
             } catch {
@@ -662,6 +666,13 @@ export function createRadar(o: RadarOptions): Radar {
           },
         })
         read = res.read
+        if (held.elf && o.onSolanaElf) {
+          try {
+            o.onSolanaElf(read, held.elf)
+          } catch {
+            /* never fails the radar read */
+          }
+        }
         const asked = !!read.codeHash && !read.notes.some((n) => n.startsWith(OSEC_UNAVAILABLE))
         after = snapshotOfRead(read, { primitives: read.codeHash ? (prims ?? []) : null, registryAsked: asked, at: now() })
         if (read.kind !== 'program') notes.push(read.kind === 'empty' ? 'no account at this address now' : `not a program now (${read.kind})`)
