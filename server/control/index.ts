@@ -91,7 +91,7 @@ export function createControl(o: ControlOptions): Control {
     saveTimer = setTimeout(() => {
       saveTimer = null
       save()
-    }, 5000)
+    }, 15_000)
     saveTimer.unref?.()
   }
 
