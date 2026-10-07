@@ -143,7 +143,7 @@ function Hero() {
           pages <b>{v(fmtInt(stats.pages))}</b>
         </span>
         <span>
-          tokens <b>{v(fmtCompact(stats.tokens))}</b>
+          tokens, lifetime <b>{v(fmtCompact(stats.tokens))}</b>
         </span>
         <span>
           hosts <b>{v(fmtInt(stats.domains))}</b>

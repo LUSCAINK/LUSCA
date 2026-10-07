@@ -43,8 +43,8 @@ export function NetworkPanel() {
           <div className="label">gpus online</div>
           <div className="ns-v num">{live ? fmtInt(stats.neurons) : '—'}</div>
         </div>
-        <div className="ns">
-          <div className="label">pooled compute</div>
+        <div className="ns" title="sum of the connected devices' own benchmark scores, not training work delivered">
+          <div className="label">benchmarked compute</div>
           <div className="ns-v num">{live ? fmtGflops(stats.gflops) : '—'}</div>
         </div>
         <div className="ns">

@@ -53,7 +53,7 @@ Live snapshot:
 
 What these numbers tell us:
 
-- **The GPUs mostly wait.** The average GPU batch is 745 sequences (25,549,056 samples / 34,305 GPU steps), so 312 steps/min is 312 × 745 × 1,105,920 FLOP/min ≈ **4.3 GFLOPS of useful training**. That is 0.055% of the benchmarked pool. Each step is a round trip (weights out, 0.8 GFLOP of work, 374 KB back, server checks), and the round trip dominates. A larger model does more work per round trip, but then per-step exchange becomes bandwidth-bound ([§4.1](#41-why-the-current-scheme-does-not-scale)).
+- **The GPUs mostly wait.** The average GPU batch is 745 sequences (25,549,056 samples / 34,305 GPU steps). An earlier version of this document multiplied that average by the 312 steps/min peak and got 4.3 GFLOPS; the production counters do not support that rate over time. Measured on 2026-10-07, the network delivers 920–1,327 samples/s, so 1,105,920 FLOP per sample gives **1.0–1.5 GFLOPS of useful training**, under 0.02% of the benchmarked pool. Each step is a round trip (weights out, 0.8 GFLOP of work, 374 KB back, server checks), and the round trip dominates. A larger model does more work per round trip, but then per-step exchange becomes bandwidth-bound ([§4.1](#41-why-the-current-scheme-does-not-scale)).
 - **SEPIA-0 cannot read code.** Its 96 symbols fold tabs to spaces and drop non-ASCII. Its 16-character context is shorter than `function transfer(`.
 - **Verification works at small scale.** It does so because the server can recompute a whole gradient on its CPU. At SEPIA-1 sizes that is no longer possible ([§5](#5-verification-on-a-1-cpu-coordinator)).
 
@@ -174,7 +174,7 @@ The sources, the held-out protocol set and the expert-analysis policy are specif
 
 | Source | What | Volume | Notes |
 |---|---|---|---|
-| Web corpus | Crypto technical text from the 8 arms: specs, EIPs, docs, research, governance | ≈250–300M tokens on disk at any time | Production rotates `dataset.jsonl` at 350 MB and keeps 3 archives, so at most ≈1.4 GB of JSONL (text plus metadata) exists at once. The lifetime counter (325M) includes pages in archives that were already rotated out. **Export to tokenized shards before more pages rotate out.** |
+| Web corpus | Crypto technical text from the 8 arms: specs, EIPs, docs, research, governance | ≈250–300M tokens on disk at any time | Production rotates `dataset.jsonl` at 350 MB and keeps 3 archives, so at most ≈1.4 GB of JSONL (text plus metadata) exists at once. The lifetime counter (325M) includes pages in archives that were already rotated out. **Export to tokenized shards before more pages rotate out.** The export API (`GET /api/export/*`, `server/export`) and `scripts/codex/pull_corpus.py` copy each archive to the owner's PC before it is deleted. |
 | Protocol code index | 110 allowlisted repositories, all licenses (`server/codebase`, `GET /api/code/stats`) | Allowlist estimate: ≈ 35–46M tokens (≈ 40M at 3.5 bytes per token) | Filled in allowlist priority order up to a cap of 150 MB of gzip shards (`LUSCA_CODE_MAX_MB`); whatever does not fit is skipped with a note. Running `filters.ts` over the file list of every allowlisted archive (2026-10-05) gives ≈ 18.5k files, ≈ 139 MB of text and ≈ 29 MB of gzip shards with the allowlist's path limits; the same method matched real ingest exactly on 5 repositories. The earlier survey of 92 candidate archives, without path limits, found ≈ 400 MB. At 3.5–5× gzip the cap holds ≈ 525–750 MB of text, so the allowlist sets the size, not the cap. Measured 2026-10-06 (M1): all 110 entries indexed, 18,239 files, 147.7 MB of text, ≈ 35.7M tokens with the M1 tokenizer (each language's bytes ÷ its measured bytes per token) |
 | Expert analysis | Vulnerability guides, incident index and exploit PoCs, advisories, wargames, audit reports | Guides, advisories, wargames and incidents: ≈ 8–15 MB (≈ 2.3–4.3M tokens). Audit-report repositories: more than 1,400 PDFs, text not yet measured; ≈ 60–140 MB (≈ 15–40M tokens) if a report averages 40–100 KB of text | Per [SEPIA-1-data.md §5](./SEPIA-1-data.md), all licenses. Code4rena-derived text is excluded because its terms forbid ML training. Reports that describe evaluation items stay out ([§3.5](#35-eval-contamination-control)). PDF-to-text conversion runs off the Render box |
 
@@ -553,7 +553,7 @@ L is data-limited unless the curated code index grows: more landmark repositorie
 
 **Per-neuron bandwidth per hour.** See the table in §4.3. In short, an ABYSSO-class neuron uploads 0.4–1.1 GB/h with dense int8, or 10–32 MB/h with top-1%. A BATHY-class neuron uploads roughly 40% of that. Downloads are about the same as dense uploads, served from object storage.
 
-**Today, for comparison.** SEPIA-0's GPU path sustains 4.3 GFLOPS of useful work (§0). At that rate S would take about 9 months. In practice the per-step scheme at S size would run out of bandwidth long before that (§4.1), so the redesign is required, not optional.
+**Today, for comparison.** SEPIA-0's GPU path delivers 1.0–1.5 GFLOPS of useful work (measured 2026-10-07, §0). At that rate S (1.04 × 10¹⁷ FLOP) would take about 820–1,180 days. In practice the per-step scheme at S size would run out of bandwidth long before that (§4.1), so the redesign is required, not optional.
 
 ---
 
@@ -713,7 +713,7 @@ Open owner decisions: the license for the released weights (item 2), an optional
 | Compute | FLOPs per token × D, D = 20·N, × 1.2 (redundancy) × 1.1 (local-update margin) ÷ (7,798.7 GFLOPS × u) |
 | Detection | Executed unit in a pair with probability 2p/(1+p); P(caught after n fakes) = 1 − (1 − 2p/(1+p))ⁿ |
 | Server CPU throughput | 5.9 steps/s × 64 × 1,105,920 FLOPs ≈ 0.42 GFLOPS at duty 0.6 (≈ 0.7 GFLOPS per full core) |
-| SEPIA-0 effective GPU throughput | 312 steps/min × 745 avg batch × 1,105,920 FLOPs ÷ 60 ≈ 4.3 GFLOPS |
+| SEPIA-0 effective GPU throughput | 920–1,327 samples/s (production counters, 2026-10-07) × 1,105,920 FLOPs ≈ 1.0–1.5 GFLOPS delivered. The earlier figure of 4.3 GFLOPS (312 steps/min × 745 avg batch) assumed the peak step rate for every minute |
 
 ## Appendix B — references
 

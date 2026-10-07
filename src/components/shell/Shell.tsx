@@ -366,8 +366,8 @@ function StatusBar() {
       <span className="sb-seg" title="pages accepted into the corpus, lifetime">
         <b>{fmtInt(v(stats.pages))}</b> pages
       </span>
-      <span className="sb-seg hide-sm hide-tab">
-        <b>{fmtCompact(v(stats.tokens))}</b> tok
+      <span className="sb-seg hide-sm hide-tab" title="tokens accepted since launch; most sit in archives already rotated off the server (the Sepia page shows what is held now)">
+        <b>{fmtCompact(v(stats.tokens))}</b> tok lifetime
       </span>
       <span className="sb-seg hide-sm hide-lg">
         <b>{fmtInt(v(stats.domains))}</b> hosts
@@ -375,8 +375,8 @@ function StatusBar() {
       <span className="sb-seg hide-md">
         sepia <b>step {fmtInt(v(model.step))}</b> loss <b>{live && model.loss ? model.loss.toFixed(3) : '—'}</b>
       </span>
-      <span className="sb-seg hide-md">
-        <b>{fmtInt(v(stats.neurons))}</b> neurons · {live ? fmtGflops(stats.gflops) : '—'}
+      <span className="sb-seg hide-md" title={live ? `connected devices; their own benchmarks add up to ${fmtGflops(stats.gflops)} (claimed peak, not training work delivered)` : undefined}>
+        <b>{fmtInt(v(stats.neurons))}</b> neurons
       </span>
       <span className="sb-fill" />
       <button className={`sb-seg sb-btn hide-tab ${sonar.on ? 'on' : ''}`} onClick={sonar.toggle} aria-pressed={sonar.on} title="Sonar: one audio cue per ingested page">
