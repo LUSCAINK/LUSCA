@@ -7,7 +7,7 @@ import type { AdvisoryInfo, AdvisoryRange, AdvisorySeverity, SolcBug } from '../
 import { cmpVer, inAnyRange, parseVer, rangeLabel, unpackIdx, type VerRange } from './core.ts'
 
 /** Bump when the matching rules change: persisted results are recomputed. */
-export const MATCHER_VERSION = 2
+export const MATCHER_VERSION = 4
 
 export interface FingerprintDoc {
   v: 1

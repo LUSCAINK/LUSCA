@@ -77,6 +77,14 @@ export function ozHeader(text: string): OzHeader | null {
   return { version: m[1] ?? m[2], path: m[3] }
 }
 
+/** Every OpenZeppelin header in a source, in order, with its character offset (a flattened source carries one per file). */
+export function ozHeaders(text: string): (OzHeader & { at: number })[] {
+  const re = new RegExp(HEADER_RE.source, 'gm')
+  const out: (OzHeader & { at: number })[] = []
+  for (const m of text.matchAll(re)) out.push({ version: m[1] ?? m[2], path: m[3], at: m.index ?? 0 })
+  return out
+}
+
 // ── solc versions ──
 /** "v0.8.19+commit.7dd6d404" | "0.8.19" | "vyper:0.3.10" → "0.8.19" (Solidity only; null otherwise). */
 export function solcVersionOf(compiler: string | null | undefined): string | null {

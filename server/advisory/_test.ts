@@ -159,6 +159,25 @@ await test('header matching: a modified file whose header names an affected rele
   const mixed = checkSources(ds, [{ path: 'a/Thing.sol', text: COPY_C }, { path: 'a/Other.sol', text: OTHER }, { path: 'b/Thing.sol', text: COPY_A }], null)
   assert.equal(mixed.ozReleases[0].label, null)
   assert.ok(mixed.notes.some((n) => /compiler version not recorded/.test(n)))
+  // flattened source: every header claims the code up to the next one; evidence line is in the whole file
+  const lineOf = (text: string, needle: string) => text.slice(0, text.indexOf(needle)).split('\n').length
+  const flat = `// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n// File: utils/Other.sol\n${OTHER}\n// File: utils/Thing.sol\n${edited}\ncontract Mine {}\n`
+  const rf = checkSources(ds, [{ path: 'Mine.sol', text: flat }], null)
+  assert.equal(rf.ozFiles, 0)
+  assert.deepEqual(rf.advisories.map((a) => a.id), ['GHSA-aaaa-bbbb-cccc'])
+  assert.equal(rf.advisories[0].files[0].method, 'header')
+  assert.equal(rf.advisories[0].files[0].path, 'Mine.sol')
+  assert.equal(rf.advisories[0].files[0].line, lineOf(flat, 'function run('))
+  // the fixed release flattened → nothing; a single header deep in a file still counts
+  assert.equal(checkSources(ds, [{ path: 'Mine.sol', text: flat.replace('v4.0.0) (utils/Thing.sol)', 'v4.3.0) (utils/Thing.sol)') }], null).advisories.length, 0)
+  // stacked headers (a header, then a dependency's header and code, then the code): the code is not in the
+  // header's own segment, so it is not attributed to that header
+  const stacked = `// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n${edited.split('\n')[1]}\n\n${OTHER}\n${edited.split('\n').slice(2).join('\n')}`
+  assert.ok(stacked.includes('function run(') && stacked.indexOf('function run(') > stacked.indexOf('utils/Other.sol'))
+  assert.equal(checkSources(ds, [{ path: 'Mine.sol', text: stacked }], null).advisories.length, 0)
+  const deep = `${'// padding\n'.repeat(80)}${edited}`
+  const rd = checkSources(ds, [{ path: 'Big.sol', text: deep }], null)
+  assert.equal(rd.advisories[0]?.files[0].line, lineOf(deep, 'function run('))
   assert.deepEqual(anchorLine('a\nb\nfunction x(\n', ['nope(', 'function x(']), { line: 3, symbol: 'x' })
   assert.deepEqual(anchorLine('a', ['zzz']), { line: 1, symbol: null })
 })
@@ -244,6 +263,11 @@ await test('background check: census math, lists, item, routes, persistence', as
   assert.equal(chk.route('/api/advisories/items', new URLSearchParams('advisory=GHSA-aaaa-bbbb-cccc&bug=BugLow')).status, 400)
   assert.equal(chk.route('/api/advisories/items', new URLSearchParams('chain=solana')).status, 400)
   assert.equal(chk.route('/api/advisories/items', new URLSearchParams('cursor=x')).status, 400)
+  assert.equal(chk.route('/api/advisories/items', new URLSearchParams('limit=-1')).status, 400)
+  const lim = JSON.parse(chk.route('/api/advisories/items', new URLSearchParams('bug=BugLow&limit=1')).json) as AdvisoryList
+  assert.equal(lim.items.length, 1)
+  assert.equal(lim.total, 2)
+  assert.equal(lim.next, '1')
   assert.equal(chk.route(`/api/advisories/ethereum/${A}`, new URLSearchParams()).status, 200)
   assert.equal(chk.route('/api/advisories/ethereum/0x1234567890123456789012345678901234567890', new URLSearchParams()).status, 404)
   assert.equal(chk.route('/api/advisories/solana/So11111111111111111111111111111111111111112', new URLSearchParams()).status, 404)

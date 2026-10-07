@@ -19,7 +19,9 @@ date it was generated. Nothing downloaded is executed: tarballs and JSON are rea
   `-solc-0.7` builds are compared as their base version.
 - **Header.** A file that is not a published copy but whose `// OpenZeppelin Contracts (last updated vX.Y.Z) (path)`
   header names a release counts only when every release carrying that header for that file is affected; the
-  evidence says `header` so it is never confused with an identical copy.
+  evidence says `header` so it is never confused with an identical copy. In a flattened source (several OpenZeppelin
+  files in one), flatteners do not always keep a header next to its code, so a header there counts only when the
+  advisory's anchor (the affected function or contract) lies between that header and the next one.
 - **Compiler.** The exact solc version from the verified metadata → that version's listed bugs. Bug conditions
   (optimizer, via-IR, EVM version, code patterns) are shown and never evaluated.
 

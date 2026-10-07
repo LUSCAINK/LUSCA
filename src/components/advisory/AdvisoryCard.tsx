@@ -77,7 +77,7 @@ export function EvidenceLine({ e }: { e: AdvisoryEvidence }) {
   const { dir, base } = split(e.path)
   return (
     <span className="av-ev">
-      <span className={`av-ev-m mono ${e.method}`} title={e.method === 'hash' ? 'Byte-identical to the release file (line endings aside)' : 'Content differs from every published copy; the file header names an affected release'}>
+      <span className={`av-ev-m mono ${e.method}`} title={e.method === 'hash' ? 'Byte-identical to the release file (line endings aside)' : 'Not a byte-identical copy: the OpenZeppelin header of this code (in a flattened source, the header right above it) names an affected release'}>
         {e.method === 'hash' ? '≡' : 'hdr'}
       </span>
       <code className="av-ev-p">

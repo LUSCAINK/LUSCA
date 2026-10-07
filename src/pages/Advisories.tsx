@@ -89,7 +89,7 @@ export default function Advisories() {
           <Kicker n={ADVISORIES_NAV_N} name="Advisories" className="av-kick">
             <span className="av-live mono">
               <span className={sum && !sumErr ? 'led on' : 'led'} aria-hidden="true" />
-              {sumErr ? 'server unreachable' : sum ? (running ? `checking · ${fmtInt(sum.progress.done)} of ${fmtInt(sum.progress.total)}` : `all ${fmtInt(sum.progress.total)} kept EVM contracts checked`) : 'loading'}
+              {sumErr ? 'server unreachable' : sum ? (running ? `checking · ${fmtInt(sum.progress.done)} of ${fmtInt(sum.progress.total)}` : `up to date · ${fmtInt(sum.progress.total)} kept EVM contracts`) : 'loading'}
             </span>
           </Kicker>
           <h1 className="av-title display">
@@ -304,7 +304,9 @@ export default function Advisories() {
           <span>
             Release fingerprints: every published version of {sum.data.packages.join(' and ')} from the npm registry ({fmtDay(sum.data.fingerprintsAt)}), each tarball
             checked against the registry’s integrity hash. Advisories: osv.dev and GitHub, mapped to files by hand ({sum.data.advisoriesReviewedAt}). Compiler bugs: the
-            Solidity team’s bugs.json ({fmtDay(sum.data.solcBugsAt)}). Not checked: {fmtInt(sum.notChecked.vyper)} Vyper · {fmtInt(sum.notChecked.noSource)} without stored
+            Solidity team’s bugs.json ({fmtDay(sum.data.solcBugsAt)}). Identical: the file matches a release file byte for byte (line endings aside). By header: the
+            file’s OpenZeppelin header names a release where every copy of that file is affected; in a flattened source, only when the affected function sits under
+            that header. Not checked: {fmtInt(sum.notChecked.vyper)} Vyper · {fmtInt(sum.notChecked.noSource)} without stored
             source · {fmtInt(sum.notChecked.solana)} Solana programs. Stored sources only, no RPC.
           </span>
         ) : (

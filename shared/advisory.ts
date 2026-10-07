@@ -3,7 +3,7 @@
 // solc version. Shared between server/advisory/** and the client.
 //
 // REST: GET /api/advisories/summary -> AdvisorySummary
-//       GET /api/advisories/items?advisory=<GHSA id>|bug=<solc bug name>&chain=&cursor= -> AdvisoryList
+//       GET /api/advisories/items?advisory=<GHSA id>|bug=<solc bug name>&chain=&cursor=&limit=<1-50> -> AdvisoryList
 //       GET /api/advisories/:chain/:address -> AdvisoryItem | 404
 import type { ChainId } from './chain.ts'
 

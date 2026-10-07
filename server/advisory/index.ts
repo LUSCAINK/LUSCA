@@ -308,15 +308,18 @@ export function createAdvisoryCheck(o: AdvisoryOptions): AdvisoryCheck {
       const bug = params.get('bug') || ''
       const chain = params.get('chain') || ''
       const cursor = params.get('cursor') || ''
+      const limitRaw = params.get('limit') || ''
+      if (limitRaw && !/^\d{1,3}$/.test(limitRaw)) return err(400, `limit must be a number from 1 to ${pageSize}`)
+      const limit = limitRaw ? Math.max(1, Math.min(pageSize, Number(limitRaw))) : pageSize
       if (advisory && !/^GHSA(-[23456789cfghjmpqrvwx]{4}){3}$/.test(advisory)) return err(400, 'advisory must be a GHSA id listed in /api/advisories/summary')
       if (bug && !/^[A-Za-z0-9]{3,80}$/.test(bug)) return err(400, 'bug must be a Solidity bug name listed in /api/advisories/summary')
       if (advisory && bug) return err(400, 'ask for one advisory or one compiler bug')
       if (chain && !CHAINS.has(chain as ChainId)) return err(400, 'chain must be ethereum, base or arbitrum')
       if (cursor && !/^\d{1,6}$/.test(cursor)) return err(400, 'cursor is not one this server issued')
-      const k = `items:${version}:${advisory}:${bug}:${chain}:${cursor}`
+      const k = `items:${version}:${advisory}:${bug}:${chain}:${cursor}:${limit}`
       const hit = lru.get(k)
       if (hit) return { status: 200, json: hit, headers: CACHE }
-      const l = list({ advisory: advisory || undefined, bug: bug || undefined, chain: (chain || undefined) as ChainId | undefined, cursor: cursor || undefined })
+      const l = list({ advisory: advisory || undefined, bug: bug || undefined, chain: (chain || undefined) as ChainId | undefined, cursor: cursor || undefined, limit })
       if (!l) return err(404, advisory ? 'no advisory with this id' : 'no compiler bug with this name')
       return { status: 200, json: remember(k, JSON.stringify(l)), headers: CACHE }
     }

@@ -1,7 +1,7 @@
 // ADVISORY CHECK matching: one contract's stored sources → OpenZeppelin files it contains, advisory-affected files
 // (with file:line evidence) and the known bugs of its solc version. Pure (no I/O); cost is one sha256 per .sol file.
 import type { AdvisoryEvidence, AdvisorySeverity } from '../../shared/advisory.ts'
-import { cmpVer, fileHash, ozHeader, solcVersionOf } from './core.ts'
+import { cmpVer, fileHash, ozHeader, ozHeaders, solcVersionOf, type OzHeader } from './core.ts'
 import { releasesLabel, type AffectedFile, type Dataset } from './dataset.ts'
 
 export interface CheckResult {
@@ -27,6 +27,12 @@ export function anchorLine(text: string, anchors: string[]): { line: number; sym
 }
 
 const base = (p: string) => p.split('/').pop() ?? p
+/** 1-based line of a character offset. */
+function lineAt(text: string, at: number): number {
+  let line = 1
+  for (let i = text.indexOf('\n'); i >= 0 && i < at; i = text.indexOf('\n', i + 1)) line++
+  return line
+}
 
 export function checkSources(ds: Dataset, sources: { path: string; text: string }[], compiler: string | null): CheckResult {
   const notes: string[] = []
@@ -60,20 +66,35 @@ export function checkSources(ds: Dataset, sources: { path: string; text: string 
       }
       continue
     }
-    if (!hd) continue
-    // not a published copy, but its header names a release: count it only when every release carrying that header is affected
+    // a flattened source (several OpenZeppelin files in one): flatteners do not always keep a header next to its code
+    // (dependencies can sit between them, a header can be left behind), so a header there counts only when the
+    // advisory's anchor (the affected function / contract) is inside its own segment, up to the next header
+    const all = ozHeaders(f.text)
+    if (all.length > 1 || (all.length === 1 && !hd)) {
+      for (let i = 0; i < all.length; i++) {
+        const seg = f.text.slice(all[i].at, i + 1 < all.length ? all[i + 1].at : f.text.length)
+        byHeader(f.path, all[i], seg, lineAt(f.text, all[i].at) - 1, base(all[i].path), true)
+      }
+      continue
+    }
+    if (hd) byHeader(f.path, hd, f.text, 0, base(f.path), false)
+  }
+  // not a published copy, but its header names a release: count it only when every release carrying that header is affected
+  function byHeader(filePath: string, hd: OzHeader, text: string, lineOffset: number, name: string, needAnchor: boolean) {
     const key = `${hd.version}|${hd.path}`
     let cands = ds.headerAffected.get(key) ?? []
-    const same = cands.filter((af) => base(af.path) === base(f.path))
+    const same = cands.filter((af) => base(af.path) === name)
     if (same.length) cands = same
     const seen = new Set<string>()
     for (const af of cands) {
       if (seen.has(af.adv.id)) continue
+      const at = anchorLine(text, af.def.anchor)
+      if (needAnchor && !at.symbol) continue
       seen.add(af.adv.id)
       const vers = ds.fp.packages[af.pkg].versions
       const carrying: string[] = []
       for (const h2 of af.hashes) for (const e of ds.byHash.get(h2) ?? []) if (e.pkg === af.pkg && e.path === af.path && e.header === key) carrying.push(...e.versions.map((i) => vers[i]))
-      add(af, { path: f.path, ...anchorLine(f.text, af.def.anchor), pkg: af.pkgName, pkgPath: af.path, method: 'header', releases: releasesLabel(carrying.length ? carrying : [hd.version]), header: hd.version, release: carrying.includes(hd.version) ? hd.version : (carrying.sort(cmpVer)[0] ?? null) })
+      add(af, { path: filePath, line: at.line + lineOffset, symbol: at.symbol, pkg: af.pkgName, pkgPath: af.path, method: 'header', releases: releasesLabel(carrying.length ? carrying : [hd.version]), header: hd.version, release: carrying.includes(hd.version) ? hd.version : (carrying.sort(cmpVer)[0] ?? null) })
     }
   }
   const ozReleases = [...inter.entries()].map(([pi, { set, files }]) => {
