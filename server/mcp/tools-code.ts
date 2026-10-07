@@ -25,6 +25,9 @@ const GHSA = '^GHSA(-[23456789cfghjmpqrvwx]{4}){3}$'
 
 const links = (site: string, ...paths: string[]) => [...new Set(paths.filter(Boolean).map((p) => (p.startsWith('http') ? p : site + p)))]
 const lensPath = (chain: ChainId, address: string) => `/lens/${chain}/${address}`
+/** A path as search stores it ('…/' marks a cut home directory) shown like the rest of the site: the project's own tree. */
+const codePath = (p: string) => srcPath(p.startsWith('…/') ? '/' + p.slice(2) : p)
+const day = (s: string) => safe(s, 24).slice(0, 10)
 const chainCounts = (c: Partial<Record<ChainId, number>>) =>
   CHAINS.filter((k) => c[k])
     .map((k) => `${k} ${int(c[k])}`)
@@ -72,7 +75,7 @@ function searchData(r: SearchResult, limit: number, site: string) {
       name: g.item.name,
       url: site + lensPath(g.item.chain, g.item.address),
       files: g.files.slice(0, 3).map((f) => ({
-        path: srcPath(f.path),
+        path: codePath(f.path),
         lang: f.lang,
         lines: f.lines,
         matches: f.matches,
@@ -211,7 +214,7 @@ function advisorySummaryText(s: AdvisorySummary, out: string[]) {
   out.push(`Compiler: ${int(c.known)} contracts with a known solc version; ${int(c.withBugs)} on a version with listed bugs; ${int(c.bySeverity.high ?? 0)} on a version whose list includes a high-severity bug (conditions not checked)`)
   const top = [...c.bugs].sort((a, b) => b.contracts - a.contracts).slice(0, 5)
   if (top.length) out.push(`  most common listed bugs: ${list(top.map((b) => `${b.name} (${b.severity}, ${int(b.contracts)})`), 5)}`)
-  out.push(`Data: ${int(s.data.ozVersions)} OpenZeppelin releases, ${int(s.data.ozUniqueFiles)} distinct files (fingerprints ${safe(s.data.fingerprintsAt, 24)}) · advisories reviewed ${safe(s.data.advisoriesReviewedAt, 24)} · ${int(s.data.solcBugs)} solc bugs (${safe(s.data.solcBugsAt, 24)})`)
+  out.push(`Data: ${int(s.data.ozVersions)} OpenZeppelin releases, ${int(s.data.ozUniqueFiles)} distinct files (fingerprints ${day(s.data.fingerprintsAt)}) · advisories reviewed ${day(s.data.advisoriesReviewedAt)} · ${int(s.data.solcBugs)} solc bugs (${day(s.data.solcBugsAt)})`)
 }
 
 function advisoryListText(l: AdvisoryList, id: string, out: string[]) {
@@ -323,7 +326,7 @@ function binarySummaryText(s: BinarySummary, out: string[]) {
   const c = s.check
   if (c) {
     out.push(
-      `method check on ${int(c.programs)} programs that publish an Anchor IDL, read blind: recall ${c.recall === null ? '—' : `${(c.recall * 100).toFixed(1)}%`} (${int(c.recovered)} recovered; base ${int(c.idlInCode)} IDL instructions present in the code) · precision ${c.precision === null ? '—' : `${(c.precision * 100).toFixed(1)}%`}${c.skipped ? ` · ${int(c.skipped)} skipped (no IDL discriminator in the code)` : ''}`,
+      `method check on ${int(c.programs)} programs that publish an Anchor IDL, read blind: recall ${c.recall === null ? '—' : `${(c.recall * 100).toFixed(1)}%`} of the ${int(c.idlInCode)} IDL instructions present in their code · precision ${c.precision === null ? '—' : `${(c.precision * 100).toFixed(1)}%`} of ${int(c.recovered)} recovered names${c.skipped ? ` · ${int(c.skipped)} skipped (no IDL discriminator in the code)` : ''}`,
     )
   } else out.push('method check: no program with a published IDL read yet')
   if (s.idlBehind.length) out.push(`deployed code that differs from its published IDL: ${list(s.idlBehind.map((p) => `${title(p.name)} ${p.address} (+${p.newer} / −${p.missing} of ${p.idlInstructions})`), 5, '; ')}`)
