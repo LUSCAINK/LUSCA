@@ -1,7 +1,7 @@
 // ADVISORY CHECK matching: one contract's stored sources → OpenZeppelin files it contains, advisory-affected files
 // (with file:line evidence) and the known bugs of its solc version. Pure (no I/O); cost is one sha256 per .sol file.
 import type { AdvisoryEvidence, AdvisorySeverity } from '../../shared/advisory.ts'
-import { fileHash, ozHeader, solcVersionOf } from './core.ts'
+import { cmpVer, fileHash, ozHeader, solcVersionOf } from './core.ts'
 import { releasesLabel, type AffectedFile, type Dataset } from './dataset.ts'
 
 export interface CheckResult {
@@ -55,7 +55,8 @@ export function checkSources(ds: Dataset, sources: { path: string; text: string 
       for (const af of ds.hashAffected.get(h) ?? []) {
         const e = entries.find((x) => x.pkg === af.pkg && x.path === af.path)!
         const vers = ds.fp.packages[af.pkg].versions
-        add(af, { path: f.path, ...anchorLine(f.text, af.def.anchor), pkg: af.pkgName, pkgPath: af.path, method: 'hash', releases: releasesLabel(e.versions.map((i) => vers[i])), header: hd?.version ?? null })
+        const rel = e.versions.map((i) => vers[i]).sort(cmpVer)
+        add(af, { path: f.path, ...anchorLine(f.text, af.def.anchor), pkg: af.pkgName, pkgPath: af.path, method: 'hash', releases: releasesLabel(rel), header: hd?.version ?? null, release: rel[rel.length - 1] ?? null })
       }
       continue
     }
@@ -72,7 +73,7 @@ export function checkSources(ds: Dataset, sources: { path: string; text: string 
       const vers = ds.fp.packages[af.pkg].versions
       const carrying: string[] = []
       for (const h2 of af.hashes) for (const e of ds.byHash.get(h2) ?? []) if (e.pkg === af.pkg && e.path === af.path && e.header === key) carrying.push(...e.versions.map((i) => vers[i]))
-      add(af, { path: f.path, ...anchorLine(f.text, af.def.anchor), pkg: af.pkgName, pkgPath: af.path, method: 'header', releases: releasesLabel(carrying.length ? carrying : [hd.version]), header: hd.version })
+      add(af, { path: f.path, ...anchorLine(f.text, af.def.anchor), pkg: af.pkgName, pkgPath: af.path, method: 'header', releases: releasesLabel(carrying.length ? carrying : [hd.version]), header: hd.version, release: carrying.includes(hd.version) ? hd.version : (carrying.sort(cmpVer)[0] ?? null) })
     }
   }
   const ozReleases = [...inter.entries()].map(([pi, { set, files }]) => {

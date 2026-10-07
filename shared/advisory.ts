@@ -13,6 +13,12 @@ export type MatchMethod = 'hash' | 'header'
 /** Wording required wherever a match is shown (page and API). */
 export const ADVISORY_SCOPE =
   'A match shows that code from an affected OpenZeppelin release is present in the contract\'s verified source. Whether it is reachable or exploitable depends on how the contract uses it.'
+/** The release file on GitHub (tag v<release>), at a line. Byte-identical copies have the same line numbers. */
+export function releaseFileUrl(pkg: string, release: string, pkgPath: string, line?: number): string {
+  const repo = pkg === '@openzeppelin/contracts-upgradeable' ? 'openzeppelin-contracts-upgradeable' : 'openzeppelin-contracts'
+  return `https://github.com/OpenZeppelin/${repo}/blob/v${release}/contracts/${pkgPath}${line && line > 1 ? `#L${line}` : ''}`
+}
+
 export const COMPILER_SCOPE =
   'Known bugs of the exact compiler version the contract was verified with, from the Solidity team\'s list. Each bug only applies under its listed conditions (optimizer, via-IR, EVM version, specific code patterns); they are listed, not checked.'
 
@@ -44,6 +50,8 @@ export interface AdvisoryEvidence {
   /** Releases that ship this exact copy (hash) or this header (header), e.g. "4.7.0 – 4.7.2 (3 releases)". */
   releases: string
   header: string | null
+  /** One release that ships this exact copy (the newest; hash) or the header's own release (header): the file at that tag on GitHub has the same line. */
+  release: string | null
 }
 
 export interface ItemAdvisory { id: string; severity: AdvisorySeverity; files: AdvisoryEvidence[] }

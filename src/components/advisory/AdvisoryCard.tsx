@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { ChainId } from '@shared/chain'
 import type { AdvisoryEvidence, AdvisoryItem, SolcBug } from '@shared/advisory'
-import { ADVISORY_SCOPE, COMPILER_SCOPE } from '@shared/advisory'
+import { ADVISORY_SCOPE, COMPILER_SCOPE, releaseFileUrl } from '@shared/advisory'
 import { fmtInt } from '@/lib/format'
 import './advisory.css'
 
@@ -86,7 +86,17 @@ export function EvidenceLine({ e }: { e: AdvisoryEvidence }) {
         <span className="ln">:{e.line}</span>
       </code>
       {e.symbol && <span className="av-ev-s mono">{e.symbol}</span>}
-      <span className="av-ev-r mono">{e.method === 'hash' ? `identical to ${e.pkg.replace('@openzeppelin/', '')} ${e.releases}` : `header says v${e.header} · ${e.pkg.replace('@openzeppelin/', '')} ${e.pkgPath}`}</span>
+      <span className="av-ev-r mono">
+        {e.method === 'hash' ? `identical to ${e.pkg.replace('@openzeppelin/', '')} ${e.releases}` : `header says v${e.header} · ${e.pkg.replace('@openzeppelin/', '')} ${e.pkgPath}`}
+        {e.release && (
+          <>
+            {' · '}
+            <a href={releaseFileUrl(e.pkg, e.release, e.pkgPath, e.method === 'hash' ? e.line : undefined)} target="_blank" rel="noreferrer" title={`${e.pkg}@${e.release}/${e.pkgPath} on GitHub`}>
+              v{e.release} {e.method === 'hash' ? `line ${e.line}` : 'file'} ↗
+            </a>
+          </>
+        )}
+      </span>
     </span>
   )
 }
@@ -110,7 +120,10 @@ function BugRow({ b }: { b: SolcBug }) {
   )
 }
 
+const BUGS_SHOWN = 4
+
 export function AdvisoryCard({ st, lensLink = true }: { st: CardState; lensLink?: boolean }) {
+  const [allBugs, setAllBugs] = useState(false)
   if (st.k === 'loading') return <p className="av-card-note mono">checking…</p>
   if (st.k === 'error') return <p className="av-card-note mono">Can’t reach the LUSCA server.</p>
   if (st.k === 'missing') return <p className="av-card-note mono">{st.why}</p>
@@ -169,10 +182,15 @@ export function AdvisoryCard({ st, lensLink = true }: { st: CardState; lensLink?
         {it.solc && it.solc.bugs.length > 0 && (
           <>
             <ul className="av-bugs">
-              {it.solc.bugs.map((b) => (
+              {(allBugs ? it.solc.bugs : it.solc.bugs.slice(0, BUGS_SHOWN)).map((b) => (
                 <BugRow key={b.name} b={b} />
               ))}
             </ul>
+            {it.solc.bugs.length > BUGS_SHOWN && (
+              <button className="av-bugs-more mono" onClick={() => setAllBugs(!allBugs)}>
+                {allBugs ? 'show fewer' : `show all ${it.solc.bugs.length} listed bugs`}
+              </button>
+            )}
             <p className="av-scope mono">{COMPILER_SCOPE}</p>
           </>
         )}

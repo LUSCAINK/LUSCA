@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { ChainId, ChainIndexItem } from '../../shared/chain.ts'
-import { ADVISORY_SCOPE, type AdvisoryItem, type AdvisoryList, type AdvisorySummary } from '../../shared/advisory.ts'
+import { ADVISORY_SCOPE, releaseFileUrl, type AdvisoryItem, type AdvisoryList, type AdvisorySummary } from '../../shared/advisory.ts'
 import { cmpVer, fileHash, inRange, normalizeSource, ozHeader, packIdx, rangeLabel, solcVersionOf, unpackIdx } from './core.ts'
 import { buildDataset, loadDataset, onlyAffected, preOfIntroduced, rangeVersion, releasesLabel, type AdvisoryDoc, type FingerprintDoc, type SolcDoc } from './dataset.ts'
 import { anchorLine, checkSources } from './match.ts'
@@ -137,6 +137,9 @@ await test('hash matching: byte-identical (CRLF) copy → evidence with file:lin
   assert.equal(ev.symbol, 'run')
   assert.equal(ev.releases, '4.0.0-rc.0 – 4.1.0 (3 releases)')
   assert.equal(ev.header, '4.0.0')
+  assert.equal(ev.release, '4.1.0')
+  assert.equal(releaseFileUrl(ev.pkg, ev.release!, ev.pkgPath, ev.line), 'https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.1.0/contracts/utils/Thing.sol#L7')
+  assert.equal(releaseFileUrl('@openzeppelin/contracts-upgradeable', '4.3.3', 'utils/cryptography/ECDSAUpgradeable.sol'), 'https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/blob/v4.3.3/contracts/utils/cryptography/ECDSAUpgradeable.sol')
   assert.deepEqual(r.ozReleases, [{ pkg: '@openzeppelin/contracts', label: '4.0.0-rc.0 – 4.1.0 (3 releases)', files: 1 }])
   assert.deepEqual(r.solc, { version: '0.8.19', compiler: 'solc 0.8.19+commit.7dd6d404', bugs: [0, 1] })
 })
@@ -148,6 +151,7 @@ await test('header matching: a modified file whose header names an affected rele
   assert.equal(r.advisories.length, 1)
   assert.equal(r.advisories[0].files[0].method, 'header')
   assert.equal(r.advisories[0].files[0].header, '4.0.0')
+  assert.equal(r.advisories[0].files[0].release, '4.0.0')
   assert.deepEqual(r.solc?.bugs, [])
   const fixedHdr = COPY_C.replace('return x + 1;', 'return x + 2;')
   assert.equal(checkSources(ds, [{ path: 'Thing.sol', text: fixedHdr }], null).advisories.length, 0)

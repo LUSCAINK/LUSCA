@@ -93,6 +93,15 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.av-ev-r a {
+  color: var(--fg-1);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line-3);
+}
+.av-ev-r a:hover {
+  color: var(--hot);
+  border-bottom-color: var(--hot);
+}
 
 /* ─── per-contract card ─── */
 .av-card {
@@ -184,6 +193,21 @@
 }
 
 /* ─── compiler bugs ─── */
+.av-bugs-more {
+  align-self: flex-start;
+  background: none;
+  border: 1px dashed var(--line-3);
+  color: var(--fg-2);
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  padding: 6px 10px 5px;
+  cursor: pointer;
+}
+.av-bugs-more:hover {
+  color: var(--fg);
+  border-color: var(--fg-2);
+}
 .av-bugs {
   list-style: none;
   margin: 0;
