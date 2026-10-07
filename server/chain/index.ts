@@ -38,6 +38,7 @@ import { createRadarDiff, type RadarDiffService } from '../radar/code-diff.ts'
 import { createAtlas, type Atlas } from '../atlas/index.ts'
 import type { RadarEvent } from '../../shared/radar.ts'
 import { createControl, type Control } from '../control/index.ts'
+import { createCodeSearch, type CodeSearch } from '../search/index.ts'
 
 type Log = (lvl: 'info' | 'warn' | 'error', msg: string) => void
 
@@ -58,6 +59,8 @@ export interface ChainAgentsApi {
   control: Control | null
   /** CODE ATLAS (server/atlas): map of kept items from stored reads only (no RPC); null when LUSCA_ATLAS=0. */
   atlas: Atlas | null
+  /** CODE SEARCH (server/search): grep over kept verified sources and IDLs (stored data only); null when LUSCA_SEARCH=0. */
+  search: CodeSearch | null
 }
 
 function intEnv(name: string, def: number, min: number, max: number): number {
@@ -262,6 +265,11 @@ export function createChainAgents(opts: {
     ? null
     : createAtlas({ source: { items: (q) => store.items(q), item: (c, a) => store.item(c, a) }, dataDir: opts.dataDir, log, startDelayMs: 8_000 })
 
+  // CODE SEARCH: stored sources and IDLs only (no RPC, no budget); LUSCA_SEARCH=0 turns it off
+  const search: CodeSearch | null = /^(0|false|no|off)$/i.test(process.env.LUSCA_SEARCH?.trim() ?? '')
+    ? null
+    : createCodeSearch({ source: { items: (q) => store.items(q) }, dataDir: opts.dataDir, log, maxMb: intEnv('LUSCA_SEARCH_MAX_MB', 192, 8, 1024), startDelayMs: 6_000 })
+
   let started = false
   let stopped = false
 
@@ -273,6 +281,7 @@ export function createChainAgents(opts: {
       radarDiff?.start()
       control?.start() // stored reads first; EVM proxies under its own slice
       atlas?.start()
+      search?.start()
       radar?.start() // listens whether or not the chain agents run (LUSCA_RADAR=0 turns it off)
       if (!enabled) {
         log('info', 'chain agents off (LUSCA_CHAIN_AGENTS=0); stored chain data is still served')
@@ -301,6 +310,7 @@ export function createChainAgents(opts: {
       await radar?.stop()
       await control?.stop()
       await atlas?.stop()
+      await search?.stop()
       const agentsDone = agents.stop() // wakes sleeping agents; in-flight reads end with the RPC close below
       await rpc.close()
       await agentsDone
@@ -318,5 +328,6 @@ export function createChainAgents(opts: {
     radarDiff,
     control,
     atlas,
+    search,
   }
 }
