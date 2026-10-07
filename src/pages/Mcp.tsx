@@ -29,6 +29,12 @@ interface ToolInfo {
   inputSchema: { type: 'object'; properties?: Record<string, PropSchema>; required?: string[] }
   annotations?: { readOnlyHint?: boolean; openWorldHint?: boolean }
 }
+interface PromptInfo {
+  name: string
+  title?: string
+  description: string
+  arguments?: { name: string; required?: boolean }[]
+}
 interface InitResult {
   protocolVersion: string
   serverInfo: { name: string; title?: string; version: string }
@@ -172,7 +178,7 @@ function Setup({ endpoint }: { endpoint: string }) {
       {
         k: 'claude-code',
         label: 'Claude Code',
-        steps: ['Run once in a terminal:', 'Then ask in any session — “Who can upgrade the Solana program 6EF8…?” — or run a prompt: /mcp__lusca__who_can_change, /mcp__lusca__latest_upgrades, /mcp__lusca__explain_code.'],
+        steps: ['Run once in a terminal:', 'Then ask in any session: “Who can upgrade the Solana program 6EF8…, and what else does that authority control?”'],
         code: `claude mcp add --transport http lusca ${endpoint}`,
       },
       {
@@ -232,6 +238,7 @@ export default function Mcp() {
   const endpoint = `${window.location.origin}/mcp`
   const [init, setInit] = useState<InitResult | null>(null)
   const [tools, setTools] = useState<ToolInfo[] | null>(null)
+  const [prompts, setPrompts] = useState<PromptInfo[] | null>(null)
   const [load, setLoad] = useState<'loading' | 'ok' | 'error'>('loading')
   const [sel, setSel] = useState<string>(PRESETS[0].tool)
   const [args, setArgs] = useState<Args>(PRESETS[0].args)
@@ -283,6 +290,9 @@ export default function Mcp() {
         if (!list) throw new Error('no tools')
         setTools(list)
         setLoad('ok')
+        rpc('prompts/list', {}, c.signal)
+          .then((pr) => setPrompts((pr.body as { result?: { prompts?: PromptInfo[] } })?.result?.prompts ?? []))
+          .catch(() => {})
         if (!ran.current) {
           ran.current = true
           void run(PRESETS[0].tool, PRESETS[0].args, list)
@@ -334,7 +344,7 @@ export default function Mcp() {
           <ol className="mc-flow mono" aria-label="How an answer is made">
             <li>any MCP client</li>
             <li className="hot">POST /mcp</li>
-            <li>{tools ? tools.map((t) => t.name.replace(/^lusca_/, '').replace(/_.*$/, '')).filter((v, i, a) => a.indexOf(v) === i).join(' · ') : 'lens · control · radar · atlas · scan · stats'}</li>
+            <li>{tools ? `${tools.length} read-only tools` : 'read-only tools'}</li>
             <li>facts + links</li>
           </ol>
         </div>
@@ -364,6 +374,27 @@ export default function Mcp() {
               <dd>{init ? `${init.serverInfo.name} ${init.serverInfo.version}` : '—'}</dd>
             </div>
           </dl>
+          {prompts && prompts.length > 0 && (
+            <div className="mc-prompts">
+              <div className="mc-end-h mono">
+                <span>prompts · live from prompts/list</span>
+                <span className="dim">slash commands in Claude Code</span>
+              </div>
+              <ul>
+                {prompts.map((p) => (
+                  <li key={p.name}>
+                    <span className="mc-pr-c mono">
+                      /mcp__lusca__{p.name}
+                      {(p.arguments ?? []).map((a) => (
+                        <i key={a.name}> {a.required ? `<${a.name}>` : `[${a.name}]`}</i>
+                      ))}
+                    </span>
+                    <span className="mc-pr-t">{p.title ?? p.description}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <span className="mc-tick tl" aria-hidden="true" />
           <span className="mc-tick br" aria-hidden="true" />
         </div>

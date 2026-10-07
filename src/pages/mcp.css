@@ -277,6 +277,43 @@
   color: var(--fg-1);
   overflow-wrap: anywhere;
 }
+.mc-prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mc-prompts ul {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--line-2);
+  border: 1px solid var(--line-2);
+}
+.mc-prompts li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  padding: 10px 12px;
+  background: var(--bg);
+}
+.mc-pr-c {
+  font-size: var(--t-sm);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.mc-pr-c i {
+  font-style: normal;
+  color: var(--fg-2);
+}
+.mc-pr-t {
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+}
 .mc-tick {
   position: absolute;
   width: 10px;
