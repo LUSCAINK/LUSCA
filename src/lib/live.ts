@@ -48,7 +48,8 @@ let lastJobAt = -Infinity
 function dispatch(msg: ServerMsg) {
   // chain agents' reads (src/lib/chain.ts) keep their own store, like payouts
   if (msg.t === 'chain') ingestChainEvent(msg.event)
-  else useLive.getState().apply(msg)
+  else if (msg.t !== 'radar') useLive.getState().apply(msg) // radar events: src/lib/radar.ts listens on the bus
+
   bus.emit(msg)
 }
 

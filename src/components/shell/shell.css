@@ -359,16 +359,16 @@
   }
 }
 
-/* nine nav items in one row down to 1221px (the drawer takes over below), every label with its index
+/* ten nav items in one row down to 1321px (the drawer takes over below), every label with its index
    number: tighter padding and tracking first, then no page counter (the status bar shows it too) */
-@media (min-width: 1221px) and (max-width: 1500px) {
+@media (min-width: 1321px) and (max-width: 1600px) {
   .nav > .nav-item {
     padding: 0 11px;
     gap: 6px;
     letter-spacing: 0.06em;
   }
 }
-@media (min-width: 1221px) and (max-width: 1360px) {
+@media (min-width: 1321px) and (max-width: 1460px) {
   .bar-stat {
     display: none;
   }
@@ -386,7 +386,7 @@
 }
 
 /* menu drawer: below this width the seven nav items and the bar controls no longer fit in one row */
-@media (max-width: 1220px) {
+@media (max-width: 1320px) {
   .burger {
     display: flex;
   }

@@ -38,6 +38,7 @@
 //      LUSCA_CHAIN_AGENTS (1; 0 = off, stored chain data still served) · LUSCA_SOLANA_DISCOVERY_RPC
 //      LUSCA_ETH_RPC · LUSCA_BASE_RPC · LUSCA_ARB_RPC · LUSCA_CHAIN_MAX_MB (100) — chain agents
 //      (programs / contracts found on-chain, read, kept or rejected), see server/chain/index.ts
+//      LUSCA_RADAR (1; 0 = off) · LUSCA_RADAR_BACKFILL — upgrade radar (code changes caught live), see server/radar
 //      NODE_ENV=development disables static serving of dist/.
 //
 // One process per data directory: <data>/.lock holds the owner's pid (refreshed every
@@ -500,6 +501,7 @@ async function main() {
       dataDir: DATA_DIR,
       log: (level, msg) => log[level]('chain', msg),
       broadcast: (msg) => hub.emit(msg),
+      broadcastRadar: (msg) => hub.emit(msg),
     })
   } catch (e) {
     log.error('chain', 'chain agents unavailable:', (e as Error)?.message ?? e)
@@ -531,7 +533,7 @@ async function main() {
     proofs = undefined
   }
   const proofsModule = proofs ? { api: proofs, preview: (payoutConfigRef ? payoutPreviewSource(coordinator, payoutConfigRef) : null) } : undefined
-  const modules = { crawler, trainer, coordinator, auth, payouts, code: codeIndex, chain: chainAgents, model: modelExport, proofs: proofsModule, lens: chainAgents?.lens }
+  const modules = { crawler, trainer, coordinator, auth, payouts, code: codeIndex, chain: chainAgents, model: modelExport, proofs: proofsModule, lens: chainAgents?.lens, radar: chainAgents?.radar }
   hub.bind(modules)
 
   let port: number

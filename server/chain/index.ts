@@ -13,6 +13,9 @@
 //      LUSCA_LENS=0 (Lens off) · LUSCA_LENS_SOL_CALLS / LUSCA_LENS_EVM_CALLS / LUSCA_LENS_HTTP_CALLS (Lens's
 //      daily slice, charged on top of the shared budgets; default 15 % of the RPC limits above, 40 % of the
 //      registry limits) — server/lens
+//      LUSCA_RADAR=0 (upgrade radar off) · LUSCA_RADAR_BACKFILL=0 · LUSCA_RADAR_SOL_CALLS / _EVM_CALLS / _HTTP_CALLS
+//      (the radar's daily slice, default 15 % / 10 % / 15 %) · LUSCA_RADAR_LOG_CALLS (20000/day per EVM log
+//      endpoint) · LUSCA_RADAR_ETH_LOGS / _BASE_LOGS / _ARB_LOGS (comma lists) — server/radar
 //
 // The REST routes read stored data only (stats / feed / items / item): no RPC per request.
 
@@ -28,6 +31,8 @@ import { createLens, DEFAULT_LENS_LIMITS, type Lens } from '../lens/index.ts'
 import { createProvenanceIndex } from '../lens/provenance.ts'
 import { AnalysisLimit, Work, findPrimitives, findPrivileged } from '../lens/evm-analysis.ts'
 import { scanElf, solanaPrimitives } from '../lens/elf-syscalls.ts'
+import { createRadar, type Radar } from '../radar/index.ts'
+import type { RadarEvent } from '../../shared/radar.ts'
 
 type Log = (lvl: 'info' | 'warn' | 'error', msg: string) => void
 
@@ -40,6 +45,8 @@ export interface ChainAgentsApi {
   item(chain: ChainId, address: string): { item: ChainIndexItem; read: ChainRead } | null
   /** LUSCA Lens (server/lens): on-demand reads with the same readers, its own budget slice; null when LUSCA_LENS=0. */
   lens: Lens | null
+  /** UPGRADE RADAR (server/radar): code changes caught live; null when LUSCA_RADAR=0. */
+  radar: Radar | null
 }
 
 function intEnv(name: string, def: number, min: number, max: number): number {
@@ -90,6 +97,8 @@ export function createChainAgents(opts: {
   dataDir: string
   log: (lvl: 'info' | 'warn' | 'error', msg: string) => void
   broadcast: (msg: { t: 'chain'; event: ChainEvent }) => void
+  /** Radar events (server/radar). */
+  broadcastRadar?: (msg: { t: 'radar'; event: RadarEvent }) => void
 }): ChainAgentsApi {
   const log: Log = (lvl, msg) => opts.log(lvl, redact(msg))
   const enabled = !/^(0|false|no|off)$/i.test(process.env.LUSCA_CHAIN_AGENTS?.trim() ?? '')
@@ -174,6 +183,39 @@ export function createChainAgents(opts: {
       })
     : null
 
+  // UPGRADE RADAR: its own slice of the same budgets (and its own EVM log endpoints)
+  const radarOn = !/^(0|false|no|off)$/i.test(process.env.LUSCA_RADAR?.trim() ?? '')
+  const list = (k: string) => (process.env[k] ?? '').split(',').map((x) => x.trim()).filter(Boolean)
+  let radar: Radar | null = null
+  if (radarOn) {
+    try {
+      const rl: Record<string, number> = {}
+      const solCalls = intEnv('LUSCA_RADAR_SOL_CALLS', -1, -1, 10_000_000)
+      const evmRadar = intEnv('LUSCA_RADAR_EVM_CALLS', -1, -1, 10_000_000)
+      const httpRadar = intEnv('LUSCA_RADAR_HTTP_CALLS', -1, -1, 1_000_000)
+      const logCalls = intEnv('LUSCA_RADAR_LOG_CALLS', -1, -1, 10_000_000)
+      if (solCalls >= 0) rl.solana = solCalls
+      if (evmRadar >= 0) rl.ethereum = rl.base = rl.arbitrum = evmRadar
+      if (httpRadar >= 0) rl.sourcify = rl.osec = httpRadar
+      if (logCalls >= 0) rl['logs-ethereum'] = rl['logs-base'] = rl['logs-arbitrum'] = logCalls
+      radar = createRadar({
+        rpc,
+        store,
+        dataDir: opts.dataDir,
+        log,
+        broadcast: (m) => opts.broadcastRadar?.(m),
+        solanaRpcUrl: solanaReadRpc ?? null,
+        solanaWsUrl: env('LUSCA_RADAR_SOLANA_WS') ?? null,
+        logEndpoints: { ethereum: list('LUSCA_RADAR_ETH_LOGS'), base: list('LUSCA_RADAR_BASE_LOGS'), arbitrum: list('LUSCA_RADAR_ARB_LOGS') },
+        limits: rl,
+        backfill: !/^(0|false|no|off)$/i.test(process.env.LUSCA_RADAR_BACKFILL?.trim() ?? ''),
+      })
+    } catch (e) {
+      log('error', `upgrade radar unavailable: ${(e as Error)?.message ?? e}`)
+      radar = null
+    }
+  }
+
   // the feed survives restarts (newest 200 events)
   const feedFile = path.join(opts.dataDir, 'chain', 'feed.json')
   const savedFeed = readJson<ChainEvent[]>(feedFile)
@@ -199,6 +241,7 @@ export function createChainAgents(opts: {
       if (started || stopped) return
       started = true
       if (lens) provenance.start() // code-index hashes for Lens provenance (background, incremental)
+      radar?.start() // listens whether or not the chain agents run (LUSCA_RADAR=0 turns it off)
       if (!enabled) {
         log('info', 'chain agents off (LUSCA_CHAIN_AGENTS=0); stored chain data is still served')
         return
@@ -222,6 +265,7 @@ export function createChainAgents(opts: {
       if (feedTimer) clearInterval(feedTimer)
       await provenance.stop()
       await lens?.stop()
+      await radar?.stop()
       const agentsDone = agents.stop() // wakes sleeping agents; in-flight reads end with the RPC close below
       await rpc.close()
       await agentsDone
@@ -235,5 +279,6 @@ export function createChainAgents(opts: {
     items: (q) => agents.items(q),
     item: (chain, address) => agents.item(chain, address),
     lens,
+    radar,
   }
 }

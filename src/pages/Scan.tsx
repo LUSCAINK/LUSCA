@@ -14,9 +14,13 @@
 // One requestAnimationFrame loop drives the playback: class flips at reveal times, then every
 // rectangle it needs is read, then every style and attribute is written (one layout per frame). It
 // sleeps while nothing moves (and between frames in reduced motion) and stops while the tab is hidden.
+//
+// Upgrade radar: a code change the radar caught and read ({ t: 'radar', event }) plays on the same stage,
+// labelled "RADAR · UPGRADE CAUGHT", with the radar's own calls and the before → after it read.
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { Link } from 'react-router-dom'
 import type { ChainEvent, ChainId, ScanCall } from '@shared/chain'
+import type { RadarEvent } from '@shared/radar'
 import { Kicker } from '@/components/docs/pagekit'
 import { connLed } from '@/components/ui/conn'
 import { bus } from '@/lib/bus'
@@ -24,6 +28,7 @@ import { CHAIN_LABEL, CHAIN_SHORT, KIND_LABEL, VERDICT_LABEL, isChainId, shortAd
 import { useConn, useMedia } from '@/lib/hooks'
 import { send } from '@/lib/live'
 import { DASH, fmtInt } from '@/lib/format'
+import { KIND_BADGE, VERIFIED_WORD } from '@/lib/radar'
 import './scan.css'
 
 /** Position of /scan in the primary navigation (src/components/shell/Shell.tsx NAV). */
@@ -72,9 +77,43 @@ interface Src {
   calls: LogRow[]
 }
 
+/** A read to play: a chain agent's read, or a code change caught by the upgrade radar. */
+type PlayEvent = ChainEvent & { radar?: RadarEvent }
+
+/** Radar events worth the stage: read, and a real change (EVM proxy deployments are left to /radar). */
+function playableRadar(r: RadarEvent): boolean {
+  // caught live only: a backfilled change is history, not a catch
+  if (r.state === 'pending' || r.backfill) return false
+  return r.kind !== 'deploy' || r.chain === 'solana' || r.known
+}
+
+/** The radar event as a read the player understands; its trace is the calls the radar made for it. */
+function radarToPlay(r: RadarEvent): PlayEvent {
+  const sol = r.chain === 'solana'
+  return {
+    id: `radar-${r.id}`,
+    ts: r.updatedAt,
+    agent: 'radar',
+    chain: r.chain,
+    address: r.address,
+    name: r.name,
+    kind: sol ? 'program' : 'contract',
+    via: 'block',
+    verdict: 'kept',
+    reason: r.headline,
+    idl: false,
+    verifiedBy: null,
+    sourceFiles: 0,
+    sourceBytes: 0,
+    trace: r.trace ?? [],
+    scan: {},
+    radar: r,
+  }
+}
+
 interface Show {
   seq: number
-  ev: ChainEvent
+  ev: PlayEvent
   live: boolean
   rows: Row[]
   log: LogRow[]
@@ -155,6 +194,8 @@ function planShow(ev: ChainEvent, live: boolean, backlog: number, seq: number): 
   const source = sol ? anchor(osec, decoded) : anchor(sfy, decoded)
 
   const d: Draft[] = []
+  const radar = (ev as PlayEvent).radar
+  if (radar) return planRadar(ev as PlayEvent, radar, live, backlog, seq)
   const nameAfter = sol ? decoded : anchor(sfy, code)
   const title = ev.name ?? s.project?.name ?? null
   d.push({ id: 'name', kind: 'name', label: KIND_LABEL[ev.kind] ?? ev.kind, value: title ?? short(ev.address), addr: !title, after: title ? nameAfter : -1, tag: title ? 'NAME' : undefined, tone: 'ice' })
@@ -241,6 +282,90 @@ function planShow(ev: ChainEvent, live: boolean, backlog: number, seq: number): 
   if (ev.verdict === 'error') d.push({ id: 'fail', kind: 'fail', label: 'Read failed', value: ev.reason, after: anchor(failed), tag: 'FAILED', tone: 'hot' })
   for (const [i, n] of (s.notes ?? []).entries()) d.push({ id: `note${i}`, kind: 'note', label: i === 0 ? 'Notes' : '', value: n, after: has ? trace.length - 1 : null })
 
+  return finishShow(ev, d, live, backlog, seq)
+}
+
+/** Rows of a radar event: what changed, before → after, each after the call that read it. */
+function planRadar(ev: PlayEvent, r: RadarEvent, live: boolean, backlog: number, seq: number): Show {
+  const trace = ev.trace ?? []
+  const sol = r.chain === 'solana'
+  const readAt = trace.length ? trace.findIndex((c) => c.method === 'getMultipleAccounts' || c.method === 'eth_getCode') : -1
+  const after: number | null = trace.length ? (readAt >= 0 ? readAt : trace.length - 1) : null
+  const reg = trace.findIndex((c) => c.kind === 'registry')
+  const regAt: number | null = reg >= 0 ? reg : after
+  const b = r.before
+  const a = r.after
+  const dd = r.diff
+  const d: Draft[] = []
+  const arrow = (x: string | null | undefined, y: string | null | undefined) => (x != null ? `${x} → ${y ?? 'not read'}` : (y ?? 'not read'))
+  const h = (x: string | null | undefined) => (x ? `${x.slice(0, 16)}…` : null)
+  d.push({ id: 'name', kind: 'name', label: `${KIND_BADGE[r.kind]} · ${CHAIN_LABEL[r.chain]}`, value: r.name ?? short(r.address), addr: !r.name, after: -1, tag: 'RADAR', tone: 'hot', chip: { label: 'RADAR · UPGRADE CAUGHT', value: KIND_BADGE[r.kind] } })
+  d.push({ id: 'addr', label: sol ? 'Program' : 'Proxy', value: r.address, addr: true, after: -1 })
+  d.push({ id: 'what', label: 'Caught', value: r.headline, sub: `via ${r.via}${r.tx ? ` · tx ${r.tx.slice(0, 10)}…` : ''}`, after: -1, tag: 'CHANGE', tone: 'hot' })
+  if ((sol || r.kind === 'upgrade') && (a?.codeHash || b?.codeHash)) {
+    d.push({
+      id: 'hash',
+      label: 'Code hash',
+      value: arrow(b ? (h(b.codeHash) ?? 'unknown') : null, h(a?.codeHash)),
+      sub: dd?.code === 'same' ? 'same code' : dd?.code === 'changed' ? 'changed' : undefined,
+      after,
+      tag: 'HASH',
+      tone: dd?.code === 'changed' ? 'hot' : 'ice',
+      chip: dd?.code === 'changed' ? { label: 'Code hash', value: 'changed' } : undefined,
+    })
+  }
+  if (!sol && (a?.implementation || b?.implementation)) {
+    d.push({
+      id: 'impl',
+      label: 'Implementation',
+      value: arrow(b?.implementation !== undefined ? short(b.implementation ?? 'none') : null, a?.implementation ? short(a.implementation) : null),
+      href: a?.implementation ? `/lens/${r.chain}/${a.implementation}` : undefined,
+      after: -1,
+      tag: 'PROXY',
+      tone: 'hot',
+      chip: { label: 'Proxy → implementation', value: a?.implementation ? short(a.implementation) : DASH },
+    })
+  }
+  if (a && (sol || r.kind === 'admin_change')) {
+    const av = a.authority ? short(a.authority) : a.upgradeable === false ? 'none · immutable' : 'none'
+    const bv = b && (b.from !== 'event' || !sol) ? (b.authority ? short(b.authority) : 'none') : null
+    d.push({
+      id: 'auth',
+      label: sol ? 'Upgrade authority' : 'Admin',
+      value: arrow(bv, av),
+      sub: dd?.authority === 'same' ? 'unchanged' : dd?.authority === 'changed' ? 'changed' : undefined,
+      after: sol ? after : -1,
+      tag: 'AUTHORITY',
+      tone: 'hot',
+      chip: { label: sol ? 'Upgrade authority' : 'Admin', value: dd?.authority === 'changed' ? `changed → ${av}` : av },
+    })
+  }
+  const unit = sol ? 'instruction' : 'function'
+  if (dd?.added && dd.added.items.length + dd.added.more > 0) {
+    const n = dd.added.items.length + dd.added.more
+    d.push({ id: 'add', label: `${unit}s added`, value: `+ ${fmtInt(n)}`, minis: dd.added.items, more: dd.added.more, after: regAt, tag: 'ADDED', tone: 'ice', chip: { label: `${unit}s added`, value: `+${n}` } })
+  }
+  if (dd?.removed && dd.removed.items.length + dd.removed.more > 0) {
+    const n = dd.removed.items.length + dd.removed.more
+    d.push({ id: 'rem', label: `${unit}s removed`, value: `− ${fmtInt(n)}`, minis: dd.removed.items, more: dd.removed.more, after: regAt, tag: 'REMOVED', tone: 'hot' })
+  }
+  for (const [i, g] of (dd?.guardsAdded ?? []).slice(0, 4).entries()) {
+    d.push({ id: `g${i}`, label: i === 0 ? 'New admin-only' : '', value: g.fn, sub: `${g.guard} · ${g.at}`, after: regAt, tag: 'GUARD', tone: 'hot', chip: i === 0 ? { label: 'New admin-only function', value: `${g.fn.split('(')[0]}() · ${g.at}` } : undefined })
+  }
+  if (a && a.from !== 'event') {
+    d.push({ id: 'ver', label: 'Verified', value: arrow(b && b.verified !== 'unknown' ? VERIFIED_WORD[b.verified] : null, VERIFIED_WORD[a.verified]), after: regAt, tag: 'VERIFIED', tone: a.verified === 'none' || a.verified === 'unknown' ? 'ice' : 'hot' })
+  }
+  if (r.actor) {
+    const who = r.actorRole === 'signer' ? 'Signed by' : r.actorRole === 'sender' ? 'Sent by' : r.actorRole === 'admin' ? 'Admin' : 'Authority'
+    d.push({ id: 'actor', label: who, value: r.actor, addr: true, after: trace.length ? trace.length - 1 : -1 })
+  }
+  for (const [i, n] of r.notes.slice(0, 3).entries()) d.push({ id: `note${i}`, kind: 'note', label: i === 0 ? 'Notes' : '', value: n, after: trace.length ? trace.length - 1 : null })
+  return finishShow(ev, d, live, backlog, seq)
+}
+
+function finishShow(ev: PlayEvent, d: Draft[], live: boolean, backlog: number, seq: number): Show {
+  const trace = ev.trace ?? []
+  const has = trace.length > 0
   // ── timing ──
   const chips = d.filter((r) => r.chip).length
   const minis = d.reduce((n, r) => n + Math.min(r.minis?.length ?? 0, 10), 0)
@@ -309,7 +434,7 @@ function planShow(ev: ChainEvent, live: boolean, backlog: number, seq: number): 
     for (const r of rows) if (r.at > spanStart) r.at = spanStart + (r.at - spanStart) * k
   }
   const rpc = trace.find((c) => c.kind === 'rpc')
-  return { seq, ev, live, rows, log, sources, dur, stampAt, closeAt, rpcProvider: rpc?.provider ?? null, realMs, lag: Math.max(0, Math.round((Date.now() - ev.ts) / 1000)) }
+  return { seq, ev, live, rows, log, sources, dur, stampAt, closeAt, rpcProvider: rpc?.provider ?? null, realMs, lag: Math.max(0, Math.round((Date.now() - (ev.radar ? ev.radar.seenAt : ev.ts)) / 1000)) }
 }
 
 // ─── data: live queue + replay ──────────────────────────────────────────────
@@ -329,11 +454,12 @@ async function fetchScanFeed(limit: number, signal?: AbortSignal): Promise<Chain
   return body.filter((e): e is ChainEvent => !!e && typeof e === 'object' && typeof e.id === 'string' && typeof e.ts === 'number' && isChainId(e.chain) && typeof e.address === 'string')
 }
 
-const traced = (e: ChainEvent) => !!e.trace?.length
+const traced = (e: ChainEvent) => !!e.trace?.length || !!(e as PlayEvent).radar
 
 /** How much there is to watch in a read (queue and replay order only; never shown). */
 function interest(e: ChainEvent): number {
   let n = 0
+  if ((e as PlayEvent).radar) return 30 // a code change caught by the radar plays before any read
   if (e.verdict === 'kept') n += 6
   else if (e.verdict === 'boilerplate') n -= 1
   else if (e.verdict === 'duplicate') n -= 2
@@ -556,10 +682,14 @@ export default function Scan() {
     const off = bus.on('chain', (m) => {
       if (m.event && typeof m.event.id === 'string') accept([m.event], true)
     })
+    const offRadar = bus.on('radar', (m) => {
+      if (m.event && typeof m.event.id === 'string' && playableRadar(m.event)) accept([radarToPlay(m.event)], true)
+    })
     return () => {
       ac.abort()
       window.clearTimeout(timer)
       off()
+      offRadar()
     }
   }, [accept])
 
@@ -589,7 +719,9 @@ export default function Scan() {
           <span className={`sc-mode mono ${show?.live ? 'is-live' : ''}`}>
             <span className={show?.live ? 'led on pulse' : conn === 'live' ? 'led white' : connLed(conn)} aria-hidden="true" />
             {show
-              ? show.live
+              ? show.ev.radar
+                ? `radar · upgrade caught ${show.lag < 2 ? 'just now' : `${show.lag} s ago`}`
+                : show.live
                 ? `live · read ${show.lag < 2 ? 'just now' : `${show.lag} s ago`}`
                 : `replay · read at ${clock(show.ev.ts)}`
               : conn === 'live'
@@ -1151,7 +1283,7 @@ function Stage({ show, reduced, wide, skipRef, onDone, feedState, conn }: StageP
               <i />
               <i />
             </span>
-            <span className="sc-win-title mono">{ev ? `${ev.name ?? short(ev.address)} — LUSCA Lens` : 'LUSCA Lens'}</span>
+            <span className="sc-win-title mono">{ev ? `${ev.radar ? 'RADAR · UPGRADE CAUGHT — ' : ''}${ev.name ?? short(ev.address)} — LUSCA Lens` : 'LUSCA Lens'}</span>
             {show?.rpcProvider && (
               <span className={`sc-via mono ${isHelius(show.rpcProvider) ? 'hot' : ''}`} title="Who answered this read's RPC calls">
                 RPC · {show.rpcProvider}
@@ -1229,9 +1361,9 @@ function Stage({ show, reduced, wide, skipRef, onDone, feedState, conn }: StageP
           </div>
           {ev && (
             <div className="sc-hub-l mono" ref={capRef}>
-              <b>LUSCA · {ev.agent}</b>
+              <b>{ev.radar ? 'LUSCA · RADAR · UPGRADE CAUGHT' : `LUSCA · ${ev.agent}`}</b>
               <span>
-                reading {CHAIN_LABEL[ev.chain]}
+                {ev.radar ? 're-reading' : 'reading'} {CHAIN_LABEL[ev.chain]}
                 {show?.rpcProvider && (
                   <>
                     {' '}
@@ -1271,14 +1403,21 @@ function Stage({ show, reduced, wide, skipRef, onDone, feedState, conn }: StageP
             </div>
           ))}
         </div>
-        {show && (
+        {show && show.ev.radar ? (
+          <div className="sc-stamp kept radar" data-at={show.stampAt} ref={stampRef} key={`stamp-${show.seq}`}>
+            <b>Upgrade caught</b>
+            <span className="mono">
+              <em>RADAR · {KIND_BADGE[show.ev.radar.kind]}</em> · {show.ev.radar.headline}
+            </span>
+          </div>
+        ) : show ? (
           <div className={`sc-stamp ${kept ? 'kept' : show.ev.verdict === 'error' ? 'err' : 'rej'}`} data-at={show.stampAt} ref={stampRef} key={`stamp-${show.seq}`}>
             <b>{kept ? 'Kept' : show.ev.verdict === 'error' ? 'Read failed' : 'Rejected'}</b>
             <span className="mono">
               <em>{kept ? 'in the SEPIA-1 dataset' : VERDICT_LABEL[show.ev.verdict]}</em> · {show.ev.reason}
             </span>
           </div>
-        )}
+        ) : null}
       </div>
       <svg className="sc-wires" ref={svgRef} aria-hidden="true" />
       <div className="sc-boxes" ref={boxesRef} aria-hidden="true" />

@@ -19,6 +19,7 @@ import { SECTORS } from '../shared/sectors.ts'
 import type { PayoutsOverview, WalletPayouts } from '../shared/payouts.ts'
 import type { CodeIndexStats } from '../shared/codebase.ts'
 import type { ChainEvent, ChainId, ChainIndexItem, ChainRead, ChainStats } from '../shared/chain.ts'
+import { RADAR_KINDS, type RadarEvent, type RadarKind, type RadarPage } from '../shared/radar.ts'
 import { isSolanaAddress } from '../shared/base58.ts'
 import type { Auth } from './auth/auth.ts'
 import { handleModelRoute, type WeightsExporter } from './model/export.ts'
@@ -101,6 +102,14 @@ export interface Modules {
   proofs?: { api: ProofsApi; preview: PreviewSource | null }
   /** LUSCA Lens (server/lens): validates, limits, caches and answers /api/lens/* itself. Without it 503. */
   lens?: { route(p: string, ip: string): Promise<{ status: number; json: string; headers?: Record<string, string> }> } | null
+  /** UPGRADE RADAR (server/radar): stored events only. Without it /api/radar* answers 503. */
+  radar?: HubRadar | null
+}
+
+/** Read side of the upgrade radar: every answer comes from stored events, no RPC. */
+export interface HubRadar {
+  list(q: { chain?: ChainId; kind?: RadarKind; known?: boolean; sort?: 'new' | 'priority'; limit?: number; cursor?: string }): RadarPage
+  get(id: string): RadarEvent | null
 }
 
 /** Read side of the chain agents (server/chain/index.ts): every answer comes from stored data, no RPC. */
@@ -231,6 +240,8 @@ const CODE_STATS_CACHE_MS = 10_000        // /api/code/stats (the index changes 
 const CHAIN_CACHE_MS = 2_000              // /api/chain/stats, /feed, /items (a chain agent reads every ~20 s at most)
 const CHAIN_ITEM_CACHE_MS = 30_000        // /api/chain/item/:chain/:address (one stored record; disk read)
 const CHAIN_IDS = new Set<ChainId>(['solana', 'ethereum', 'base', 'arbitrum'])
+const RADAR_CACHE_MS = 2_000              // /api/radar, /api/radar/:id (events change as reads finish)
+const RADAR_ID_RE = /^[a-z]{3}-[a-z0-9]{6,20}$/
 const EVM_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/
 const CHAIN_CURSOR_RE = /^\d{1,16}\.[a-z]{1,16}\.[A-Za-z0-9]{20,64}$/
 const DEVICE_ID_RE = /^[A-Za-z0-9_-]{6,64}$/ // browser / desktop neuron device ids (as the coordinator accepts them)
@@ -249,6 +260,7 @@ const STREAM_RESERVE: Partial<Record<ServerMsg['t'], number>> = {
   reject: 0.35,
   agent: 0.2,
   chain: 0.2, // chain agents' reads (≤ 4/s); the /chain page backfills from /api/chain/feed
+  radar: 0.1, // code changes caught by the radar (≤ 8 KB each); /radar backfills from /api/radar
   stats: -0.5,
   neurons: -0.5,
   ink: Number.NEGATIVE_INFINITY,
@@ -1630,6 +1642,42 @@ export function createHub(opts: HubOptions): Hub {
       }
     }
 
+    // ── UPGRADE RADAR: code changes caught live (server/radar; stored events only, no RPC here) ──
+    if (p === '/api/radar' || p.startsWith('/api/radar/')) {
+      allow(['GET', 'HEAD'])
+      const m = requireModules()
+      if (!m.radar) throw new HttpError(503, 'the upgrade radar is not available on this server')
+      limit(readLimit, req, 'read')
+      const radar = m.radar
+      const shortCache = { 'Cache-Control': 'public, max-age=3' }
+      if (p === '/api/radar') {
+        const chainQ = url.searchParams.get('chain') || ''
+        if (chainQ && !CHAIN_IDS.has(chainQ as ChainId)) throw new HttpError(400, 'chain must be solana, ethereum, base or arbitrum')
+        const kindQ = url.searchParams.get('kind') || ''
+        if (kindQ && !(RADAR_KINDS as readonly string[]).includes(kindQ)) throw new HttpError(400, `kind must be one of ${RADAR_KINDS.join(', ')}`)
+        const knownQ = url.searchParams.get('known') || ''
+        if (knownQ && knownQ !== '1' && knownQ !== '0') throw new HttpError(400, 'known must be 1 or 0')
+        const rawLimit = url.searchParams.get('limit')
+        const n = rawLimit === null || rawLimit === '' ? 50 : Number(rawLimit)
+        if (!Number.isInteger(n) || n < 1) throw new HttpError(400, 'limit must be an integer from 1 to 100')
+        const cursor = url.searchParams.get('cursor') || ''
+        if (cursor && !RADAR_ID_RE.test(cursor)) throw new HttpError(400, 'cursor is not one this server issued')
+        const sortQ = url.searchParams.get('sort') || 'new'
+        if (sortQ !== 'new' && sortQ !== 'priority') throw new HttpError(400, 'sort must be new or priority')
+        const q = { chain: (chainQ || undefined) as ChainId | undefined, kind: (kindQ || undefined) as RadarKind | undefined, known: knownQ === '1', sort: sortQ as 'new' | 'priority', limit: Math.min(100, n), cursor: cursor || undefined }
+        const key = `radar:${chainQ}:${kindQ}:${knownQ}:${sortQ}:${q.limit}:${cursor}`
+        return sendJsonText(req, res, 200, cachedJson(key, () => radar.list(q), RADAR_CACHE_MS), shortCache)
+      }
+      const id = p.slice('/api/radar/'.length)
+      if (!RADAR_ID_RE.test(id)) throw new HttpError(404, 'not found')
+      const json = cachedJson(`radar:item:${id}`, () => radar.get(id), RADAR_CACHE_MS)
+      if (json === 'null') {
+        readCache.delete(`radar:item:${id}`)
+        throw new HttpError(404, 'no radar event with this id')
+      }
+      return sendJsonText(req, res, 200, json, shortCache)
+    }
+
     // ── LUSCA Lens: on-demand reads of one program / contract (server/lens; its own limits and budget) ──
     if (p.startsWith('/api/lens/')) {
       allow(['GET', 'HEAD'])
@@ -1650,7 +1698,7 @@ export function createHub(opts: HubOptions): Hub {
   }
 
   /** Client routes as declared in src/App.tsx (first segment → allowed extra segments). */
-  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, scan: 0, agents: 1, docs: 1, chain: 2, lens: 2 }
+  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, scan: 0, radar: 0, agents: 1, docs: 1, chain: 2, lens: 2 }
   function isClientRoute(segs: string[]): boolean {
     if (segs.length === 0) return true
     const first = segs[0].toLowerCase() // react-router matches case-insensitively

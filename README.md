@@ -397,6 +397,14 @@ Nothing reads a `.env` file.
 | `LUSCA_LENS_SOL_CALLS` | 15 % of the agents' Solana limit (1,200 at the default) | Lens's daily share of Solana RPC calls, charged on top of the chain agents' budget |
 | `LUSCA_LENS_EVM_CALLS` | 15 % of the agents' EVM limit (2,250 at the default) | Lens's daily share of RPC calls per EVM chain |
 | `LUSCA_LENS_HTTP_CALLS` | 40 % of the registry limit | Lens's daily share of Sourcify and OtterSec calls, each |
+| `LUSCA_RADAR` | on | `0` = upgrade radar off; `/api/radar*` answers 503 |
+| `LUSCA_RADAR_BACKFILL` | on | `0` = no first-start backfill (it runs once per data directory, never again) |
+| `LUSCA_RADAR_SOL_CALLS` | 15 % of the agents' Solana limit (1,200 at the default) | the radar's daily share of Solana RPC calls (re-reads, getTransaction), on top of the agents' budget and never below a 10 % floor of it |
+| `LUSCA_RADAR_EVM_CALLS` | 10 % of the agents' EVM limit (1,500) | the radar's daily share of implementation reads per EVM chain |
+| `LUSCA_RADAR_HTTP_CALLS` | 15 % of the registry limit (750) | the radar's daily share of Sourcify and OtterSec calls, each |
+| `LUSCA_RADAR_LOG_CALLS` | 20,000 | calls per day to the radar's own EVM log endpoints, per chain (eth_getLogs, code / storage one block earlier) |
+| `LUSCA_RADAR_ETH_LOGS` · `_BASE_LOGS` · `_ARB_LOGS` | MEV Blocker + dRPC · Base public RPC + dRPC · Arbitrum public RPC + dRPC | comma lists of endpoints that answer address-less `eth_getLogs` and historical state |
+| `LUSCA_RADAR_SOLANA_WS` | derived from `LUSCA_SOLANA_RPC` (https → wss) | Solana websocket for `logsSubscribe` (Helius standard WebSockets) |
 
 </details>
 

@@ -21,6 +21,7 @@ const SERVER: Row[] = [
   ['neuron.ok', 'neuron: NeuronInfo · auth: verified | invalid | none', 'answer to neuron.register', 'that neuron'],
   ['payout', 'overview: PayoutsOverview', 'a payout period closes or a payout transaction confirms', 'all'],
   ['chain', 'event: ChainEvent (agent · chain · address · name · kind · via · verdict · reason · idl · verifiedBy · sourceFiles · sourceBytes; trace · scan after chain.scan)', 'a chain agent finishes a read (≤ 4/s)', 'all'],
+  ['radar', 'event: RadarEvent (kind · chain · address · before · after · diff · headline · actor · via; < 8 KB)', 'the upgrade radar catches a code change, and again when its read finishes (same id)', 'all'],
   ['account', 'scope: wallet | device | null · account: AccountView | null · at · device?: AccountView | null', 'answer to account.watch, then whenever that ledger account or its escrow changes (≤ 1/s); a wallet watch that names a device also carries that device’s account (credits that stay on it)', 'that client'],
   ['error', 'msg', 'a request could not be served', 'that client'],
 ]
@@ -65,6 +66,8 @@ const REST: [string, string, string, string][] = [
   ['GET', '/api/lens/detect/:address', '0x address', 'LensDetect: which EVM chains hold code at the address'],
   ['GET', '/api/lens/recent', '—', '{ reads, recent } public strip of recent reads'],
   ['GET', '/api/lens/status', '—', 'LensStatus: call budgets left today, cache, code index'],
+  ['GET', '/api/radar', 'chain · kind · known=1 · sort=new|priority · limit ≤ 100 · cursor', 'RadarPage: code changes the upgrade radar caught (newest first), with live counters · stored events only'],
+  ['GET', '/api/radar/:id', 'event id', 'RadarEvent: one change in full: before → after, diff, notes, the calls the radar made'],
 ]
 
 export function Protocol() {

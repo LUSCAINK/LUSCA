@@ -4,6 +4,7 @@
 
 import type { PayoutsOverview } from './payouts.ts'
 import type { ChainEvent } from './chain.ts'
+import type { RadarEvent } from './radar.ts'
 
 /** Lifecycle of one agent ("sucker") as it works a page. */
 export type AgentState =
@@ -301,6 +302,8 @@ export type ServerMsg =
   | { t: 'account'; scope: 'wallet' | 'device' | null; account: AccountView | null; at: number; device?: AccountView | null }
   // one read by a chain agent (shared/chain.ts), broadcast, throttled ≤ 4/s
   | { t: 'chain'; event: ChainEvent }
+  // a code change caught by the upgrade radar (shared/radar.ts); an update re-sends the same id
+  | { t: 'radar'; event: RadarEvent }
   | { t: 'error'; msg: string };
 
 export type ClientMsg =

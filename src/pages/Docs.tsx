@@ -99,7 +99,7 @@ function Hero() {
   return (
     <header className="docs-hero">
       <div className="dhero-top">
-        <Kicker n="09" name="Docs" />
+        <Kicker n="10" name="Docs" />
         <span className="dhero-rev mono">rev 2026-10-05</span>
       </div>
       <h1 className="display dhero-h">The manual</h1>
