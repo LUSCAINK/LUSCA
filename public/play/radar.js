@@ -149,7 +149,7 @@
     if (e.block) bits.push(['block', fmt(e.block)]); else if (e.slot) bits.push(['slot', fmt(e.slot)])
     if (e.tx) bits.push(['tx', short(e.tx, 6)])
     if (e.actor) bits.push([e.actorRole || 'by', short(e.actor)])
-    bits.push(['via', String(e.via || '').replace(/\s*\(backfill\)$/, '')])
+    bits.push(['via', String(e.via || '')])
     bits.forEach(([k, v], i) => { if (i) f.appendChild(document.createTextNode(' · ')); f.appendChild(document.createTextNode(`${k} `)); f.appendChild(el('b', '', v)) })
     more.appendChild(f)
   }
