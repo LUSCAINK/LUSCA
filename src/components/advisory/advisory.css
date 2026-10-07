@@ -40,7 +40,7 @@
 /* ─── evidence line: ≡ path/File.sol:line  symbol  identical to … ─── */
 .av-ev {
   display: grid;
-  grid-template-columns: 30px minmax(0, auto) auto minmax(0, 1fr);
+  grid-template-columns: 30px minmax(0, max-content) minmax(0, 1fr);
   align-items: baseline;
   gap: 4px 12px;
   padding: 7px 0;
@@ -68,26 +68,28 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.av-ev-p .dir {
+.av-ev-p .av-ev-dir {
   color: var(--fg-2);
 }
 .av-ev-p b {
   color: var(--fg);
   font-weight: 500;
 }
-.av-ev-p .ln {
+.av-ev-p .av-ev-ln {
   color: var(--hot);
 }
 .av-ev-s {
+  justify-self: start;
   font-size: var(--t-xs);
   color: var(--fg);
   padding: 1px 6px;
   background: var(--bg-3);
-  white-space: nowrap;
   max-width: 100%;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .av-ev-r {
+  grid-column: 2 / -1;
   font-size: var(--t-xs);
   color: var(--fg-2);
   min-width: 0;

@@ -81,9 +81,9 @@ export function EvidenceLine({ e }: { e: AdvisoryEvidence }) {
         {e.method === 'hash' ? '≡' : 'hdr'}
       </span>
       <code className="av-ev-p">
-        <span className="dir">{dir}</span>
+        <span className="av-ev-dir">{dir}</span>
         <b>{base}</b>
-        <span className="ln">:{e.line}</span>
+        <span className="av-ev-ln">:{e.line}</span>
       </code>
       {e.symbol && <span className="av-ev-s mono">{e.symbol}</span>}
       <span className="av-ev-r mono">

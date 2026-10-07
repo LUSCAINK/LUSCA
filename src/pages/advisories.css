@@ -167,9 +167,25 @@
   border-left: 1px solid var(--line-3);
 }
 .av-look-r {
-  padding: 16px;
-  border: 1px solid var(--line-2);
-  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px var(--gutter) 22px;
+  background: var(--bg-1) !important;
+  border-left: 2px solid var(--hot);
+}
+.av-look-x {
+  background: none;
+  border: 1px solid var(--line-3);
+  color: var(--fg-2);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: uppercase;
+  padding: 4px 9px 3px;
+  cursor: pointer;
+}
+.av-look-x:hover {
+  color: var(--fg);
 }
 
 /* ─── scope band ─── */

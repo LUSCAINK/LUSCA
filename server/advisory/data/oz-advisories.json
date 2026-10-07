@@ -38,7 +38,7 @@
       "packages": [
         { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "3.3.0", "fixed": "3.4.2" }, { "introduced": "4.0.0", "fixed": "4.3.1" }],
           "files": [
-            { "path": "governance/TimelockController.sol", "anchor": ["function execute(", "contract TimelockController"], "evidence": "A vulnerability in `TimelockController` (advisory text); fixed in commit cec4f2e", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/commit/cec4f2ef57495d8b1742d62846da212515d99dd5" },
+            { "path": "governance/TimelockController.sol", "anchor": ["function execute(", "contract TimelockController"], "evidence": "The `TimelockController` contract and its executor role (advisory text); fixed in commit cec4f2e", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/commit/cec4f2ef57495d8b1742d62846da212515d99dd5" },
             { "path": "access/TimelockController.sol", "anchor": ["function execute(", "contract TimelockController"], "evidence": "Same contract at its 3.x location (fixed in 3.4.2 and 3.4.2-solc-0.7)", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-fg47-3c2x-m2wr" }
           ] }
       ]
@@ -50,7 +50,7 @@
       "packages": [
         { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "3.3.0", "fixed": "3.4.2" }, { "introduced": "4.0.0", "fixed": "4.3.1" }],
           "files": [
-            { "path": "governance/TimelockControllerUpgradeable.sol", "anchor": ["function execute(", "contract TimelockControllerUpgradeable"], "evidence": "A vulnerability in `TimelockController` (advisory text)", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/security/advisories/GHSA-vrw4-w73r-6mm8" },
+            { "path": "governance/TimelockControllerUpgradeable.sol", "anchor": ["function execute(", "contract TimelockControllerUpgradeable"], "evidence": "The `TimelockController` contract and its executor role (advisory text)", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/security/advisories/GHSA-vrw4-w73r-6mm8" },
             { "path": "access/TimelockControllerUpgradeable.sol", "anchor": ["function execute(", "contract TimelockControllerUpgradeable"], "evidence": "Same contract at its 3.x location", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/security/advisories/GHSA-vrw4-w73r-6mm8" },
             { "path": "access/TimelockController.sol", "anchor": ["function execute(", "contract TimelockController"], "evidence": "Same contract in 3.4.0-solc-0.7 of the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/security/advisories/GHSA-vrw4-w73r-6mm8" }
           ] }

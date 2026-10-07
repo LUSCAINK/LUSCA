@@ -42,6 +42,7 @@ export default function Advisories() {
   const [bugOpen, setBugOpen] = useState<string | null>(null)
   const [chain, setChain] = useState<ChainId | ''>('')
   const [showAll, setShowAll] = useState(false)
+  const [look, setLook] = useState<Query | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -100,7 +101,7 @@ export default function Advisories() {
             Every kept contract’s verified Solidity source, file by file, against every published OpenZeppelin Contracts security advisory and the known bugs of
             the exact compiler version it was built with. {sum ? `${fmtInt(sum.data.ozVersions)} releases fingerprinted · ${fmtInt(sum.data.ozUniqueFiles)} distinct files · ${advs.length} advisories · ${fmtInt(sum.data.solcBugs)} compiler bugs.` : ''}
           </p>
-          <Lookup />
+          <Lookup onCheck={setLook} />
         </div>
         <dl className="av-head">
           {head.map(([k, v, s, hot]) => (
@@ -114,6 +115,8 @@ export default function Advisories() {
           <span className="av-tick br" aria-hidden="true" />
         </dl>
       </header>
+
+      {look && <LookupResult key={`${look.chain}:${look.address}`} q={look} onClose={() => setLook(null)} />}
 
       <p className="av-band mono" role="note">
         <span className="hot">■</span> {sum?.scope ?? ADVISORY_SCOPE}
@@ -379,16 +382,16 @@ function Matches({ advisory, bug, chain }: { advisory?: string; bug?: string; ch
   )
 }
 
-/** Check one kept contract by address. */
-function Lookup() {
+type Query = { chain: ChainId; address: string }
+
+/** Check one kept contract by address: the form (in the hero). */
+function Lookup({ onCheck }: { onCheck: (q: Query) => void }) {
   const [chain, setChain] = useState<ChainId>('ethereum')
   const [text, setText] = useState('')
-  const [q, setQ] = useState<{ chain: ChainId; address: string } | null>(null)
-  const st = useAdvisoryItem(q?.chain ?? null, q?.address ?? null)
   const valid = /^0x[0-9a-fA-F]{40}$/.test(text.trim())
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    if (valid) setQ({ chain, address: text.trim() })
+    if (valid) onCheck({ chain, address: text.trim() })
   }
   return (
     <div className="av-look">
@@ -405,11 +408,26 @@ function Lookup() {
           CHECK
         </button>
       </form>
-      {q && (
-        <div className="av-look-r">
-          <AdvisoryCard st={st} />
-        </div>
-      )}
     </div>
+  )
+}
+
+/** The checked contract, full width under the hero. */
+function LookupResult({ q, onClose }: { q: Query; onClose: () => void }) {
+  const st = useAdvisoryItem(q.chain, q.address)
+  const name = st.k === 'ok' ? st.it.name : null
+  return (
+    <section className="av-look-r" aria-label="Checked contract">
+      <div className="av-sec-h mono">
+        <span>
+          <span className="hot">■</span> {CHAIN_SHORT[q.chain]} · {name ? `${name} · ` : ''}
+          {q.address}
+        </span>
+        <button className="av-look-x mono" onClick={onClose} aria-label="Close">
+          close ×
+        </button>
+      </div>
+      <AdvisoryCard st={st} />
+    </section>
   )
 }
