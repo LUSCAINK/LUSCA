@@ -54,6 +54,8 @@ export interface McpTool {
   annotations: ToolAnnotations
   /** Seconds a successful answer is reused for the same arguments (0 = never). */
   cacheS: number
+  /** Longer limit than the core default (Lens: a fresh read can take up to its own 60 s timeout). */
+  timeoutMs?: number
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutput>
 }
 
@@ -343,6 +345,7 @@ const lensTool = defineTool({
   inputSchema: target(),
   annotations: { openWorldHint: true },
   cacheS: 60,
+  timeoutMs: 62_000,
   async run(args, ctx) {
     const { chain, address } = targetOf(args)
     const r = await from(ctx.source.lens(chain, address, ctx.ip))
@@ -478,7 +481,7 @@ const radarEventTool = defineTool({
     const now = ctx.now()
     const row = radarRow(e, ctx.site, now)
     const out = [`Radar event ${e.id} · ${e.chain} · ${e.kind} · ${e.name ?? '(no name)'} ${e.address}`, e.headline]
-    out.push(`landed ${iso(e.ts)} (${ago(e.ts, now)}) · ${e.count > 1 ? 'first caught' : 'caught'} ${iso(e.seenAt)} via ${viaText(e.via)}${e.backfill ? ' (backfill)' : ''}${e.slot ? ` · slot ${int(e.slot)}` : ''}${e.block ? ` · block ${int(e.block)}` : ''}${e.count > 1 ? ` · ${e.count} transactions folded` : ''}`)
+    out.push(`landed ${iso(e.ts)} (${ago(e.ts, now)}) · ${e.count > 1 ? 'first caught' : 'caught'} ${iso(e.seenAt)} via ${viaText(e.via)}${e.backfill && !/backfill/.test(e.via) ? ' (backfill)' : ''}${e.slot ? ` · slot ${int(e.slot)}` : ''}${e.block ? ` · block ${int(e.block)}` : ''}${e.count > 1 ? ` · ${e.count} transactions folded` : ''}`)
     if (e.tx) out.push(`transaction: ${e.tx}`)
     if (e.actor) out.push(`${e.actorRole ?? 'actor'}: ${e.actor}`)
     if (e.known) out.push(`known protocol: ${e.knownWhy ?? 'yes'}`)

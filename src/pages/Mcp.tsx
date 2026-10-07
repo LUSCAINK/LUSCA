@@ -72,11 +72,11 @@ type Args = Record<string, string | boolean>
 
 const PRESETS: { label: string; tool: string; args: Args }[] = [
   { label: 'Who can upgrade pump?', tool: 'lusca_control', args: { chain: 'solana', address: PUMP } },
-  { label: 'Latest upgrades', tool: 'lusca_radar', args: { kind: 'upgrade', limit: '5' } },
-  { label: 'Biggest controllers', tool: 'lusca_control_summary', args: { chain: 'solana' } },
-  { label: 'Code relatives', tool: 'lusca_atlas_relatives', args: { chain: 'solana', address: PUMP, limit: '6' } },
-  { label: 'Latest reads', tool: 'lusca_scan_recent', args: { limit: '5' } },
-  { label: 'Corpus numbers', tool: 'lusca_stats', args: {} },
+  { label: 'What was upgraded last?', tool: 'lusca_radar', args: { kind: 'upgrade', limit: '5' } },
+  { label: 'Which keys control the most code?', tool: 'lusca_control_summary', args: { chain: 'solana' } },
+  { label: 'What code is closest to pump?', tool: 'lusca_atlas_relatives', args: { chain: 'solana', address: PUMP, limit: '6' } },
+  { label: 'What did the agents just read?', tool: 'lusca_scan_recent', args: { limit: '5' } },
+  { label: 'How big is the corpus?', tool: 'lusca_stats', args: {} },
 ]
 
 /** Form values → JSON arguments (empty fields left out, numbers parsed). */
@@ -172,7 +172,7 @@ function Setup({ endpoint }: { endpoint: string }) {
       {
         k: 'claude-code',
         label: 'Claude Code',
-        steps: ['Run once in a terminal:', 'Then ask in any session, e.g. “Who can upgrade the Solana program 6EF8…?”'],
+        steps: ['Run once in a terminal:', 'Then ask in any session — “Who can upgrade the Solana program 6EF8…?” — or run a prompt: /mcp__lusca__who_can_change, /mcp__lusca__latest_upgrades, /mcp__lusca__explain_code.'],
         code: `claude mcp add --transport http lusca ${endpoint}`,
       },
       {

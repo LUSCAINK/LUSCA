@@ -9,6 +9,7 @@ import { validate } from './schema.ts'
 import { scrub } from './format.ts'
 import { ToolError, type McpTool, type ToolContext, type ToolRegistry } from './tools.ts'
 import type { McpSource } from './source.ts'
+import { PROMPTS, type McpPrompt } from './prompts.ts'
 
 export const LATEST_PROTOCOL = '2025-06-18'
 export const SUPPORTED_PROTOCOLS: readonly string[] = ['2025-06-18', '2025-03-26', '2024-11-05']
@@ -65,6 +66,8 @@ export interface ToolDescriptor {
 
 export interface CoreOptions {
   registry: ToolRegistry
+  /** Prompt templates (prompts/list, prompts/get); default: PROMPTS. */
+  prompts?: McpPrompt[]
   source: McpSource
   /** Public origin for links. */
   site: string
@@ -118,6 +121,7 @@ export function createCore(o: CoreOptions): McpCore {
   const maxInFlight = o.maxInFlight ?? 8
   const timeoutMs = o.toolTimeoutMs ?? 25_000
   const maxBatch = o.maxBatch ?? 8
+  const prompts = o.prompts ?? PROMPTS
   const cache = new Map<string, { at: number; ttl: number; r: CallToolResult }>()
   const running = new Map<string, Promise<CallToolResult>>()
   let inFlight = 0
@@ -153,7 +157,7 @@ export function createCore(o: CoreOptions): McpCore {
       const out = await Promise.race([
         t.run(args, ctx),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new ToolError('the answer took too long — retry in a minute', 60)), timeoutMs)
+          timer = setTimeout(() => reject(new ToolError('the answer took too long — retry in a minute', 60)), t.timeoutMs ?? timeoutMs)
           timer.unref?.()
         }),
       ])
@@ -219,7 +223,7 @@ export function createCore(o: CoreOptions): McpCore {
             id,
             result: {
               protocolVersion,
-              capabilities: { tools: { listChanged: false } },
+              capabilities: { tools: { listChanged: false }, prompts: { listChanged: false } },
               serverInfo: { name: 'lusca', title: 'LUSCA', version: o.version, websiteUrl: o.site + '/mcp' },
               instructions: o.instructions ?? DEFAULT_INSTRUCTIONS,
             },
@@ -235,6 +239,23 @@ export function createCore(o: CoreOptions): McpCore {
           if (params.arguments !== undefined && !isObj(params.arguments)) return rpcError(id, RPC.INVALID_PARAMS, 'params.arguments must be an object')
           const r = await callTool(params.name, params.arguments as Record<string, unknown> | undefined, { ip: ctx.ip, protocolVersion: ctx.protocolVersion })
           return { jsonrpc: '2.0', id, result: r }
+        }
+        case 'prompts/list':
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: { prompts: prompts.map((pr) => (modern(ctx.protocolVersion) ? { name: pr.name, title: pr.title, description: pr.description, arguments: pr.arguments } : { name: pr.name, description: pr.description, arguments: pr.arguments })) },
+          }
+        case 'prompts/get': {
+          const pr = prompts.find((x) => x.name === params.name)
+          if (!pr) return rpcError(id, RPC.INVALID_PARAMS, `Unknown prompt: ${String(params.name ?? '').slice(0, 64)}`)
+          if (params.arguments !== undefined && !isObj(params.arguments)) return rpcError(id, RPC.INVALID_PARAMS, 'params.arguments must be an object')
+          const a: Record<string, string> = {}
+          for (const [k, v] of Object.entries((params.arguments ?? {}) as Record<string, unknown>)) if (typeof v === 'string') a[k] = v.slice(0, 128)
+          for (const arg of pr.arguments) if (arg.required && !a[arg.name]?.trim()) return rpcError(id, RPC.INVALID_PARAMS, `Missing required argument: ${arg.name}`)
+          const r = pr.render(a)
+          if ('error' in r) return rpcError(id, RPC.INVALID_PARAMS, r.error)
+          return { jsonrpc: '2.0', id, result: { description: pr.description, messages: [{ role: 'user', content: { type: 'text', text: r.text } }] } }
         }
         default:
           return rpcError(id, RPC.METHOD_NOT_FOUND, `Method not found: ${msg.method.slice(0, 64)}`)
