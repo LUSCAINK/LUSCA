@@ -39,6 +39,7 @@ import { createAtlas, type Atlas } from '../atlas/index.ts'
 import type { RadarEvent } from '../../shared/radar.ts'
 import { createControl, type Control } from '../control/index.ts'
 import { createCodeSearch, type CodeSearch } from '../search/index.ts'
+import { createAdvisoryCheck, type AdvisoryCheck } from '../advisory/index.ts'
 
 type Log = (lvl: 'info' | 'warn' | 'error', msg: string) => void
 
@@ -61,6 +62,8 @@ export interface ChainAgentsApi {
   atlas: Atlas | null
   /** CODE SEARCH (server/search): grep over kept verified sources and IDLs (stored data only); null when LUSCA_SEARCH=0. */
   search: CodeSearch | null
+  /** ADVISORY CHECK (server/advisory): kept Solidity sources vs OpenZeppelin advisories + solc bugs (no RPC); null when LUSCA_ADVISORY=0. */
+  advisory: AdvisoryCheck | null
 }
 
 function intEnv(name: string, def: number, min: number, max: number): number {
@@ -269,6 +272,21 @@ export function createChainAgents(opts: {
   const search: CodeSearch | null = /^(0|false|no|off)$/i.test(process.env.LUSCA_SEARCH?.trim() ?? '')
     ? null
     : createCodeSearch({ source: { items: (q) => store.items(q) }, dataDir: opts.dataDir, log, maxMb: intEnv('LUSCA_SEARCH_MAX_MB', 192, 8, 1024), startDelayMs: 6_000 })
+  // ADVISORY CHECK: stored sources + vendored data only (no RPC, no budget); LUSCA_ADVISORY=0 turns it off
+  const advisory: AdvisoryCheck | null = /^(0|false|no|off)$/i.test(process.env.LUSCA_ADVISORY?.trim() ?? '')
+    ? null
+    : createAdvisoryCheck({
+        source: {
+          items: (q) => store.items(q),
+          record: async (c, a) => {
+            const r = await store.record(c, a)
+            return r ? { sources: r.sources, compiler: r.verified?.compiler ?? null } : null
+          },
+        },
+        dataDir: opts.dataDir,
+        log,
+        startDelayMs: 12_000,
+      })
 
   let started = false
   let stopped = false
@@ -282,6 +300,7 @@ export function createChainAgents(opts: {
       control?.start() // stored reads first; EVM proxies under its own slice
       atlas?.start()
       search?.start()
+      advisory?.start()
       radar?.start() // listens whether or not the chain agents run (LUSCA_RADAR=0 turns it off)
       if (!enabled) {
         log('info', 'chain agents off (LUSCA_CHAIN_AGENTS=0); stored chain data is still served')
@@ -311,6 +330,7 @@ export function createChainAgents(opts: {
       await control?.stop()
       await atlas?.stop()
       await search?.stop()
+      await advisory?.stop()
       const agentsDone = agents.stop() // wakes sleeping agents; in-flight reads end with the RPC close below
       await rpc.close()
       await agentsDone
@@ -329,5 +349,6 @@ export function createChainAgents(opts: {
     control,
     atlas,
     search,
+    advisory,
   }
 }

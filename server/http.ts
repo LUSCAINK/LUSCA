@@ -116,6 +116,8 @@ export interface Modules {
   radarDiff?: { get(id: string): Promise<{ json: string; ready: boolean } | null> } | null
   /** CONTROL MAP (server/control): stored results only. Without it /api/control/* answers 503. */
   control?: HubControl | null
+  /** ADVISORY CHECK (server/advisory): stored results only, cached per result version. Without it /api/advisories/* answers 503. */
+  advisory?: { route(p: string, params: URLSearchParams): { status: number; json: string; headers?: Record<string, string> } } | null
 }
 
 /** Read side of the control map: every answer comes from stored entries, no RPC. */
@@ -1798,6 +1800,16 @@ export function createHub(opts: HubOptions): Hub {
       return sendJsonText(req, res, r.status, r.json, r.headers)
     }
 
+    // ── ADVISORY CHECK: kept Solidity sources vs OpenZeppelin advisories + solc bugs (server/advisory; background, no RPC) ──
+    if (p === '/api/advisories' || p.startsWith('/api/advisories/')) {
+      allow(['GET', 'HEAD'])
+      const m = requireModules()
+      if (!m.advisory) throw new HttpError(503, 'the advisory check is not available on this server')
+      limit(readLimit, req, 'read')
+      const r = m.advisory.route(p === '/api/advisories' ? '/api/advisories/summary' : p, url.searchParams)
+      return sendJsonText(req, res, r.status, r.json, r.headers)
+    }
+
     // ── LUSCA Lens: on-demand reads of one program / contract (server/lens; its own limits and budget) ──
     if (p.startsWith('/api/lens/')) {
       allow(['GET', 'HEAD'])
@@ -1818,7 +1830,7 @@ export function createHub(opts: HubOptions): Hub {
   }
 
   /** Client routes as declared in src/App.tsx (first segment → allowed extra segments). */
-  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, scan: 0, radar: 1, control: 0, atlas: 0, mcp: 0, search: 0, agents: 1, docs: 1, chain: 2, lens: 2 }
+  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, scan: 0, radar: 1, control: 0, atlas: 0, mcp: 0, search: 0, advisories: 0, agents: 1, docs: 1, chain: 2, lens: 2 }
   function isClientRoute(segs: string[]): boolean {
     if (segs.length === 0) return true
     const first = segs[0].toLowerCase() // react-router matches case-insensitively

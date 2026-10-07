@@ -27,6 +27,7 @@ import { REPOS } from '../codebase/repos.ts'
 import { TEMPLATE_LINES, TOKEN_SURFACE_LINES, tokenSurface } from './evm-source.ts'
 
 const gzipAsync = promisify(zlib.gzip)
+const gunzipAsync = promisify(zlib.gunzip) as (buf: Buffer, o?: zlib.ZlibOptions) => Promise<Buffer>
 
 type Log = (lvl: 'info' | 'warn' | 'error', msg: string) => void
 
@@ -587,6 +588,8 @@ export interface ChainStore {
   item(chain: ChainId, address: string): { item: ChainIndexItem; read: ChainRead } | null
   /** Every training record, in file order (tests and tools). */
   records(): ChainRecord[]
+  /** The stored training record (with source texts) of one kept item, read and unzipped off the event loop; null when absent. */
+  record(chain: ChainId, address: string): Promise<ChainRecord | null>
   flush(): void
   close(): Promise<void>
 }
@@ -1119,6 +1122,25 @@ export function createChainStore(o: ChainStoreOptions): ChainStore {
     }
   }
 
+  async function readRecord(chain: ChainId, address: string): Promise<ChainRecord | null> {
+    const it = items.get(itemKey(chain, address))
+    if (!it) return null
+    let fh: fs.promises.FileHandle | null = null
+    try {
+      fh = await fs.promises.open(path.join(shardDir, it.shard), 'r')
+      const buf = Buffer.alloc(it.len)
+      const { bytesRead } = await fh.read(buf, 0, it.len, it.off)
+      if (bytesRead !== it.len) return null
+      const text = (await gunzipAsync(buf, { maxOutputLength: 64 * MB })).toString('utf8')
+      return JSON.parse(text) as ChainRecord
+    } catch (e) {
+      log('warn', `chain record ${shortAddr(address)} unreadable: ${(e as Error).message}`)
+      return null
+    } finally {
+      await fh?.close().catch(() => {})
+    }
+  }
+
   function records(): ChainRecord[] {
     const out: ChainRecord[] = []
     const names = safeList(shardDir)
@@ -1141,6 +1163,7 @@ export function createChainStore(o: ChainStoreOptions): ChainStore {
     items: listItems,
     item: getItem,
     records,
+    record: readRecord,
     flush() {
       if (saveTimer) {
         clearTimeout(saveTimer)

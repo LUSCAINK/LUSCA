@@ -16,6 +16,7 @@ const Control = lazy(() => import('@/pages/Control'))
 const Atlas = lazy(() => import('@/pages/Atlas'))
 const Mcp = lazy(() => import('@/pages/Mcp'))
 const Search = lazy(() => import('@/pages/Search'))
+const Advisories = lazy(() => import('@/pages/Advisories'))
 const Sepia = lazy(() => import('@/pages/Sepia'))
 const Earn = lazy(() => import('@/pages/Earn'))
 const Docs = lazy(() => import('@/pages/Docs'))
@@ -54,6 +55,7 @@ export default function App() {
             <Route path="atlas" element={<Suspense fallback={<Loading />}><Atlas /></Suspense>} />
             <Route path="mcp" element={<Suspense fallback={<Loading />}><Mcp /></Suspense>} />
             <Route path="search" element={<Suspense fallback={<Loading />}><Search /></Suspense>} />
+            <Route path="advisories" element={<Suspense fallback={<Loading />}><Advisories /></Suspense>} />
             <Route path="node" element={<Suspense fallback={<Loading />}><Node /></Suspense>} />
             <Route path="sepia" element={<Suspense fallback={<Loading />}><Sepia /></Suspense>} />
             <Route path="earn" element={<Suspense fallback={<Loading />}><Earn /></Suspense>} />
