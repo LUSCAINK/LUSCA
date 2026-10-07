@@ -17,6 +17,7 @@
 //      (the radar's daily slice, default 25 % / 10 % / 15 %) · LUSCA_RADAR_LOG_CALLS (20000/day per EVM log
 //      endpoint) · LUSCA_RADAR_WS_MB (daily Helius websocket allowance, default 200) ·
 //      LUSCA_RADAR_ETH_LOGS / _BASE_LOGS / _ARB_LOGS (comma lists) — server/radar
+//      LUSCA_CONTROL=0 (control map off) · LUSCA_CONTROL_EVM_CALLS (its daily EVM slice per chain, default 5 %) — server/control
 //
 // The REST routes read stored data only (stats / feed / items / item): no RPC per request.
 
@@ -34,6 +35,7 @@ import { AnalysisLimit, Work, findPrimitives, findPrivileged } from '../lens/evm
 import { scanElf, solanaPrimitives } from '../lens/elf-syscalls.ts'
 import { createRadar, type Radar } from '../radar/index.ts'
 import type { RadarEvent } from '../../shared/radar.ts'
+import { createControl, type Control } from '../control/index.ts'
 
 type Log = (lvl: 'info' | 'warn' | 'error', msg: string) => void
 
@@ -48,6 +50,8 @@ export interface ChainAgentsApi {
   lens: Lens | null
   /** UPGRADE RADAR (server/radar): code changes caught live; null when LUSCA_RADAR=0. */
   radar: Radar | null
+  /** CONTROL MAP (server/control): who can change the code of each kept item; null when LUSCA_CONTROL=0. */
+  control: Control | null
 }
 
 function intEnv(name: string, def: number, min: number, max: number): number {
@@ -219,6 +223,13 @@ export function createChainAgents(opts: {
     }
   }
 
+  // CONTROL MAP: Solana from stored reads; EVM proxies resolved under a small daily slice (LUSCA_CONTROL_EVM_CALLS)
+  const controlOn = !/^(0|false|no|off)$/i.test(process.env.LUSCA_CONTROL?.trim() ?? '')
+  const controlCalls = intEnv('LUSCA_CONTROL_EVM_CALLS', -1, -1, 10_000_000)
+  const control: Control | null = controlOn
+    ? createControl({ rpc, store, dataDir: opts.dataDir, log, ...(controlCalls >= 0 ? { evmCalls: controlCalls } : {}) })
+    : null
+
   // the feed survives restarts (newest 200 events)
   const feedFile = path.join(opts.dataDir, 'chain', 'feed.json')
   const savedFeed = readJson<ChainEvent[]>(feedFile)
@@ -244,6 +255,7 @@ export function createChainAgents(opts: {
       if (started || stopped) return
       started = true
       if (lens) provenance.start() // code-index hashes for Lens provenance (background, incremental)
+      control?.start() // stored reads first; EVM proxies under its own slice
       radar?.start() // listens whether or not the chain agents run (LUSCA_RADAR=0 turns it off)
       if (!enabled) {
         log('info', 'chain agents off (LUSCA_CHAIN_AGENTS=0); stored chain data is still served')
@@ -269,6 +281,7 @@ export function createChainAgents(opts: {
       await provenance.stop()
       await lens?.stop()
       await radar?.stop()
+      await control?.stop()
       const agentsDone = agents.stop() // wakes sleeping agents; in-flight reads end with the RPC close below
       await rpc.close()
       await agentsDone
@@ -283,5 +296,6 @@ export function createChainAgents(opts: {
     item: (chain, address) => agents.item(chain, address),
     lens,
     radar,
+    control,
   }
 }
