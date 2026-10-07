@@ -138,6 +138,9 @@
 .rdf-facts > div.wide {
   flex: 2 1 300px;
 }
+.rdf-facts > div.xwide {
+  flex: 3 1 430px;
+}
 .rdf-facts dt {
   font-size: var(--t-3xs);
   letter-spacing: var(--track-label);
@@ -191,6 +194,66 @@
 }
 .rdf-strip .dim b {
   color: var(--fg-2);
+}
+
+/* ─── key functions ──────────────────────────────── */
+.rdf-key {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px var(--gutter) 16px;
+  background: linear-gradient(90deg, rgba(255, 77, 0, 0.07), transparent 70%) var(--bg) !important;
+  box-shadow: inset 2px 0 0 var(--hot);
+}
+.rdf-key .k {
+  color: var(--hot);
+}
+.rdf-key ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.rdf-key button {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--hot-a40);
+  background: var(--bg-1);
+  color: var(--fg-1);
+  font-size: var(--t-sm);
+  text-align: left;
+}
+.rdf-key button:hover:not(:disabled) {
+  background: var(--hot-a10);
+  color: var(--fg);
+}
+.rdf-key .chg {
+  font-size: var(--t-3xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--hot);
+}
+.rdf-key b {
+  font-weight: 500;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.rdf-key .acc {
+  color: var(--hot);
+  overflow-wrap: anywhere;
+}
+.rdf-key .acc s {
+  color: var(--fg-2);
+}
+.rdf-key .at {
+  color: var(--fg-2);
+  font-size: var(--t-xs);
+}
+.rdf-key .go {
+  color: var(--hot);
 }
 
 /* ─── no diff ────────────────────────────────────── */
@@ -458,6 +521,27 @@
 }
 .rdf-code tr.cm .code {
   color: var(--fg-2);
+}
+.rdf-code .tq {
+  color: var(--fg-2);
+}
+.rdf-code .tk {
+  color: #d9d7d0;
+}
+.rdf-code tr.add .tk {
+  color: #fff;
+}
+.rdf-code .ta {
+  color: var(--hot-2);
+}
+.rdf-code tr.add .ta,
+.rdf-code tr.ac .ta {
+  color: var(--hot);
+}
+.rdf-code tr.del .tq,
+.rdf-code tr.del .tk,
+.rdf-code tr.del .ta {
+  color: inherit;
 }
 .rdf-code tr.add {
   background: rgba(236, 235, 230, 0.075);

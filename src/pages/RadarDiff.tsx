@@ -2,7 +2,7 @@
 // Sourcify: the files that changed, line by line (both line numbers), the functions they touch, access
 // checks flagged. Solana programs and unverified implementations: the facts the radar read and why there
 // is no source diff. Data: GET /api/radar/:id (facts) and GET /api/radar/:id/diff (computed once, cached).
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { RadarEvent } from '@shared/radar'
 import type { DiffFile, DiffFunction, DiffLine, RadarCodeDiff } from '@shared/radarDiff'
@@ -129,7 +129,7 @@ export default function RadarDiff() {
             <dt>Chain</dt>
             <dd>{chain ? CHAIN_LABEL[chain] : DASH}</dd>
           </div>
-          <div className="wide">
+          <div className="wide xwide">
             <dt>{sol ? 'Program' : 'Proxy'}</dt>
             <dd>
               {chain && explorerUrl(chain, address) ? (
@@ -235,6 +235,8 @@ export default function RadarDiff() {
           </div>
         </section>
       )}
+
+      {ready && d && <KeyFns fns={d.functions} />}
 
       {!ready && (
         <section className="rdf-none">
@@ -356,6 +358,54 @@ function FnIndex({ fns }: { fns: DiffFunction[] }) {
 
 const isComment = (s: string) => /^\s*(\/\/|\/\*|\*)/.test(s)
 
+/** New or changed functions with an access check: the lines to read first. */
+function KeyFns({ fns }: { fns: DiffFunction[] }) {
+  const key = fns.filter((f) => f.access && f.kind !== 'modifier' && (f.change === 'added' || f.accessBefore !== undefined)).slice(0, 4)
+  if (!key.length) return null
+  return (
+    <section className="rdf-key" aria-label="Access-checked functions this upgrade adds or changes">
+      <span className="mono k">Access-checked functions added or changed</span>
+      <ul>
+        {key.map((f) => (
+          <li key={`${f.file}|${f.sig}`}>
+            <button type="button" onClick={() => jump(f.hunk)} disabled={!f.hunk} className="mono">
+              <span className="chg">{f.change === 'added' ? 'new' : 'check changed'}</span>
+              <b>{f.sig}</b>
+              <span className="acc">
+                {f.accessBefore !== undefined && <s>{f.accessBefore ?? 'none'}</s>} {f.access}
+              </span>
+              <span className="at">{f.at}</span>
+              {f.hunk && <span className="go">→</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+const TOK_RE = /(\/\/.*$|\/\*.*?\*\/|"[^"]*"|'[^']*')|\b(function|modifier|constructor|returns?|require|revert|emit|event|error|if|else|for|while|external|public|internal|private|view|pure|payable|override|virtual|memory|calldata|storage|contract|interface|library|abstract|import|pragma|using|struct|enum|mapping|immutable|constant|unchecked|new|delete|is)\b|\b(only[A-Z_][\w$]*|msg\.sender|_msgSender)\b/g
+
+/** Light Solidity tinting: comments and strings quiet, keywords bright, access words in accent. */
+function Code({ s }: { s: string }) {
+  if (isComment(s)) return <span className="s">{s || ' '}</span>
+  const out: ReactNode[] = []
+  let last = 0
+  let i = 0
+  for (const m of s.matchAll(TOK_RE)) {
+    const at = m.index ?? 0
+    if (at > last) out.push(s.slice(last, at))
+    out.push(
+      <span key={i++} className={m[1] ? 'tq' : m[2] ? 'tk' : 'ta'}>
+        {m[0]}
+      </span>,
+    )
+    last = at + m[0].length
+  }
+  if (last < s.length) out.push(s.slice(last))
+  return <span className="s">{out.length ? out : ' '}</span>
+}
+
 function Line({ l }: { l: DiffLine }) {
   const cls = `${l.t === '+' ? 'add' : l.t === '-' ? 'del' : 'ctx'}${l.ac ? ' ac' : ''}${isComment(l.s) ? ' cm' : ''}`
   return (
@@ -364,7 +414,7 @@ function Line({ l }: { l: DiffLine }) {
       <td className="ln n">{l.n ?? ''}</td>
       <td className="mk">{l.t === ' ' ? '' : l.t === '+' ? '+' : '−'}</td>
       <td className="code">
-        <span className="s">{l.s || ' '}</span>
+        <Code s={l.s} />
         {l.ac && l.t !== ' ' ? <span className="acflag">access</span> : null}
       </td>
     </tr>
