@@ -41,7 +41,7 @@
     "typecheck": "tsc -b && tsc -p tsconfig.server.json",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "tsx server/neurons/_test.ts && tsx server/auth/_test.ts && tsx server/payouts/_test.ts && tsx server/proofs/_test.ts && tsx server/codebase/_test.ts && tsx server/chain/_test.ts && tsx server/chain/_evm.test.ts && tsx server/chain/_solana.test.ts && tsx server/chain/_discover.test.ts && tsx server/chain/_scan.test.ts && tsx server/lens/_test.ts && tsx server/radar/_test.ts && tsx server/radar/_diff_test.ts && tsx server/share/_test.ts && tsx server/model/_test.ts && tsx shared/sepia/_test.ts && tsx scripts/tokenizer/_test.ts && tsx scripts/tokenizer/_render_test.ts && tsx server/trainer/_progress.test.ts && tsx server/trainer/_smoke.ts --gpu"
+    "test": "tsx server/neurons/_test.ts && tsx server/auth/_test.ts && tsx server/payouts/_test.ts && tsx server/proofs/_test.ts && tsx server/codebase/_test.ts && tsx server/chain/_test.ts && tsx server/chain/_evm.test.ts && tsx server/chain/_solana.test.ts && tsx server/chain/_discover.test.ts && tsx server/chain/_scan.test.ts && tsx server/lens/_test.ts && tsx server/radar/_test.ts && tsx server/radar/_diff_test.ts && tsx server/share/_test.ts && tsx server/control/_test.ts && tsx server/model/_test.ts && tsx shared/sepia/_test.ts && tsx scripts/tokenizer/_test.ts && tsx scripts/tokenizer/_render_test.ts && tsx server/trainer/_progress.test.ts && tsx server/trainer/_smoke.ts --gpu"
   },
   "dependencies": {
     "@fontsource-variable/archivo": "^5.3.0",

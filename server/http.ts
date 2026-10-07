@@ -20,6 +20,7 @@ import type { PayoutsOverview, WalletPayouts } from '../shared/payouts.ts'
 import type { CodeIndexStats } from '../shared/codebase.ts'
 import type { ChainEvent, ChainId, ChainIndexItem, ChainRead, ChainStats } from '../shared/chain.ts'
 import { RADAR_KINDS, type RadarEvent, type RadarKind, type RadarPage } from '../shared/radar.ts'
+import { CONTROL_CLASSES, type ControlClass, type ControlEntry, type ControlPage, type ControlSummary } from '../shared/control.ts'
 import { isSolanaAddress } from '../shared/base58.ts'
 import type { Auth } from './auth/auth.ts'
 import { handleModelRoute, type WeightsExporter } from './model/export.ts'
@@ -107,6 +108,15 @@ export interface Modules {
   radar?: HubRadar | null
   /** RADAR DIFF (server/radar/code-diff.ts): source diff of one verified EVM upgrade, computed once and cached. */
   radarDiff?: { get(id: string): Promise<{ json: string; ready: boolean } | null> } | null
+  /** CONTROL MAP (server/control): stored results only. Without it /api/control/* answers 503. */
+  control?: HubControl | null
+}
+
+/** Read side of the control map: every answer comes from stored entries, no RPC. */
+export interface HubControl {
+  summary(): ControlSummary
+  list(q: { chain?: ChainId; cls?: ControlClass; controller?: string; limit?: number; cursor?: string }): ControlPage
+  get(chain: ChainId, address: string): ControlEntry | null
 }
 
 /** Read side of the upgrade radar: every answer comes from stored events, no RPC. */
@@ -1711,6 +1721,41 @@ export function createHub(opts: HubOptions): Hub {
       return sendJsonText(req, res, 200, json, shortCache)
     }
 
+    // ── CONTROL MAP: who can change the code of each kept item (server/control; stored entries only, no RPC here) ──
+    if (p === '/api/control/summary' || p === '/api/control/items' || p.startsWith('/api/control/')) {
+      allow(['GET', 'HEAD'])
+      const m = requireModules()
+      if (!m.control) throw new HttpError(503, 'the control map is not available on this server')
+      limit(readLimit, req, 'read')
+      const control = m.control
+      const shortCache = { 'Cache-Control': 'public, max-age=10' }
+      if (p === '/api/control/summary') return sendJsonText(req, res, 200, cachedJson('control:summary', () => control.summary(), 10_000), shortCache)
+      if (p === '/api/control/items') {
+        const chainQ = url.searchParams.get('chain') || ''
+        if (chainQ && !CHAIN_IDS.has(chainQ as ChainId)) throw new HttpError(400, 'chain must be solana, ethereum, base or arbitrum')
+        const clsQ = url.searchParams.get('class') || ''
+        if (clsQ && !(CONTROL_CLASSES as readonly string[]).includes(clsQ)) throw new HttpError(400, `class must be one of ${CONTROL_CLASSES.join(', ')}`)
+        const cursor = url.searchParams.get('cursor') || ''
+        if (cursor && !/^\d{1,6}$/.test(cursor)) throw new HttpError(400, 'cursor is not one this server issued')
+        const rawLimit = url.searchParams.get('limit')
+        const n = rawLimit === null || rawLimit === '' ? 50 : Number(rawLimit)
+        if (!Number.isInteger(n) || n < 1) throw new HttpError(400, 'limit must be an integer from 1 to 100')
+        const ctlQ = url.searchParams.get('controller') || ''
+        if (ctlQ && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$|^0x[0-9a-fA-F]{40}$/.test(ctlQ)) throw new HttpError(400, 'controller must be a Solana or EVM address')
+        const q = { chain: (chainQ || undefined) as ChainId | undefined, cls: (clsQ || undefined) as ControlClass | undefined, controller: ctlQ || undefined, limit: Math.min(100, n), cursor: cursor || undefined }
+        return sendJsonText(req, res, 200, cachedJson(`control:items:${chainQ}:${clsQ}:${ctlQ}:${q.limit}:${cursor}`, () => control.list(q), 10_000), shortCache)
+      }
+      const segs = p.slice('/api/control/'.length).split('/')
+      if (segs.length !== 2 || !CHAIN_IDS.has(segs[0] as ChainId) || !/^[0-9A-Za-z]{32,44}$|^0x[0-9a-fA-F]{40}$/.test(segs[1])) throw new HttpError(404, 'not found')
+      const ck = `control:item:${segs[0]}:${segs[1]}`
+      const json = cachedJson(ck, () => control.get(segs[0] as ChainId, segs[1]), 10_000)
+      if (json === 'null') {
+        readCache.delete(ck)
+        throw new HttpError(404, 'no control entry for this address')
+      }
+      return sendJsonText(req, res, 200, json, shortCache)
+    }
+
     // ── LUSCA Lens: on-demand reads of one program / contract (server/lens; its own limits and budget) ──
     if (p.startsWith('/api/lens/')) {
       allow(['GET', 'HEAD'])
@@ -1731,7 +1776,7 @@ export function createHub(opts: HubOptions): Hub {
   }
 
   /** Client routes as declared in src/App.tsx (first segment → allowed extra segments). */
-  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, scan: 0, radar: 1, agents: 1, docs: 1, chain: 2, lens: 2 }
+  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, scan: 0, radar: 1, control: 0, agents: 1, docs: 1, chain: 2, lens: 2 }
   function isClientRoute(segs: string[]): boolean {
     if (segs.length === 0) return true
     const first = segs[0].toLowerCase() // react-router matches case-insensitively
