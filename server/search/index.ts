@@ -9,8 +9,9 @@
 // repeat or an alternation, no long runs of open-ended repeats), then runs in a query worker that is terminated
 // when it passes the hard time budget; at most 2 queries run at once (a short queue, then 'busy'); results are
 // cached per normalized query; each address gets 20 uncached searches a minute (opening files: 60 a minute).
-// Patterns that run out of time count against their address: after 2 in 10 minutes, regex mode pauses for that
-// address for 10 minutes; past 6 a minute over all addresses, new regexes pause for everyone for a minute
+// Patterns that run out of time (killed at the hard budget, or stopped at the soft one with partial totals) count
+// against their address: after 2 in 10 minutes, regex mode pauses for that
+// address for 10 minutes; past 10 a minute over all addresses, new regexes pause for everyone for a minute
 // (literal search keeps working; cached answers are still served).
 //
 // REST: GET /api/search?q=&re=1&case=1&chain=&custom=1&path=&lang=&cursor= -> SearchResult
@@ -49,7 +50,7 @@ export interface CodeSearchOptions {
   viewsPerIpPerMin?: number
   /** Regex time-outs an address may cause in 10 minutes before regex mode pauses for it (default 2). */
   strikesPerIp?: number
-  /** Regex time-outs a minute over all addresses before new regexes pause for everyone for a minute (default 6). */
+  /** Regex time-outs a minute over all addresses before new regexes pause for everyone for a minute (default 10). */
   globalTimeoutsPerMin?: number
   /** Snapshot save debounce after changes, ms (default 120 s). */
   saveDelayMs?: number
@@ -89,6 +90,8 @@ const STRIKE_WINDOW_MS = 10 * 60_000
 const STRIKE_PAUSE_MS = 10 * 60_000
 const GLOBAL_WINDOW_MS = 60_000
 const GLOBAL_PAUSE_MS = 60_000
+/** A query worker stops scanning at 900 ms (query.mjs SOFT_MS): a regex that ran this long used up its budget. */
+const SLOW_MS = 850
 
 interface NormQuery { q: string; re: boolean; case: boolean; chain: ChainId | null; custom: boolean; path: string | null; lang: SearchLang | null; offset: number }
 interface Job { id: number; q: NormQuery | { file: number } | { source: number; q: NormQuery | null }; resolve: (r: WorkerOut) => void; queuedAt: number; timer: NodeJS.Timeout | null }
@@ -152,7 +155,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
   const perIp = o.perIpPerMin ?? 20
   const viewsPerIp = o.viewsPerIpPerMin ?? 60
   const strikesPerIp = o.strikesPerIp ?? 2
-  const globalTrip = o.globalTimeoutsPerMin ?? 6
+  const globalTrip = o.globalTimeoutsPerMin ?? 10
   const buildUrl = new URL('./build.mjs', import.meta.url)
   const queryUrl = new URL('./query.mjs', import.meta.url)
 
@@ -486,6 +489,9 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     recentMs.push(ms)
     if (recentMs.length > 200) recentMs.shift()
     const r = out.result as unknown as Omit<SearchResult, 'q' | 're' | 'case' | 'ms' | 'cached' | 'error' | 'next'> & { next: number | null; workerMs: number }
+    // a regex that used up the worker's soft budget (scan stopped by time, totals partial) costs as much as a
+    // time-out: it counts the same against its address
+    if (q.re && r.total.capped && r.workerMs >= SLOW_MS) strike(ip)
     return {
       q: q.q,
       re: q.re,

@@ -855,7 +855,8 @@ export default function Search() {
                         {CHAINS.filter((c) => (f.chains[c] ?? 0) > 0)
                           .map((c) => `${CHAIN_SHORT[c]} ${fmtInt(f.chains[c] ?? 0)}`)
                           .join(' · ')}{' '}
-                        · {fmtInt(f.lines)} lines{f.library ? ' · library' : f.codeIndex ? ' · in code index' : ''}
+                        · {fmtInt(f.lines)} lines
+                        {f.library ? ' · library' : f.libraryContracts > 0 ? ` · library path in ${fmtInt(f.libraryContracts)}` : f.codeIndex ? ' · in code index' : ''}
                         {f.pathCount > 1 ? ` · this path in ${fmtInt(f.pathContracts)}, +${fmtInt(f.pathCount - 1)} other path${f.pathCount === 2 ? '' : 's'}` : ''}
                         {f.sample ? ` · e.g. ${f.sample.name ?? shortAddress(f.sample.address, 4, 4)}` : ''}
                       </span>
