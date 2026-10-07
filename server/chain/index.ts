@@ -165,7 +165,9 @@ export function createChainAgents(opts: {
   let feedOf: (n: number) => ChainEvent[] = () => []
   if (binaryOn) {
     const binCalls = intEnv('LUSCA_BINARY_SOL_CALLS', -1, -1, 1_000_000)
-    binary = createBinary({ rpc, store, feed: (n) => feedOf(n), dataDir: opts.dataDir, log, ...(binCalls >= 0 ? { limits: { solCalls: binCalls } } : {}) })
+    // first boot: search builds its index from ~6 s, the advisory pass starts at 60 s, the binary sweep at 120 s,
+    // so their memory peaks do not stack
+    binary = createBinary({ rpc, store, feed: (n) => feedOf(n), dataDir: opts.dataDir, log, startDelayMs: 120_000, ...(binCalls >= 0 ? { limits: { solCalls: binCalls } } : {}) })
   }
   const analysers = scanAnalysers(log)
   const binaryRef = binary
@@ -305,7 +307,7 @@ export function createChainAgents(opts: {
         },
         dataDir: opts.dataDir,
         log,
-        startDelayMs: 12_000,
+        startDelayMs: 60_000, // after the search index build (see the binary reader above)
       })
 
   let started = false
