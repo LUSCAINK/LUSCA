@@ -31,6 +31,10 @@ async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 }
 
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? DASH : `${Math.round(v * 1000) / 10}%`)
+const plural = (n: number, one: string, many = `${one}s`) => `${fmtInt(n)} ${n === 1 ? one : many}`
+/** Tooltip text for a dictionary discriminator: the sha256 rule only when the value follows it. */
+const discTitle = (ns: 'global' | 'account' | 'event', name: string, d: { disc: string; custom?: true }) =>
+  d.custom ? `discriminator ${d.disc}, declared in the published IDL that names it (not sha256 of the name)` : `sha256("${ns}:${name}")[0..8] = ${d.disc}`
 const hexOf = (s: string) => Array.from(s, (c) => c.charCodeAt(0).toString(16).padStart(2, '0'))
 const pairs = (hex: string) => hex.match(/../g) ?? []
 const GLYPHS = '0123456789abcdef'
@@ -126,7 +130,7 @@ export default function Binary() {
   }
 
   const head: [string, string, string, boolean][] = [
-    ['Solana programs without an IDL', sum ? fmtInt(sum.withoutIdl) : DASH, sum ? 'read by the chain agents, kept or not' : '', false],
+    ['Solana programs without an IDL', sum ? fmtInt(sum.withoutIdl) : DASH, sum ? `of ${fmtInt(sum.programs)} read by LUSCA (agents, radar, Lens)` : '', false],
     ['executables read', sum ? fmtInt(sum.processed) : DASH, sum ? `${fmtBytes(sum.bytesRead)} of program bytes` : '', false],
     ['instructions recovered', sum ? fmtInt(sum.instructions) : DASH, sum ? `${fmtInt(sum.confirmed)} also confirmed by their discriminator` : '', true],
     ['names recovered', sum ? fmtInt(sum.names) : DASH, sum ? `instructions, account types, events, error messages` : '', false],
@@ -161,9 +165,9 @@ export default function Binary() {
             binary
           </h1>
           <p className="bn-lede">
-            Most Solana programs never publish an IDL. Their executables still carry their interface: the log string each instruction prints, the 8-byte Anchor
-            discriminators the dispatcher compares, the error messages, the crates they were built with. LUSCA reads them from the bytes, with the evidence for
-            every name.
+            {sum && sum.programs > 0 ? `${pct(sum.withoutIdl / sum.programs)} of the Solana programs LUSCA has read publish no IDL. ` : ''}A program without one still
+            carries its interface in its executable: the log string each instruction prints, the 8-byte Anchor discriminators the dispatcher compares, the error
+            messages, the crates it was built with. LUSCA reads them from the bytes, with the evidence for every name.
           </p>
         </div>
         <dl className="bn-head">
@@ -242,7 +246,11 @@ export default function Binary() {
             <dt>
               <span className="bn-ev e-disc">DISC</span>
             </dt>
-            <dd>a discriminator of a name from published IDLs: account types, events, other programs&apos; instructions</dd>
+            <dd>a discriminator that other programs&apos; published IDLs name, found in the bytes: account types, events, instructions</dd>
+            <dt>
+              <span className="bn-ev e-frag">FRAGMENT</span>
+            </dt>
+            <dd>a log string that runs into the next literal, with no discriminator to confirm where the name ends: shown apart, never counted</dd>
           </dl>
         </div>
         <div className="bn-cr">
@@ -255,9 +263,10 @@ export default function Binary() {
           {sum && sum.crates.length ? (
             <ul className="bn-crates">
               {sum.crates.slice(0, 24).map((c) => (
-                <li key={`${c.name}@${c.version}`}>
+                <li key={`${c.name}@${c.version}${c.toolchain ? ':std' : ''}`} title={c.toolchain ? 'a dependency of Rust std built into the Solana toolchain, not one the program chose' : undefined}>
                   <span className="bn-crate mono">
                     {c.name} <b>{c.version}</b>
+                    {c.toolchain ? <i className="bn-tc">toolchain std</i> : null}
                   </span>
                   <span className="bn-bar">
                     <i style={{ width: `${(c.count / crMax) * 100}%` }} />
@@ -279,38 +288,52 @@ export default function Binary() {
           {chk && chk.programs >= CHECK_MIN ? (
             <dl className="bn-chk-g">
               <div className="hot">
-                <dt className="mono">recall · IDL instructions recovered</dt>
+                <dt className="mono">recall · IDL instructions in the code, recovered</dt>
                 <dd className="num">{pct(chk.recall)}</dd>
               </div>
               <div>
-                <dt className="mono">precision · recovered names in the IDL</dt>
+                <dt className="mono">precision · names in the IDL or confirmed in the code</dt>
                 <dd className="num">{pct(chk.precision)}</dd>
               </div>
               <div>
-                <dt className="mono">names in the code, not in its IDL</dt>
+                <dt className="mono">confirmed in the code, not in its IDL</dt>
                 <dd className="num">{fmtInt(chk.newerThanIdl)}</dd>
               </div>
               <div>
-                <dt className="mono">account types recovered</dt>
-                <dd className="num">{pct(chk.accountRecall)}</dd>
+                <dt className="mono">in the IDL, not in the code</dt>
+                <dd className="num">{fmtInt(chk.notInCode)}</dd>
               </div>
               <p className="bn-chk-s mono">
-                {fmtInt(chk.programs)} programs · {fmtInt(chk.idlInstructions)} IDL instructions · each program&apos;s own IDL left out of the dictionary. A recovered
-                name the IDL does not list counts against precision even when its discriminator is in the deployed code ({fmtInt(chk.newerThanIdl)} such names: the
-                published IDL is older than the code). Account types come only from other programs&apos; IDLs, so a program&apos;s own new types are not found.
+                {plural(chk.programs, 'program')} that publish an Anchor IDL, read blind: each program&apos;s own IDL (names, discriminators, error names) left out of the
+                dictionary. Recall counts the {fmtInt(chk.idlInCode)} IDL instructions whose discriminator is in the executable; the {fmtInt(chk.notInCode)} IDL
+                instructions whose discriminator is not in the deployed code are counted apart, never as misses. A name the IDL does not list counts as correct only
+                when its discriminator is in the code. Account types are found only through other programs&apos; IDLs ({pct(chk.accountRecall)} of IDL account types).
+                {chk.skipped ? ` ${plural(chk.skipped, 'program')} whose executable holds none of its IDL's instruction discriminators are left out.` : ''}
               </p>
             </dl>
           ) : null}
           {sum && sum.idlBehind.length > 0 && (chk?.programs ?? 0) >= CHECK_MIN ? (
             <div className="bn-behind">
-              <div className="bn-behind-h mono">deployed code ahead of its published IDL</div>
+              <div className="bn-behind-h mono">deployed code that differs from its published IDL</div>
               <ol>
                 {sum.idlBehind.map((p) => (
                   <li key={p.address}>
-                    <button onClick={() => pick(p.address)} title={`${p.newer} instructions confirmed in the executable (log string + discriminator) that the published IDL (${p.idlInstructions} instructions) does not list`}>
+                    <button
+                      onClick={() => pick(p.address)}
+                      title={`${p.newer} instructions confirmed in the executable (log string + discriminator) that the published IDL does not list; ${p.missing ?? 0} of the IDL's ${p.idlInstructions} instructions have no discriminator in the executable`}
+                    >
                       <span className="bn-behind-n">{p.name ?? shortAddress(p.address, 6, 6)}</span>
-                      <span className="mono">
-                        <b className="num">+{fmtInt(p.newer)}</b> not in its IDL of {fmtInt(p.idlInstructions)}
+                      <span className="bn-behind-d mono">
+                        <span>
+                          <b className="num">+{fmtInt(p.newer)}</b> in the code, not in the IDL
+                        </span>
+                        {p.missing ? (
+                          <span>
+                            <b className="num minus">−{fmtInt(p.missing)}</b> of its {fmtInt(p.idlInstructions)} IDL instructions not in the code
+                          </span>
+                        ) : (
+                          <span>IDL of {fmtInt(p.idlInstructions)}, all in the code</span>
+                        )}
                       </span>
                     </button>
                   </li>
@@ -378,7 +401,7 @@ export default function Binary() {
 
       <footer className="bn-foot mono">
         <span>
-          Executables come from the reads the chain agents and the upgrade radar make anyway; the rest are read in the background under a small daily RPC slice
+          Executables come from the reads the chain agents, the upgrade radar and Lens make anyway; the rest are read in the background under a small daily RPC slice
           {sum ? ` (today ${fmtInt(sum.reader.used)}/${fmtInt(sum.reader.limit)} calls)` : ''}. Results are kept per code hash and read again only when the code
           changes. Discriminator dictionary: {sum ? `${fmtInt(sum.dictionary.instructions)} instructions, ${fmtInt(sum.dictionary.accounts)} account types, ${fmtInt(sum.dictionary.events)} events and ${fmtInt(sum.dictionary.errors)} error messages from ${fmtInt(sum.dictionary.idls)} published IDLs` : DASH}, plus names proven by
           log strings. Recovered names describe the code&apos;s interface; they say nothing about its behaviour.
@@ -491,8 +514,8 @@ function Reveal({ r }: { r: BinaryInterface }) {
             {r.programCrate ? ` · crate ${r.programCrate}` : ''}
           </span>
           <span className="mono dim">
-            {fmtInt(r.instructions.length + (r.more?.instructions ?? 0))} instructions ({fmtInt(confirmed)} confirmed) · {fmtInt(r.accounts.length)} account types ·{' '}
-            {fmtInt(r.events.length)} events · {fmtInt(r.errors.length)} error messages
+            {plural(r.instructions.length + (r.more?.instructions ?? 0), 'instruction')} ({fmtInt(confirmed)} confirmed) · {plural(r.accounts.length, 'account type')} ·{' '}
+            {plural(r.events.length, 'event')} · {plural(r.errors.length, 'error message')}
           </span>
         </div>
       </div>
@@ -520,20 +543,42 @@ function Interface({ r }: { r: BinaryInterface }) {
               </span>
             </li>
           ))}
-          {!r.instructions.length && <li className="bn-none mono">no "Instruction:" log strings in this executable</li>}
+          {!r.instructions.length && <li className="bn-none mono">{r.fragments?.length ? 'no log string confirmed as a whole name' : 'no "Instruction:" log strings in this executable'}</li>}
           {r.more?.instructions ? <li className="bn-none mono">+{fmtInt(r.more.instructions)} more</li> : null}
         </ul>
-        <h3 className="bn-col-h mono" title="Instruction discriminators of other programs (named by their published IDLs) found in this executable: the bytes a program needs to send those instructions">
-          calls out · other programs&apos; instructions <span className="num">{fmtInt((r.calls?.length ?? 0) + (r.more?.calls ?? 0))}</span>
+        {r.fragments && r.fragments.length > 0 && (
+          <>
+            <h3
+              className="bn-col-h mono"
+              title="Log strings that run into the next string literal, with no discriminator in the executable to confirm where the name ends. Raw text, not counted as instructions."
+            >
+              unconfirmed log fragments <span className="num">{fmtInt(r.fragments.length + (r.more?.fragments ?? 0))}</span>
+            </h3>
+            <ul className="bn-tags bn-frags">
+              {r.fragments.slice(0, 12).map((f) => (
+                <li key={f} title={`"Instruction: ${f}…" runs into the next literal; no discriminator of any of its prefixes is in the executable`}>
+                  <span className="mono">{f}</span>
+                  <span className="bn-ev e-frag mono">FRAGMENT</span>
+                </li>
+              ))}
+              {r.fragments.length + (r.more?.fragments ?? 0) > 12 && <li className="bn-none mono">+{fmtInt(r.fragments.length + (r.more?.fragments ?? 0) - 12)} more</li>}
+            </ul>
+          </>
+        )}
+        <h3
+          className="bn-col-h mono"
+          title="Instruction discriminators found in this executable that other programs' published IDLs name and none of this program's log strings names: this program's own handlers (when it logs no names) or instructions it sends to other programs. The bytes alone do not tell which."
+        >
+          instruction discriminators other IDLs name <span className="num">{fmtInt((r.calls?.length ?? 0) + (r.more?.calls ?? 0))}</span>
         </h3>
         <ul className="bn-tags">
           {(r.calls ?? []).slice(0, 30).map((c) => (
-            <li key={c.name} title={`sha256("global:${c.name}")[0..8] = ${c.disc}, found in ${c.site === 'code' ? 'the code (lddw)' : 'the data'} · named by ${c.idls} published IDL${c.idls > 1 ? 's' : ''}${c.programs.length ? `, e.g. ${c.programs.join(', ')}` : ''}`}>
+            <li key={`${c.name}:${c.disc}`} title={`${discTitle('global', c.name, c)}, found in ${c.site === 'code' ? 'the code (lddw)' : 'the data'} · named by ${plural(c.idls, 'published IDL')}${c.programs.length ? `, e.g. ${c.programs.join(', ')}` : ''}`}>
               <span className="mono">{c.name}</span>
               <span className="bn-ev e-disc mono">DISC</span>
             </li>
           ))}
-          {!(r.calls ?? []).length && <li className="bn-none mono">no known instruction discriminator of another program</li>}
+          {!(r.calls ?? []).length && <li className="bn-none mono">no instruction discriminator named by another IDL</li>}
           {(r.calls?.length ?? 0) > 30 && <li className="bn-none mono">+{fmtInt((r.calls?.length ?? 0) - 30 + (r.more?.calls ?? 0))} more</li>}
         </ul>
       </div>
@@ -543,7 +588,7 @@ function Interface({ r }: { r: BinaryInterface }) {
         </h3>
         <ul className="bn-tags">
           {r.accounts.map((a) => (
-            <li key={a.name} title={`sha256("account:${a.name}")[0..8] = ${a.disc}, found in ${a.site === 'code' ? 'the code (lddw)' : 'the data'} · defined by ${a.idls} published IDL${a.idls > 1 ? 's' : ''}`}>
+            <li key={`${a.name}:${a.disc}`} title={`${discTitle('account', a.name, a)}, found in ${a.site === 'code' ? 'the code (lddw)' : 'the data'} · defined by ${plural(a.idls, 'published IDL')}`}>
               <span className="mono">{a.name}</span>
               <span className="bn-ev e-disc mono">DISC</span>
             </li>
@@ -555,7 +600,7 @@ function Interface({ r }: { r: BinaryInterface }) {
         </h3>
         <ul className="bn-tags">
           {r.events.map((a) => (
-            <li key={a.name} title={`sha256("event:${a.name}")[0..8] = ${a.disc}`}>
+            <li key={`${a.name}:${a.disc}`} title={discTitle('event', a.name, a)}>
               <span className="mono">{a.name}</span>
               <span className="bn-ev e-disc mono">DISC</span>
             </li>
@@ -590,7 +635,7 @@ function Interface({ r }: { r: BinaryInterface }) {
           <dt>program crate</dt>
           <dd>{r.programCrate ?? DASH}</dd>
           <dt>crates</dt>
-          <dd>{r.crates.length ? r.crates.map((c) => `${c.name} ${c.version}`).join(' · ') : DASH}</dd>
+          <dd>{r.crates.length ? r.crates.map((c) => `${c.name} ${c.version}${c.toolchain ? ' (toolchain std)' : ''}`).join(' · ') : DASH}</dd>
           <dt>syscalls</dt>
           <dd>{r.syscalls.length ? r.syscalls.join(' · ') : DASH}</dd>
           <dt>security.txt</dt>
@@ -606,8 +651,10 @@ function Interface({ r }: { r: BinaryInterface }) {
         </dl>
         {r.check && (
           <p className="bn-own mono">
-            This program publishes an IDL. Read blind, {fmtInt(r.check.hit)} of the {fmtInt(r.check.recovered)} recovered names are in it (it lists{' '}
-            {fmtInt(r.check.idlInstructions)} instructions){r.check.newerThanIdl ? `; ${fmtInt(r.check.newerThanIdl)} more are confirmed in the code but missing from the IDL` : ''}.
+            This program publishes an IDL of {plural(r.check.idlInstructions, 'instruction')}. Read blind, {fmtInt(r.check.hit)} of the {fmtInt(r.check.recovered)} recovered
+            names are in it
+            {r.check.newerThanIdl ? `; ${fmtInt(r.check.newerThanIdl)} more are confirmed in the code and not in the IDL` : ''}
+            {r.check.notInCode ? `; ${fmtInt(r.check.notInCode)} of the IDL's instructions have no discriminator in the executable` : ''}.
           </p>
         )}
       </div>

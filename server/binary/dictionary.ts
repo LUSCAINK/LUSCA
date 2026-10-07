@@ -6,6 +6,11 @@
 // IDL dialects: Anchor ≤ 0.29 (camelCase names, no discriminators), Anchor ≥ 0.30 (snake_case names and
 // explicit discriminators — used as given, so custom discriminators match too), Codama (names; Anchor
 // discriminators computed).
+//
+// Entries are keyed by kind, name AND discriminator: "g:<name>" for the Anchor (sha256) discriminator of the
+// name, "g:<name>#<hex>" for a custom one an IDL declares. Low-entropy discriminators (four or more zero bytes,
+// or fewer than five distinct byte values: 00..00, 01 00..00, a small integer) are left out: such 8-byte values
+// occur in almost every executable and prove nothing.
 
 import { anchorDisc, indexProbes, probeOf, toSnakeCase, type DiscProbe } from './extract.ts'
 import { idlFormat } from '../chain/solana/idl.ts'
@@ -15,6 +20,8 @@ export interface DictEntry {
   kind: 'ix' | 'account' | 'event'
   name: string
   disc: Buffer
+  /** True when disc is sha256("<namespace>:<name>")[0..8]; false for a custom discriminator an IDL declares. */
+  sha: boolean
   /** Published IDLs naming it. */
   idls: number
   /** Executables whose log strings proved it. */
@@ -30,10 +37,6 @@ export interface DictError {
 }
 
 const MAX_SRC = 4
-/** Words of instruction names common enough to know before any IDL is loaded. */
-const BASE_WORDS = new Set(
-  'initialize init create close update set add remove deposit withdraw swap claim stake unstake transfer mint burn buy sell config admin authority fee fees pool position reward rewards account accounts types type order cancel open settle liquidate borrow repay vault user global state market token tokens price oracle receive send quote peer version pause unpause migrate collect harvest lock unlock vote register delegate execute proposal'.split(' '),
-)
 const MAX_ENTRIES = 200_000
 const MAX_ERRORS = 60_000
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
@@ -48,6 +51,13 @@ function discOf(v: unknown): Buffer | null {
   return Buffer.from(a as number[])
 }
 
+/** An 8-byte value too regular to identify anything: four or more zero bytes, or fewer than five distinct bytes. */
+export function lowEntropy(d: Uint8Array): boolean {
+  let zeros = 0
+  for (const x of d) if (x === 0) zeros++
+  return zeros >= 4 || new Set(d).size < 5
+}
+
 /** Messages worth a verbatim search: long enough not to match by accident inside other text. */
 export function usableMessage(m: string): boolean {
   return m.length <= 200 && (m.length >= 20 || (m.length >= 12 && m.includes(' '))) && /^[\x20-\x7e]+$/.test(m)
@@ -57,8 +67,10 @@ export class Dictionary {
   private entries = new Map<string, DictEntry>()
   private errors = new Map<string, DictError & { names: Map<string, number> }>()
   private idlSet = new Set<string>()
-  private words = new Set<string>()
-  private errorNames = new Set<string>()
+  /** Custom error names → how many IDLs define them and a few of those programs (leave-one-out). */
+  private errorNames = new Map<string, { n: number; src: string[] }>()
+  /** Explicit discriminators left out as low-entropy (counted). */
+  lowEntropySkipped = 0
   private dirty = true
   private idx: Map<number, DiscProbe[]> = new Map()
   private errIdx: Map<number, string[]> = new Map()
@@ -95,14 +107,11 @@ export class Dictionary {
     return this.errors.get(msg)
   }
 
-  /** A lower-case word of some known instruction / account name ("types", "account"). */
-  knownWord(w: string): boolean {
-    return this.words.has(w) || BASE_WORDS.has(w)
-  }
-
-  /** A custom error name some published IDL defines ("InvalidAmount"). */
-  knownErrorName(n: string): boolean {
-    return this.errorNames.has(n)
+  /** A custom error name some published IDL defines ("InvalidAmount"), the excluded program's own IDL left out. */
+  knownErrorName(n: string, exclude?: string): boolean {
+    const e = this.errorNames.get(n)
+    if (!e) return false
+    return !exclude || e.n - (e.src.includes(exclude) ? 1 : 0) > 0
   }
 
   /** Probes by low half (rebuilt after changes). */
@@ -133,7 +142,14 @@ export class Dictionary {
   }
 
   private put(kind: DictEntry['kind'], name: string, disc: Buffer, from: string, viaLog: boolean) {
-    const key = kind === 'ix' ? `g:${name}` : kind === 'account' ? `a:${name}` : `e:${name}`
+    const ns = kind === 'ix' ? 'global' : kind
+    const sha = anchorDisc(ns, name).equals(disc)
+    if (lowEntropy(disc)) {
+      this.lowEntropySkipped++
+      return
+    }
+    const p = kind === 'ix' ? 'g' : kind === 'account' ? 'a' : 'e'
+    const key = sha ? `${p}:${name}` : `${p}:${name}#${disc.toString('hex')}`
     const cur = this.entries.get(key)
     if (cur) {
       if (cur.src.includes(from)) return
@@ -143,8 +159,7 @@ export class Dictionary {
       return
     }
     if (this.entries.size >= MAX_ENTRIES) return
-    if (this.words.size < 50_000) for (const w of toSnakeCase(name).split('_')) if (w.length >= 2) this.words.add(w)
-    this.entries.set(key, { key, kind, name, disc, idls: viaLog ? 0 : 1, logs: viaLog ? 1 : 0, src: [from] })
+    this.entries.set(key, { key, kind, name, disc, sha, idls: viaLog ? 0 : 1, logs: viaLog ? 1 : 0, src: [from] })
     this.dirty = true
   }
 
@@ -187,7 +202,16 @@ export class Dictionary {
       if (code !== null && code < 6000) continue // Anchor's built-in errors are the framework's, not the program's
       const msg = str(eo.msg) ?? str(eo.message)
       const name = str(eo.name)
-      if (name && NAME_RE.test(name) && /[A-Z].*[A-Z]/.test(name) && this.errorNames.size < 50_000) this.errorNames.add(name[0].toUpperCase() + name.slice(1))
+      if (name && NAME_RE.test(name) && /[A-Z].*[A-Z]/.test(name)) {
+        const pn = name[0].toUpperCase() + name.slice(1)
+        const en = this.errorNames.get(pn)
+        if (en) {
+          if (!en.src.includes(address)) {
+            en.n++
+            if (en.src.length < MAX_SRC) en.src.push(address)
+          }
+        } else if (this.errorNames.size < 50_000) this.errorNames.set(pn, { n: 1, src: [address] })
+      }
       if (!msg || !usableMessage(msg)) continue
       let cur = this.errors.get(msg)
       if (!cur) {

@@ -5,6 +5,8 @@ import { Link } from 'react-router-dom'
 import type { BinaryInterface } from '@shared/binary'
 import './recovered.css'
 
+const n = (k: number, one: string, many = `${one}s`) => `${k} ${k === 1 ? one : many}`
+
 export default function Recovered({ address }: { address: string }) {
   const [r, setR] = useState<BinaryInterface | null>(null)
   const [state, setState] = useState<'loading' | 'ok' | 'none' | 'error'>('loading')
@@ -49,7 +51,7 @@ export default function Recovered({ address }: { address: string }) {
         <Link to={`/binary/${r.address}`}>evidence →</Link>
       </div>
       <p className="rb-s mono">
-        {r.instructions.length} instructions ({confirmed} confirmed by discriminator) · {r.accounts.length} account types · {r.errors.length} error messages ·{' '}
+        {n(r.instructions.length, 'instruction')} ({confirmed} confirmed by discriminator) · {n(r.accounts.length, 'account type')} · {n(r.errors.length, 'error message')} ·{' '}
         {r.framework.name === 'unknown' ? 'framework not identified' : r.framework.name}
         {r.programCrate ? ` · crate ${r.programCrate}` : ''}
       </p>

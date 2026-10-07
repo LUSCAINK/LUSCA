@@ -11,8 +11,9 @@
 //              (server/binary/dictionary.ts) — off the request path, yielding to the event loop every 512 KB
 //   cache      the RESULT per program code hash (never the executable): <data>/binary/results.jsonl
 //              (append-only, compacted); a program is read again only when its code hash changes
-//   check      programs that DO publish an IDL are recovered blind (their own IDL left out of the dictionary)
-//              and scored against it: the method's measured precision / recall
+//   check      programs that DO publish an IDL are recovered blind (their own IDL left out of the dictionary,
+//              its error names too) and scored against it: recall over the IDL instructions whose discriminator
+//              is in the executable; IDL instructions not in the code are counted apart, never as misses
 //
 // Viewers never cause RPC or recovery: the REST routes read the stored results (summary memoised 10 s).
 
@@ -127,12 +128,26 @@ const pause = () => new Promise<void>((r) => setImmediate(r))
 const errMsg = (e: unknown) => redact(e instanceof Error ? e.message : String(e)).slice(0, 140)
 const ratio = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 1000 : null)
 
-/** Score a blind recovery against the program's own IDL summary. */
-export function checkAgainstIdl(r: Pick<BinaryInterface, 'instructions' | 'accounts'>, idl: { instructions: { name: string }[]; accounts: string[] }): BinCheck {
+/**
+ * Score a blind recovery against the program's own IDL summary. `inCode`: the IDL instruction names whose Anchor
+ * discriminator is in the executable (recoverInterface's `inCode`); the recall base when given.
+ */
+export function checkAgainstIdl(r: Pick<BinaryInterface, 'instructions' | 'accounts'>, idl: { instructions: { name: string }[]; accounts: string[] }, inCode?: Iterable<string>): BinCheck {
   const want = new Set(idl.instructions.map((i) => toSnakeCase(i.name)))
   const wantAcc = new Set(idl.accounts.map((a) => a.toLowerCase()))
   const hit = r.instructions.filter((i) => want.has(i.name)).length
+  const present = inCode ? new Set([...inCode].filter((n) => want.has(n))) : null
+  const missing = present ? [...want].filter((n) => !present.has(n)) : []
+  const inCodeFields = present
+    ? {
+        idlInCode: present.size,
+        hitInCode: r.instructions.filter((i) => present.has(i.name)).length,
+        notInCode: missing.length,
+        notInCodeNames: missing.slice(0, 60),
+      }
+    : {}
   return {
+    ...inCodeFields,
     idlInstructions: want.size,
     recovered: r.instructions.length,
     hit,
@@ -218,7 +233,7 @@ export function createBinary(d: BinaryDeps): BinaryService {
 
   const shared = d.rpc.usage().solana
   const budget: RadarBudget = createRadarBudget({ solana: L.solCalls, check: L.checkPerDay }, path.join(dir, 'budget.json'), now, L.hourShare)
-  // the check count is a daily counter, not an hourly-shared budget: give it the whole day per hour
+  // both counters (solana calls, blind-check reads) are hour-shared: at most hourShare of each per clock hour
   const sharedRoom = (n = 1) => {
     const u = d.rpc.usage().solana ?? shared
     return !u || u.limit - u.used - n >= Math.ceil(u.limit * L.floor)
@@ -334,7 +349,8 @@ export function createBinary(d: BinaryDeps): BinaryService {
     if (results.has(codeHash) && results.get(codeHash)!.dictionary.idls >= dict.idls * 0.9) return
     if (resultsFull()) return
     const hasIdl = !!read.idl
-    const r = await recoverInterface(trimmed, dict, { exclude: hasIdl ? read.address : undefined, pause })
+    const checkNames = read.idl ? [...new Set(read.idl.instructions.map((i) => toSnakeCase(i.name)))] : undefined
+    const r = await recoverInterface(trimmed, dict, { exclude: hasIdl ? read.address : undefined, checkNames, pause })
     if (stopped) return
     const scan = scanElf(trimmed)
     const sec = read.securityTxt ?? parseSecurityTxt(trimmed)
@@ -351,6 +367,7 @@ export function createBinary(d: BinaryDeps): BinaryService {
       crates: r.crates,
       programCrate: r.programCrate,
       instructions: r.instructions,
+      fragments: r.fragments,
       calls: r.calls,
       accounts: r.accounts,
       events: r.events,
@@ -363,7 +380,7 @@ export function createBinary(d: BinaryDeps): BinaryService {
     }
     if (Object.keys(r.more).length) out.more = r.more
     if (!isElf(trimmed)) out.notes.push('the program bytes do not start with an ELF header')
-    if (hasIdl && read.idl) out.check = checkAgainstIdl(out, read.idl)
+    if (hasIdl && read.idl) out.check = checkAgainstIdl(out, read.idl, r.inCode)
     if (resultsFull(Buffer.byteLength(JSON.stringify(out)) + 1)) return
     // one result per program: the code it ran before an upgrade is dropped (unless another program runs it too)
     for (const [h, x] of results) {
@@ -433,9 +450,11 @@ export function createBinary(d: BinaryDeps): BinaryService {
         if (it.kind !== 'program') continue
         remember({ address: it.address, name: it.name, kept: true, idl: it.idl, codeHash: it.codeHash, seenAt: it.readAt })
         if (it.idl && !dict.has(it.address) && d.store.record) {
+          // one record read (open + read + gunzip) per turn of the event loop
           const rec = d.store.record('solana', it.address)
           if (rec?.idl) dict.addIdl(it.address, rec.idl)
-          if (++n % 10 === 0) await pause()
+          n++
+          await pause()
         }
       }
       if (!page.next || stopped) break
@@ -618,7 +637,7 @@ export function createBinary(d: BinaryDeps): BinaryService {
     let withoutIdl = 0
     for (const p of programs.values()) if (!p.idl) withoutIdl++
     const fw = new Map<BinFramework, number>()
-    const crates = new Map<string, { name: string; version: string; count: number }>()
+    const crates = new Map<string, { name: string; version: string; count: number; toolchain?: true }>()
     let names = 0
     let instructions = 0
     let confirmed = 0
@@ -629,7 +648,7 @@ export function createBinary(d: BinaryDeps): BinaryService {
       fw.set(it.framework, (fw.get(it.framework) ?? 0) + 1)
       const r = results.get(it.codeHash)!
       for (const c of r.crates) {
-        const k = `${c.name}@${c.version}`
+        const k = `${c.name}@${c.version}${c.toolchain ? ':std' : ''}`
         const cur = crates.get(k)
         if (cur) cur.count++
         else crates.set(k, { ...c, count: 1 })
@@ -642,21 +661,31 @@ export function createBinary(d: BinaryDeps): BinaryService {
       names += it.instructions + r.accounts.length + r.events.length + it.errors
     }
     let bytesRead = 0
-    const chk = { programs: 0, idlInstructions: 0, recovered: 0, hit: 0, newer: 0, idlAccounts: 0, accountsHit: 0 }
+    const chk = { programs: 0, skipped: 0, idlInstructions: 0, idlInCode: 0, recovered: 0, correct: 0, hitInCode: 0, newer: 0, notInCode: 0, idlAccounts: 0, accountsHit: 0 }
     for (const r of results.values()) {
       bytesRead += r.programBytes
       if (!r.check) continue
+      // programs whose executable holds none of their IDL's instruction discriminators (a non-Anchor IDL, or an
+      // IDL of other code) cannot score the method: counted apart
+      if (!r.check.idlInCode) {
+        chk.skipped++
+        continue
+      }
       chk.programs++
       chk.idlInstructions += r.check.idlInstructions
+      chk.idlInCode += r.check.idlInCode
       chk.recovered += r.check.recovered
-      chk.hit += r.check.hit
+      chk.correct += r.check.hit + r.check.newerThanIdl
+      chk.hitInCode += r.check.hitInCode ?? 0
       chk.newer += r.check.newerThanIdl
+      chk.notInCode += r.check.notInCode ?? 0
       chk.idlAccounts += r.check.idlAccounts
       chk.accountsHit += r.check.accountsHit
     }
     const usage = budget.usage().solana
     const dc = dict.counts()
     const v: BinarySummary = {
+      programs: programs.size,
       withoutIdl,
       processed: all.length,
       withInstructions: all.filter((x) => x.instructions > 0).length,
@@ -668,24 +697,29 @@ export function createBinary(d: BinaryDeps): BinaryService {
       errors,
       bytesRead,
       frameworks: FRAMEWORKS.map((name) => ({ name, count: fw.get(name) ?? 0 })).filter((x) => x.count > 0),
-      crates: [...crates.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name) || a.version.localeCompare(b.version)).slice(0, 40),
+      // crates the programs chose first; dependencies of Rust std built into the toolchain after them
+      crates: [...crates.values()].sort((a, b) => (a.toolchain ? 1 : 0) - (b.toolchain ? 1 : 0) || b.count - a.count || a.name.localeCompare(b.name) || a.version.localeCompare(b.version)).slice(0, 40),
       dictionary: { ...dc, ready: dictReady },
-      check: chk.programs
-        ? {
-            programs: chk.programs,
-            idlInstructions: chk.idlInstructions,
-            recovered: chk.recovered,
-            precision: ratio(chk.hit, chk.recovered),
-            recall: ratio(chk.hit, chk.idlInstructions),
-            newerThanIdl: chk.newer,
-            accountRecall: ratio(chk.accountsHit, chk.idlAccounts),
-          }
-        : null,
+      check:
+        chk.programs || chk.skipped
+          ? {
+              programs: chk.programs,
+              idlInstructions: chk.idlInstructions,
+              idlInCode: chk.idlInCode,
+              recovered: chk.recovered,
+              precision: ratio(chk.correct, chk.recovered),
+              recall: ratio(chk.hitInCode, chk.idlInCode),
+              newerThanIdl: chk.newer,
+              notInCode: chk.notInCode,
+              accountRecall: ratio(chk.accountsHit, chk.idlAccounts),
+              skipped: chk.skipped,
+            }
+          : null,
       idlBehind: [...results.values()]
         .filter((r) => r.check && r.check.newerThanIdl > 0)
-        .sort((a, b) => b.check!.newerThanIdl - a.check!.newerThanIdl || a.address.localeCompare(b.address))
+        .sort((a, b) => b.check!.newerThanIdl - a.check!.newerThanIdl || (b.check!.notInCode ?? 0) - (a.check!.notInCode ?? 0) || a.address.localeCompare(b.address))
         .slice(0, 6)
-        .map((r) => ({ address: r.address, name: programs.get(r.address)?.name ?? r.name, newer: r.check!.newerThanIdl, idlInstructions: r.check!.idlInstructions })),
+        .map((r) => ({ address: r.address, name: programs.get(r.address)?.name ?? r.name, newer: r.check!.newerThanIdl, missing: r.check!.notInCode ?? 0, idlInstructions: r.check!.idlInstructions })),
       reader: { used: usage?.used ?? 0, limit: usage?.limit ?? L.solCalls, queued: pending.length, state: stopped || !started ? 'off' : state, lastAt },
       // the top program by confirmed instructions; a named one among the top five when there is one
       featured: (all.slice(0, 5).find((x) => x.name) ?? all[0])?.address ?? null,

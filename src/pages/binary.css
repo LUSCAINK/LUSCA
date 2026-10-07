@@ -546,9 +546,30 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* a crate name wraps; its version (the fact shown) is never cut */
+.bn-crate {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
 .bn-crate b {
   color: var(--fg);
   font-weight: 400;
+  white-space: nowrap;
+}
+.bn-tc {
+  margin-left: 6px;
+  font-style: normal;
+  font-size: var(--t-3xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+.bn-crates li {
+  grid-template-columns: minmax(0, 1.5fr) minmax(32px, 1fr) 44px;
 }
 .bn-bar {
   position: relative;
@@ -875,9 +896,11 @@
   .bn-count {
     margin-left: 0;
   }
-  .bn-bars button,
-  .bn-crates li {
+  .bn-bars button {
     grid-template-columns: minmax(0, 110px) minmax(0, 1fr) 44px;
+  }
+  .bn-crates li {
+    grid-template-columns: minmax(0, 1.6fr) minmax(24px, 1fr) 40px;
   }
   .bn-row-sz {
     display: none;
@@ -915,9 +938,9 @@
   border-top: 1px solid var(--line-2);
 }
 .bn-behind button {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.4fr);
   align-items: baseline;
-  justify-content: space-between;
   gap: 12px;
   width: 100%;
   padding: 7px 0;
@@ -936,13 +959,21 @@
   font-family: var(--f-sans);
   font-size: var(--t-md);
   color: var(--fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
 }
 .bn-behind b {
   color: var(--hot);
   font-weight: 500;
+}
+.bn-behind b.minus {
+  color: var(--fg);
+}
+.bn-behind-d {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.35;
 }
 .bn-tagset {
   display: inline-flex;
@@ -952,6 +983,14 @@
 .bn-ev.e-new {
   border-color: var(--hot);
   color: var(--hot);
+}
+.bn-ev.e-frag {
+  border-style: dashed;
+  border-color: var(--fg-3);
+  color: var(--fg-2);
+}
+.bn-frags li > .mono:first-child {
+  color: var(--fg-2);
 }
 
 .bn-legend {

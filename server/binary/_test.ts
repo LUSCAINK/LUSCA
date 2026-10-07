@@ -10,24 +10,23 @@ import path from 'node:path'
 import type { ChainIndexItem, ChainRead } from '../../shared/chain.ts'
 import { base58Decode } from '../../shared/base58.ts'
 import { programAddresses, UPGRADEABLE_LOADER } from '../chain/solana/layout.ts'
-import { Dictionary } from './dictionary.ts'
+import { Dictionary, lowEntropy } from './dictionary.ts'
 import {
   anchorDisc,
   countStrings,
+  cutsOf,
   detectFramework,
   elfRegions,
   findDiscs,
   indexProbes,
   logTokens,
   parseCrates,
-  prefixesOf,
   probeOf,
   programCrateOf,
   recoverInterface,
   restoreSectionTail,
   stripErrorSuffix,
   toSnakeCase,
-  trimGlue,
 } from './extract.ts'
 import { checkAgainstIdl, createBinary, elfFromAccounts } from './index.ts'
 
@@ -104,15 +103,22 @@ await test('log tokens: a token followed by another log string is clean, a glued
   ])
 })
 
-await test('glue: error-name suffixes, known words and trailing words', () => {
+await test('glue: error-name suffixes; every prefix of a glued token, longest first, no word list', () => {
   assert.equal(stripErrorSuffix('SetMaxDepositAccountNotAssociatedTokenAccount', () => false), 'SetMaxDeposit')
   assert.equal(stripErrorSuffix('UpdateConfigInvalidMode', (n) => n === 'InvalidMode'), 'UpdateConfig')
   assert.equal(stripErrorSuffix('UpdateConfig', () => true), 'Update') // only a dictionary name is cut
-  const known = (w: string) => ['types', 'type', 'account'].includes(w)
-  assert.deepEqual(trimGlue('LzReceiveTypesaccountauthority', known), ['LzReceiveTypes', 'LzReceiveType'])
-  assert.deepEqual(trimGlue('IdlResizeAccountdata_len', known), ['IdlResizeAccount'])
-  assert.deepEqual(trimGlue('Plain', known), ['Plain'])
-  assert.deepEqual(prefixesOf('ClaimFeePdaV2ProgramError'), ['ClaimFeePdaV2ProgramError', 'ClaimFeePdaV2Program', 'ClaimFeePdaV2'])
+  assert.deepEqual(cutsOf('ClaimFinisherx'), ['ClaimFinisher', 'ClaimFinishe', 'ClaimFinish', 'ClaimFinis', 'ClaimFini', 'ClaimFin', 'ClaimFi', 'ClaimF', 'Claim', 'Clai', 'Cla', 'Cl'])
+  assert.deepEqual(cutsOf('Ab_c'), ['Ab'])
+  assert.ok(cutsOf('LzReceiveTypesaccountauthority').includes('LzReceiveTypes'))
+})
+
+await test('log tokens: up to 128 characters; a longer run is truncated and never clean', () => {
+  const long = 'InitDepositIntoStealthPoolFromNetworkBalanceWithEncryptedAddressV18CompDef' // 74 characters
+  const b = Buffer.from(`Instruction: ${long}Instruction: ${'A'.repeat(140)}\0`, 'latin1')
+  const t = logTokens(b)
+  assert.deepEqual(t[0], { text: long, clean: true })
+  assert.equal(t[1].text.length, 128)
+  assert.equal(t[1].clean, false)
 })
 
 await test('strings are counted, not kept', () => {
@@ -258,7 +264,7 @@ function sampleElf() {
   return makeElf(text, ro)
 }
 
-await test('recovery: log + discriminator, glued names cut back, log-only, calls, accounts, events, errors, crates', async () => {
+await test('recovery: log + discriminator, glued names cut back, unconfirmed fragment apart, calls, accounts, events, errors, crates', async () => {
   const d = dictionary()
   const r = await recoverInterface(sampleElf(), d)
   assert.deepEqual(
@@ -266,9 +272,10 @@ await test('recovery: log + discriminator, glued names cut back, log-only, calls
     [
       ['claim_fee_v2', 'log+disc'],
       ['deposit', 'log+disc'],
-      ['close', 'log'],
     ],
   )
+  // "Close" runs into whatever follows it and no discriminator confirms where it ends: a fragment, not counted
+  assert.deepEqual(r.fragments, ['Close'])
   assert.equal(r.instructions[0].logName, 'ClaimFeeV2')
   assert.equal(r.instructions[0].site, 'code')
   assert.deepEqual(
@@ -312,6 +319,128 @@ await test('blind check: names scored against the IDL; confirmed names it lacks 
     { instructions: [{ name: 'deposit' }, { name: 'claimReward' }, { name: 'withdraw' }], accounts: ['Pool', 'Vault'] },
   )
   assert.deepEqual(c, { idlInstructions: 3, recovered: 4, hit: 2, newerThanIdl: 1, newerNames: ['new_thing'], idlAccounts: 2, accountsHit: 1 })
+  // with the IDL names whose discriminator is in the executable: recall base and the names not in the code
+  const c2 = checkAgainstIdl(
+    { instructions: [{ name: 'deposit', evidence: 'log+disc' }], accounts: [] },
+    { instructions: [{ name: 'deposit' }, { name: 'claimReward' }, { name: 'withdraw' }], accounts: [] },
+    ['deposit', 'claim_reward', 'unrelated'],
+  )
+  assert.equal(c2.idlInCode, 2)
+  assert.equal(c2.hitInCode, 1)
+  assert.equal(c2.notInCode, 1)
+  assert.deepEqual(c2.notInCodeNames, ['withdraw'])
+})
+
+// ─── regressions from the review: low-entropy discriminators, glued and long log strings ────────────────
+
+await test('low-entropy discriminators (00..00, 01 00..00) are never in the dictionary; custom ones are keyed apart', async () => {
+  assert.equal(lowEntropy(Buffer.alloc(8)), true)
+  assert.equal(lowEntropy(Buffer.from([1, 0, 0, 0, 0, 0, 0, 0])), true)
+  assert.equal(lowEntropy(Buffer.from([0x64, 0, 0, 0, 0, 0, 0, 0])), true)
+  assert.equal(lowEntropy(g('delegate')), false)
+  const custom = [0x9c, 0x11, 0x5e, 0x27, 0xd3, 0x40, 0x8a, 0xf1]
+  const d = new Dictionary()
+  d.addIdl(PROG_A, {
+    address: PROG_A,
+    metadata: { name: 'x', version: '0.1.0', spec: '0.1.0' },
+    instructions: [
+      { name: 'delegate', discriminator: [0, 0, 0, 0, 0, 0, 0, 0], accounts: [], args: [] },
+      { name: 'commit_state', discriminator: [1, 0, 0, 0, 0, 0, 0, 0], accounts: [], args: [] },
+      { name: 'undelegate', discriminator: custom, accounts: [], args: [] },
+    ],
+    accounts: [{ name: 'EscrowVault', discriminator: [0, 0, 0, 0, 0, 0, 0, 0] }],
+  })
+  d.addIdl(PROG_B, IDL_B_LEGACY)
+  assert.equal(d.lowEntropySkipped, 3)
+  assert.equal(d.entry('g:delegate'), undefined)
+  assert.equal(d.entry('a:EscrowVault'), undefined)
+  const cu = d.entry(`g:undelegate#${Buffer.from(custom).toString('hex')}`)!
+  assert.equal(cu.sha, false)
+  assert.equal(d.entry('g:deposit')!.sha, true)
+  // an executable full of zero runs and small integers matches none of them
+  const zeros = Buffer.concat([Buffer.alloc(64), Buffer.from([1, 0, 0, 0, 0, 0, 0, 0]), Buffer.alloc(64)])
+  const r = await recoverInterface(makeElf(Buffer.concat([zeros, lddw(Buffer.from(custom))]), zeros), d)
+  assert.deepEqual(r.accounts, [])
+  assert.deepEqual(
+    r.calls.map((c) => [c.name, c.custom]),
+    [['undelegate', true]],
+  )
+})
+
+await test('glued log string followed by binary data: the whole name is tried first (ClaimFinisher)', async () => {
+  const ro = Buffer.concat([Buffer.from('Instruction: ClaimInstruction: ClaimFinisher', 'latin1'), Buffer.from([0x01, 0x9a, 0x00])])
+  const r = await recoverInterface(makeElf(Buffer.concat([lddw(g('claim')), lddw(g('claim_finisher'))]), ro), new Dictionary())
+  assert.deepEqual(
+    r.instructions.map((i) => [i.name, i.evidence]),
+    [
+      ['claim', 'log+disc'],
+      ['claim_finisher', 'log+disc'],
+    ],
+  )
+  assert.deepEqual(r.fragments, [])
+})
+
+await test('a clean log string with a literal glued in between is cut back to its confirmed prefix; "_" never in a counted name', async () => {
+  const ro = Buffer.from('Instruction: ClaimCrashInsurancecoin_flip_treasuryInstruction: Begin_migration_abortpoolInstruction: Spin\0', 'latin1')
+  const r = await recoverInterface(makeElf(Buffer.concat([lddw(g('claim_crash_insurance')), lddw(g('spin'))]), ro), new Dictionary())
+  assert.deepEqual(
+    r.instructions.map((i) => [i.name, i.evidence]),
+    [
+      ['claim_crash_insurance', 'log+disc'],
+      ['spin', 'log+disc'],
+    ],
+  )
+  assert.deepEqual(r.fragments, ['Begin_migration_abortpool'])
+})
+
+await test('a log string glued to error names is cut back to its confirmed prefix, never listed as a call (SetPause)', async () => {
+  const d = new Dictionary()
+  d.addIdl(PROG_A, { ...IDL_A, instructions: [{ name: 'set_pause', discriminator: [...g('set_pause')], accounts: [], args: [] }] })
+  const glued = 'SetPauseQuoteExpiredDispatchUnavailableUnauthorizedPausedRulesMismatch' // 70 characters
+  const r = await recoverInterface(makeElf(lddw(g('set_pause')), Buffer.from(`Instruction: ${glued} \0`, 'latin1')), d)
+  assert.deepEqual(
+    r.instructions.map((i) => [i.name, i.evidence, i.logName]),
+    [['set_pause', 'log+disc', 'SetPause']],
+  )
+  assert.deepEqual(r.calls, [])
+  assert.deepEqual(r.fragments, [])
+})
+
+await test('74-character instruction names are read whole (Umbra V18CompDef / V18Callback)', async () => {
+  const a = 'InitDepositIntoStealthPoolFromNetworkBalanceWithEncryptedAddressV18CompDef'
+  const c = 'InitDepositIntoStealthPoolFromNetworkBalanceWithEncryptedAddressV18Callback'
+  const ro = Buffer.from(`Instruction: ${a}Instruction: ${c}Instruction: Init\0`, 'latin1')
+  const r = await recoverInterface(makeElf(Buffer.concat([lddw(g(toSnakeCase(a))), lddw(g(toSnakeCase(c)))]), ro), new Dictionary())
+  assert.deepEqual(r.instructions.map((i) => i.logName).sort(), [c, a].sort())
+  assert.ok(r.instructions.every((i) => i.evidence === 'log+disc'))
+  assert.deepEqual(r.fragments, ['Init'])
+})
+
+await test('blind check: the target IDL error names do not help it', () => {
+  const d = dictionary()
+  assert.equal(d.knownErrorName('MathOverflow'), true)
+  assert.equal(d.knownErrorName('MathOverflow', PROG_A), true, 'PROG_B defines it too')
+  const d2 = new Dictionary()
+  d2.addIdl(PROG_A, IDL_A)
+  assert.equal(d2.knownErrorName('MathOverflow', PROG_A), false)
+})
+
+await test('program crate: a build-directory id glued to a literal is never taken; toolchain std crates are marked', () => {
+  const uuid = 'value5ab3f1a7-1ee8-463d-9c10-fe46af633fab'
+  assert.equal(programCrateOf(`on an \`Err\` ${uuid}/src/lib.rs\0 ${uuid}/src/state.rs`, []), null)
+  // a bare directory named by one source file only: not enough
+  assert.equal(programCrateOf('\0glued-prog/src/lib.rs\0', []), null)
+  const text =
+    '/home/runner/work/platform-tools/platform-tools/out/rust/library/alloc/src/vec/mod.rs' +
+    '/home/runner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/hashbrown-0.15.4/src/raw/mod.rs' +
+    '/home/zoe/.cargo/registry/src/index.crates.io-6f17d22bba15001f/hashbrown-0.14.5/src/map.rs' +
+    '/home/runner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/borsh-1.5.1/src/de.rs'
+  assert.deepEqual(parseCrates(text), [
+    { name: 'borsh', version: '1.5.1' },
+    { name: 'hashbrown', version: '0.14.5' },
+    { name: 'hashbrown', version: '0.15.4', toolchain: true },
+  ])
+  assert.ok(!JSON.stringify(parseCrates(text)).includes('runner'))
 })
 
 // ─── the service ─────────────────────────────────────────────────────────────
@@ -472,7 +601,7 @@ await test('service: executables handed over are recovered once per code hash, a
 await test('service: results stop at their size cap (no recovery, no read, nothing kept in memory)', async () => {
   const f = fakeRpc({ elfs: { [NOIDL_2]: sampleElf() } })
   const dir = tmp()
-  const b = createBinary({ rpc: f.rpc as never, store: fakeStore([item(NOIDL_2, false)], {}), feed: () => [], dataDir: dir, log: () => {}, limits: { maxResultsMb: 0.001, hourShare: 1 } })
+  const b = createBinary({ rpc: f.rpc as never, store: fakeStore([item(NOIDL_2, false)], {}), feed: () => [], dataDir: dir, log: () => {}, limits: { maxResultsMb: 0.00075, hourShare: 1 } })
   await b.sweep()
   b.offer(readOf(NOIDL_1, 'h1'), sampleElf(), 'agent')
   await b.idle()
@@ -493,10 +622,23 @@ await test('service: programs with an IDL are checked blind against it', async (
   b.offer(readOf(PROG_B, 'h3', idl), sampleElf(), 'agent')
   await b.idle()
   const r = b.get(PROG_B)!
-  assert.deepEqual(r.check, { idlInstructions: 3, recovered: 3, hit: 2, newerThanIdl: 0, newerNames: [], idlAccounts: 1, accountsHit: 1 })
+  assert.deepEqual(r.check, {
+    idlInCode: 2,
+    hitInCode: 2,
+    notInCode: 1,
+    notInCodeNames: ['withdraw'],
+    idlInstructions: 3,
+    recovered: 2,
+    hit: 2,
+    newerThanIdl: 0,
+    newerNames: [],
+    idlAccounts: 1,
+    accountsHit: 1,
+  })
   const s = b.summary()
   assert.equal(s.check!.programs, 1)
-  assert.equal(s.check!.recall, 0.667)
+  assert.equal(s.check!.recall, 1, 'recall over the IDL instructions whose discriminator is in the code')
+  assert.equal(s.check!.notInCode, 1)
   assert.equal(s.dictionary.idls, 1)
   assert.equal(s.processed, 0, 'programs with an IDL are not in the census of programs without one')
   await b.stop()
@@ -513,7 +655,7 @@ await test('routes: summary, items with filters, one program, 404 and 400', asyn
   const sum = JSON.parse(q('/api/binary/summary').json)
   assert.equal(sum.processed, 1)
   assert.equal(sum.featured, NOIDL_1)
-  assert.equal(sum.instructions, 3)
+  assert.equal(sum.instructions, 2)
   assert.equal(sum.confirmed, 2)
   assert.deepEqual(sum.frameworks, [{ name: 'anchor', count: 1 }])
   const page = JSON.parse(q('/api/binary/items', 'framework=anchor').json)

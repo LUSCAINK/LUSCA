@@ -1,7 +1,8 @@
 // READ THE BINARY — pure extraction over one Solana program executable (the trimmed ELF).
 //
 //   strings     printable runs; "Instruction: <Name>" log strings (Rust string literals are not
-//               NUL-terminated, so neighbours run together: a name's end is confirmed by its discriminator)
+//               NUL-terminated, so neighbours run together: a name's end is confirmed by its discriminator;
+//               a glued run whose end no discriminator confirms is kept apart as an unconfirmed fragment)
 //   discs       one pass over the bytes: `lddw` immediates in the code sections (an 8-byte compare against
 //               the instruction data compiles to lddw imm64: low half in slot 1, high half in slot 2) and every
 //               byte offset of the data sections (a discriminator kept as a [u8; 8] constant)
@@ -22,7 +23,10 @@ export const MAX_CALLS = 120
 export const MAX_ACCOUNTS = 200
 export const MAX_EVENTS = 100
 export const MAX_ERRORS = 150
-const MAX_TOKEN = 64
+export const MAX_TOKEN = 128
+export const MAX_FRAGMENTS = 40
+/** At most this many glued tokens are cut back for confirmation (each cut costs one sha256). */
+const MAX_CUT_TOKENS = 600
 
 /** heck-style snake_case (what Anchor's `#[program]` handler names are): "ClaimFeeV2" → "claim_fee_v2". */
 export function toSnakeCase(name: string): string {
@@ -163,12 +167,13 @@ export function logTokens(b: Buffer): LogToken[] {
     const s = at + MARK.length
     let e = s
     let clean = false
-    while (e < b.length && e - s < MAX_TOKEN && isIdent(b[e])) {
+    while (e < b.length && isIdent(b[e])) {
       // the next literal can be another "Instruction: " log
       if (b[e] === 0x49 && b.compare(MARK, 0, MARK.length, e, Math.min(b.length, e + MARK.length)) === 0) {
         clean = true
         break
       }
+      if (e - s >= MAX_TOKEN) break // over-long run: kept truncated, never clean
       e++
     }
     from = Math.max(e, s)
@@ -188,18 +193,23 @@ export function wordsOf(name: string): string[] {
 }
 
 /**
- * A glued token's last word cut back to each known word it starts with, longest first
- * ("Accountsauthority" → "Accounts", "Account" when those are known words); [token] when none fits.
+ * Every prefix of a glued token, longest first ("ClaimFinisherxy" → "ClaimFinisherx", …, "Cl"): a Rust string
+ * literal can end anywhere inside an identifier run (the next literal may start with a capital, a lower-case
+ * letter, a digit or "_"), so each cut is tried and only a cut confirmed by its discriminator is ever taken.
+ * No word list is involved: the result does not depend on the dictionary.
  */
-export function trimGlue(token: string, known: (w: string) => boolean): string[] {
-  const t = token.split('_')[0] || token
-  const m = /[A-Z0-9][a-z0-9]*$/.exec(t)
-  if (!m || m.index === 0) return [t]
-  const last = m[0].toLowerCase()
+export function cutsOf(token: string): string[] {
   const out: string[] = []
-  if (known(last)) out.push(t)
-  for (let n = last.length - 1; n >= 2; n--) if (known(last.slice(0, n))) out.push(t.slice(0, m.index + n))
-  return out.length ? out : [t]
+  const seen = new Set<string>([toSnakeCase(token)])
+  for (let i = token.length - 1; i >= 2; i--) {
+    const t = token.slice(0, i)
+    if (t.endsWith('_')) continue
+    const snake = toSnakeCase(t)
+    if (!snake || seen.has(snake)) continue
+    seen.add(snake)
+    out.push(t)
+  }
+  return out
 }
 
 /** Anchor's built-in error names: a log literal is often followed by one of them in the executable. */
@@ -233,19 +243,6 @@ export function stripErrorSuffix(token: string, isError: (n: string) => boolean)
   return token
 }
 
-/** The token and its prefixes cut at up to `maxCut` trailing words, longest first. */
-export function prefixesOf(token: string, maxCut = 2): string[] {
-  const out = [token]
-  let t = token
-  for (let i = 0; i < maxCut; i++) {
-    const m = /[A-Z0-9][a-z0-9]*$/.exec(t)
-    if (!m || m.index === 0) break
-    t = t.slice(0, m.index)
-    if (t.length >= 2) out.push(t)
-  }
-  return out
-}
-
 /** Anchor's own IDL-management instructions (their dispatch tag is not a discriminator of their name). */
 export const ANCHOR_IDL_INSTRUCTIONS = ['IdlCreateAccount', 'IdlResizeAccount', 'IdlCloseAccount', 'IdlCreateBuffer', 'IdlWrite', 'IdlSetBuffer', 'IdlSetAuthority']
 
@@ -261,17 +258,51 @@ const CRATE_RE = /[\\/]([A-Za-z][A-Za-z0-9_-]{0,63}?)-(\d{1,4}\.\d{1,4}\.\d{1,6}
  */
 export function parseCrates(text: string): BinCrate[] {
   const out = new Map<string, BinCrate>()
+  const stdRoots = toolchainRoots(text)
   CRATE_RE.lastIndex = 0
   for (let m = CRATE_RE.exec(text), i = 0; m && out.size < 200 && i < 20_000; m = CRATE_RE.exec(text), i++) {
     const name = m[1].toLowerCase()
     const version = m[2]
+    CRATE_RE.lastIndex = m.index + m[0].length - 1 // the closing separator can open the next match
     // the semver must end at the directory: "foo-1.2.3/" (not "foo-1.2.3.4/")
     if (!/^[a-z][a-z0-9_-]*[a-z0-9]$/.test(name)) continue
+    // a dependency of Rust's own std (hashbrown, …) checked out under the same home as the toolchain's library
+    // sources: built into platform-tools, not chosen by the program (the root is compared here, never returned)
+    const toolchain = STD_DEPS.has(name) && stdRoots.has(rootOf(text, m.index))
     const k = `${name}@${version}`
-    if (!out.has(k)) out.set(k, { name, version })
-    CRATE_RE.lastIndex = m.index + m[0].length - 1 // the closing separator can open the next match
+    const cur = out.get(k)
+    if (!cur) out.set(k, toolchain ? { name, version, toolchain: true } : { name, version })
+    else if (cur.toolchain && !toolchain) delete cur.toolchain
   }
   return [...out.values()].sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version))
+}
+
+/** Crates Rust's std itself depends on (vendored into the toolchain build). */
+const STD_DEPS = new Set(['hashbrown', 'compiler_builtins', 'rustc-demangle', 'addr2line', 'gimli', 'object', 'miniz_oxide', 'adler', 'adler2', 'std_detect', 'dlmalloc', 'unwinding', 'rustc-std-workspace-core', 'rustc-std-workspace-alloc'])
+
+/** The home directory nearest before `at` ("/home/runner/"); compared internally, never returned. */
+function rootOf(text: string, at: number): string {
+  const s = text.slice(Math.max(0, at - 300), at + 1)
+  const re = /[\\/](?:home|Users)[\\/][^\\/]{1,64}[\\/]|[\\/]root[\\/]/g
+  let last = ''
+  for (let m = re.exec(s), i = 0; m && i < 50; m = re.exec(s), i++) last = m[0]
+  return last
+}
+
+/** Roots of the toolchain's own library sources (".../library/core/src/..."); internal only. */
+function toolchainRoots(text: string): Set<string> {
+  const out = new Set<string>()
+  for (const lib of ['library/core/src/', 'library/alloc/src/', 'library/std/src/']) {
+    let from = 0
+    for (let n = 0; n < 50; n++) {
+      const at = text.indexOf(lib, from)
+      if (at < 0) break
+      from = at + lib.length
+      const r = rootOf(text, at)
+      if (r) out.add(r)
+    }
+  }
+  return out
 }
 
 const STD_CRATES = new Set(['core', 'alloc', 'std', 'src', 'registry', 'library', 'rustc', 'cargo', 'home', 'users', 'runner', 'root', 'build', 'target', 'tmp', 'workspace', 'app', 'programs', 'program'])
@@ -287,14 +318,15 @@ const ANY_RE = /(?:^|[^A-Za-z0-9_-])([a-z][a-z0-9_-]{1,63})[\\/]src[\\/][A-Za-z0
 export function programCrateOf(text: string, crates: BinCrate[]): string | null {
   const registry = new Set(crates.map((c) => c.name))
   const count = new Map<string, number>()
-  const add = (n: string, w: number) => {
-    if (STD_CRATES.has(n) || registry.has(n) || /^\d/.test(n)) return
-    count.set(n, (count.get(n) ?? 0) + w)
-  }
+  const files = new Map<string, Set<string>>()
+  const ok = (n: string) =>
+    !(STD_CRATES.has(n) || registry.has(n) || /^\d/.test(n)) &&
+    // a build directory id (UUID, or a hex run with digits: "5ab3f1a7-1ee8-…") is not a crate name
+    !(/[0-9a-f]{8}-[0-9a-f]{4}/.test(n) || /(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,}/.test(n))
   OWN_RE.lastIndex = 0
   for (let m = OWN_RE.exec(text), i = 0; m && i < 5000; m = OWN_RE.exec(text), i++) {
     // "<…>/<dir>/programs/<crate>/src": the crate is a workspace member's name, never a directory above it
-    add(m[1], 3)
+    if (ok(m[1])) count.set(m[1], (count.get(m[1]) ?? 0) + 3)
   }
   ANY_RE.lastIndex = 0
   for (let m = ANY_RE.exec(text), i = 0; m && i < 5000; m = ANY_RE.exec(text), i++) {
@@ -305,8 +337,14 @@ export function programCrateOf(text: string, crates: BinCrate[]): string | null 
     while (s > 0 && at - s < 200 && /[A-Za-z0-9._\-\\/:~]/.test(text[s - 1])) s--
     const prefix = text.slice(s, at + 1)
     if (/^(?:[\\/~]|[A-Za-z]:)/.test(prefix) || /(?:^|[\\/])(?:home|Users|root|runner|tmp|mnt|var|opt|workspace|registry|checkouts|rustc|cargo)[\\/]/i.test(prefix)) continue
-    add(m[1], 1)
+    if (!ok(m[1])) continue
+    // the literal before a path can run into it ("…value" + "my_prog/src/lib.rs"): a bare directory counts only
+    // when two different source files name it (two literals glued the same way are not expected)
+    const f = files.get(m[1]) ?? new Set<string>()
+    f.add(m[0].slice(m[0].indexOf(m[1]) + m[1].length))
+    files.set(m[1], f)
   }
+  for (const [n, f] of files) if (f.size >= 2) count.set(n, (count.get(n) ?? 0) + f.size)
   let best: string | null = null
   let bestN = 0
   for (const [k, v] of count) if (v > bestN || (v === bestN && best !== null && k < best)) [best, bestN] = [k, v]
@@ -429,24 +467,35 @@ export interface Recovered {
   crates: BinCrate[]
   programCrate: string | null
   instructions: BinInstruction[]
+  /** Unconfirmed log fragments: glued "Instruction: …" runs whose end no discriminator confirms (not counted). */
+  fragments: string[]
   calls: BinCall[]
   accounts: BinAccount[]
   events: BinEvent[]
   errors: BinError[]
   strings: { total: number; logs: number }
-  more: { instructions?: number; calls?: number; accounts?: number; events?: number; errors?: number }
+  more: { instructions?: number; calls?: number; accounts?: number; events?: number; errors?: number; fragments?: number }
   notes: string[]
   /** Log-proven names (PascalCase) to teach the dictionary. */
   learned: string[]
+  /** Of `checkNames`, those whose Anchor discriminator is in the executable. */
+  inCode: string[]
 }
 
 export interface RecoverOptions {
   /** Leave-one-out: dictionary entries known only from this program's own IDL / strings are ignored. */
   exclude?: string
+  /** snake_case instruction names (a published IDL's) to look up by their Anchor discriminator: the blind check. */
+  checkNames?: string[]
   pause?: () => Promise<void>
 }
 
 const usable = (e: DictEntry, exclude?: string) => !exclude || e.idls + e.logs - (e.src.includes(exclude) ? 1 : 0) > 0
+
+interface Cand {
+  pascal: string
+  snake: string
+}
 
 /** Recover the interface of one executable against the dictionary. */
 export async function recoverInterface(elf: Uint8Array, dict: Dictionary, o: RecoverOptions = {}): Promise<Recovered> {
@@ -460,53 +509,82 @@ export async function recoverInterface(elf: Uint8Array, dict: Dictionary, o: Rec
   const framework = detectFramework(text, crates)
   if (o.pause) await o.pause()
 
-  // log tokens → candidate names, each with its discriminator. A token followed by another log string is the
-  // whole name; a glued one is cut back (known words, then up to two trailing words) and confirmed by its
-  // discriminator when the dispatcher keeps it as a constant
+  // log tokens → candidate names, each with its discriminator.
+  //   clean token (the next literal is another log string): the whole token is the name; a trailing Anchor /
+  //     IDL error name or a framework word ("…V2" + "ProgramError") may be cut from it
+  //   every token whose whole name is not confirmed: each shorter prefix is tried (a second pass over the
+  //     bytes); a prefix is taken only when its discriminator is in the executable. An unconfirmed glued
+  //     token, or one with "_" (Anchor logs UpperCamelCase names), is an unconfirmed fragment, never counted
   const tokens = logTokens(b)
-  const own: DiscProbe[] = []
-  const tokenCands = new Map<string, { snake: string; pascal: string }[]>()
+  const own = new Map<string, DiscProbe>()
+  const probe = (m: Map<string, DiscProbe>, c: Cand) => {
+    const k = `g:${c.snake}`
+    if (!own.has(k) && !m.has(k)) m.set(k, probeOf(k, anchorDisc('global', c.snake)))
+  }
+  const isError = (n: string) => dict.knownErrorName(n, o.exclude)
+  const info: { t: LogToken; primary: Cand[]; cuts: Cand[]; shown: Cand }[] = []
   for (const t of tokens) {
     if (ANCHOR_IDL_INSTRUCTIONS.some((x) => t.text.startsWith(x))) continue
-    // a clean token (the next literal is another log string) can still end in a short literal between the
-    // two ("…V2" + "ProgramError"): only known error names / framework words are cut from it, never other words
-    const stripped = stripErrorSuffix(t.text, (n) => dict.knownErrorName(n))
-    const bases = t.clean ? [...new Set([t.text, stripped, stripped.replace(TAIL_WORDS, '')])].filter((x) => x.length >= 2) : trimGlue(stripped, (w) => dict.knownWord(w))
-    const names = t.clean ? bases : [...new Set([...bases, ...bases.flatMap((x) => prefixesOf(x).slice(1))])]
-    const cands = names.map((p) => ({ pascal: p, snake: toSnakeCase(p) }))
-    tokenCands.set(t.text, cands)
-    for (const c of cands) own.push(probeOf(`g:${c.snake}`, anchorDisc('global', c.snake)))
+    const stripped = stripErrorSuffix(t.text, isError)
+    const bases = t.clean ? [t.text, stripped, stripped.replace(TAIL_WORDS, '')] : [t.text]
+    const primary = [...new Set(bases)].filter((x) => x.length >= 2).map((p) => ({ pascal: p, snake: toSnakeCase(p) }))
+    for (const c of primary) probe(own, c)
+    const sp = stripped.length >= 2 ? stripped : t.text
+    info.push({ t, primary, cuts: [], shown: { pascal: sp, snake: toSnakeCase(sp) } })
   }
-  const found = await findDiscs(b, regions, [indexProbes(own), dict.index], o.pause)
+  const check = new Map<string, DiscProbe>()
+  for (const n of (o.checkNames ?? []).slice(0, 2000)) check.set(`c:${n}`, probeOf(`c:${n}`, anchorDisc('global', n)))
+  const found = await findDiscs(b, regions, [indexProbes([...own.values()]), dict.index, indexProbes([...check.values()])], o.pause)
 
   const ix = new Map<string, BinInstruction>()
-  for (const t of tokens) {
-    const cands = tokenCands.get(t.text)
-    if (!cands?.length) continue
-    const conf = cands.find((c) => found.has(`g:${c.snake}`))
-    const pick = conf ?? cands[0]
-    if (!pick.snake || ix.has(pick.snake)) continue
-    if (conf) ix.set(pick.snake, { name: pick.snake, evidence: 'log+disc', logName: pick.pascal, disc: hex8(anchorDisc('global', pick.snake)), site: found.get(`g:${pick.snake}`) })
-    else ix.set(pick.snake, { name: pick.snake, evidence: 'log', logName: pick.pascal })
+  const take = (c: Cand) => ix.set(c.snake, { name: c.snake, evidence: 'log+disc', logName: c.pascal, disc: hex8(anchorDisc('global', c.snake)), site: found.get(`g:${c.snake}`) })
+  // 1. tokens whose whole name is confirmed
+  const open: typeof info = []
+  for (const x of info) {
+    const conf = x.primary.find((c) => found.has(`g:${c.snake}`))
+    if (conf && !ix.has(conf.snake)) take(conf)
+    else if (!conf) open.push(x)
+  }
+  // 2. the others: every prefix, looked up in one more pass (only when some token is still open)
+  const cutProbes = new Map<string, DiscProbe>()
+  for (const x of open.slice(0, MAX_CUT_TOKENS)) {
+    x.cuts = cutsOf(x.t.text).map((p) => ({ pascal: p, snake: toSnakeCase(p) }))
+    for (const c of x.cuts) probe(cutProbes, c)
+    if (o.pause && cutProbes.size > 4000) await o.pause()
+  }
+  if (cutProbes.size) for (const [k, v] of await findDiscs(b, regions, [indexProbes([...cutProbes.values()])], o.pause)) if (!found.has(k)) found.set(k, v)
+  // 3. cut back to the longest confirmed prefix; a clean, well-formed log string kept as logged; the rest are fragments
+  const fragments: string[] = []
+  for (const x of open) {
+    const conf = x.cuts.find((c) => found.has(`g:${c.snake}`) && !ix.has(c.snake))
+    if (conf) take(conf)
+    else if (x.t.clean && !x.shown.pascal.includes('_')) {
+      const p = x.shown // the logged name, a trailing error name cut
+      if (!ix.has(p.snake)) ix.set(p.snake, { name: p.snake, evidence: 'log', logName: p.pascal })
+    } else if (!x.cuts.some((c) => ix.has(c.snake) && found.has(`g:${c.snake}`))) fragments.push(x.t.text)
   }
   const learned = [...ix.values()].filter((x) => x.evidence === 'log+disc').map((x) => x.logName!)
 
-  // dictionary discriminators found
+  // dictionary discriminators found: account types, events, and instruction discriminators other IDLs name
+  // (this program's own handlers when it logs no names, or instructions it sends to other programs)
   const accounts: BinAccount[] = []
   const events: BinEvent[] = []
   const calls: BinCall[] = []
+  const inCode: string[] = []
   for (const [key, site] of found) {
-    if (key.startsWith('g:')) {
-      const snake = key.slice(2)
-      if (ix.has(snake)) continue
-      const e = dict.entry(key)
-      if (!e || !usable(e, o.exclude)) continue
-      calls.push({ name: snake, disc: hex8(e.disc), site, idls: e.idls, programs: e.src.filter((x) => x !== o.exclude && !x.startsWith('bin:')).slice(0, 4) })
-    } else if (key.startsWith('a:') || key.startsWith('e:')) {
-      const e = dict.entry(key)
-      if (!e || !usable(e, o.exclude)) continue
-      const item = { name: e.name, disc: hex8(e.disc), site, idls: e.idls }
-      if (key.startsWith('a:')) accounts.push(item)
+    if (key.startsWith('c:')) {
+      inCode.push(key.slice(2))
+      continue
+    }
+    const e = dict.entry(key)
+    if (!e || !usable(e, o.exclude)) continue
+    const custom = e.sha ? {} : { custom: true as const }
+    if (e.kind === 'ix') {
+      if (ix.has(e.name)) continue // this program's own instruction (its log string names it)
+      calls.push({ name: e.name, disc: hex8(e.disc), site, idls: e.idls, programs: e.src.filter((x) => x !== o.exclude && !x.startsWith('bin:')).slice(0, 4), ...custom })
+    } else {
+      const item = { name: e.name, disc: hex8(e.disc), site, idls: e.idls, ...custom }
+      if (e.kind === 'account') accounts.push(item)
       else events.push(item)
     }
   }
@@ -529,17 +607,20 @@ export async function recoverInterface(elf: Uint8Array, dict: Dictionary, o: Rec
   accounts.sort((a, b) => a.name.localeCompare(b.name))
   events.sort((a, b) => a.name.localeCompare(b.name))
   errors.sort((a, b) => b.idls - a.idls || a.msg.localeCompare(b.msg))
+  fragments.sort()
   const more: Recovered['more'] = {}
   if (proven.length > MAX_INSTRUCTIONS) more.instructions = proven.length - MAX_INSTRUCTIONS
   if (calls.length > MAX_CALLS) more.calls = calls.length - MAX_CALLS
   if (accounts.length > MAX_ACCOUNTS) more.accounts = accounts.length - MAX_ACCOUNTS
   if (events.length > MAX_EVENTS) more.events = events.length - MAX_EVENTS
   if (errors.length > MAX_ERRORS) more.errors = errors.length - MAX_ERRORS
+  if (fragments.length > MAX_FRAGMENTS) more.fragments = fragments.length - MAX_FRAGMENTS
   return {
     framework,
     crates,
     programCrate,
     instructions: proven.slice(0, MAX_INSTRUCTIONS),
+    fragments: fragments.slice(0, MAX_FRAGMENTS),
     calls: calls.slice(0, MAX_CALLS),
     accounts: accounts.slice(0, MAX_ACCOUNTS),
     events: events.slice(0, MAX_EVENTS),
@@ -548,5 +629,6 @@ export async function recoverInterface(elf: Uint8Array, dict: Dictionary, o: Rec
     more,
     notes,
     learned,
+    inCode: inCode.sort(),
   }
 }
