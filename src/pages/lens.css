@@ -1052,3 +1052,8 @@
   margin: 6px 0 0;
   max-width: 760px;
 }
+.ln-x {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}

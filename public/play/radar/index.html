@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LUSCA Radar · live</title>
+<meta name="robots" content="noindex">
+<link rel="preload" href="/play/fonts/geist-mono.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/play/fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/play/radar.css">
+</head>
+<body>
+<div id="fit">
+  <main id="st" aria-label="LUSCA Radar">
+    <div class="glow"></div><div class="grid"></div>
+    <i class="tk tl"></i><i class="tk tr"></i><i class="tk bl"></i><i class="tk br"></i>
+
+    <header class="hd mono">
+      <span class="brand"><b>■</b> LUSCA · RADAR</span>
+      <span class="live"><i></i><span id="live">LIVE</span></span>
+    </header>
+
+    <div class="scope" aria-hidden="true">
+      <svg viewBox="-50 -50 100 100">
+        <circle r="46"/><circle r="31"/><circle r="16"/>
+        <line x1="-46" y1="0" x2="46" y2="0"/><line x1="0" y1="-46" x2="0" y2="46"/>
+        <g class="sweep"><path d="M0 0 L46 0 A46 46 0 0 0 39.8 -23 Z"/><line x1="0" y1="0" x2="46" y2="0"/></g>
+        <circle id="blip" class="blip" r="2.6" cx="18" cy="-14"/>
+      </svg>
+    </div>
+
+    <section class="tg">
+      <div class="row mono"><span id="chain" class="chip">—</span><span id="kind" class="kd">listening</span><span id="ago" class="ago"></span></div>
+      <div id="name" class="nm">waiting for a catch</div>
+      <div id="addr" class="ad mono"></div>
+    </section>
+
+    <p id="hl" class="hl mono"></p>
+
+    <section class="ba mono" aria-label="Before and after">
+      <div class="ba-h"><span></span><span>before</span><span></span><span>after</span></div>
+      <div id="rows" class="ba-rows"></div>
+      <i id="sweep" class="ba-sweep"></i>
+    </section>
+
+    <section id="gd" class="gd mono"></section>
+
+    <section id="more" class="more mono"></section>
+
+    <footer class="ft mono">
+      <span id="count" class="dim"></span>
+      <a id="out" href="https://lusca.ink/radar" target="_blank" rel="noopener">lusca.ink/radar ↗</a>
+    </footer>
+  </main>
+</div>
+<script src="/play/radar.js" defer></script>
+</body>
+</html>

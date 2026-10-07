@@ -16,6 +16,7 @@ import { bus } from '@/lib/bus'
 import { CHAINS, CHAIN_LABEL, CHAIN_SHORT, explorerName, explorerUrl, shortAddress } from '@/lib/chain'
 import { DASH, fmtAgo, fmtInt } from '@/lib/format'
 import { useConn, useMedia, useNow } from '@/lib/hooks'
+import { radarPostUrl } from '@/lib/xpost'
 import { BUDGET_LABEL, KIND_FILTER, VERIFIED_WORD, badgeOf, fetchRadar, fetchRadarEvent, isOtherEvent, matches, txUrl, type RadarQuery } from '@/lib/radar'
 import './radar.css'
 
@@ -521,6 +522,9 @@ function Card({ e, now, fresh }: { e: RadarEvent; now: number; fresh: boolean })
               diff →
             </Link>
           )}
+          <a href={radarPostUrl(ev)} target="_blank" rel="noopener" className="rd-x" title="Post this catch to X as a live card">
+            post to X ↗
+          </a>
           <Link to={`/lens/${ev.chain}/${ev.address}`} className="hot">
             Lens →
           </Link>

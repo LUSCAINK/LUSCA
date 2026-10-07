@@ -29,6 +29,7 @@ import { SPAWN_TTL_MS, type CoordinatorApi, type CrawlerApi, type Emit, type Neu
 import type { LuscaCoordinator } from './neurons/coordinator.ts'
 import { parseV6 } from './ingest/netguard.ts'
 import { BOT_CONTACT, BOT_FROM, ROBOTS_UA, USER_AGENT } from './ingest/util.ts'
+import { playerFile, resolveShare } from './share/cards.ts'
 
 /** GET /api/bot: who LuscaBot is and where site owners reach its operator (env LUSCA_BOT_CONTACT). */
 const BOT_INFO = { userAgent: USER_AGENT, robotsToken: ROBOTS_UA, contact: BOT_CONTACT || null, from: BOT_FROM }
@@ -1749,11 +1750,14 @@ export function createHub(opts: HubOptions): Hub {
   }
   const attr = (v: string) => v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+  const radarGetter = () => (modules?.radar ? (id: string) => modules!.radar!.get(id) : null)
+
   function serveShare(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
     const method = req.method ?? 'GET'
     if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed', { Allow: 'GET, HEAD' })
     const m = /^\/r\/([a-z0-9-]{1,32})\/?$/.exec(url.pathname)
-    const s = m ? SHARES[m[1]] : undefined
+    // feed cards (server/share/cards.ts): /r/radar, /r/radar/:id (stored events only), /r/lens/:chain/:address
+    const s = (m ? SHARES[m[1]] : undefined) ?? resolveShare(url.pathname, radarGetter())
     if (!s) throw new HttpError(404, 'not found')
     const host = String(req.headers.host ?? '').toLowerCase()
     const origin = canonicalHost ? `https://${canonicalHost}` : `${viaHttps(req) ? 'https' : 'http'}://${/^[a-z0-9.-]+(:\d{1,5})?$/.test(host) ? host : 'localhost'}`
@@ -1810,6 +1814,10 @@ ${tags.map(([k, n, v]) => `<meta ${k}="${n}" content="${attr(v)}">`).join('\n')}
       throw new HttpError(400, 'bad path')
     }
     if (rel.includes('\0')) throw new HttpError(400, 'bad path')
+    // feed-card players: /play/radar/:id and /play/lens/:chain/:address are one static page each
+    const pf = playerFile(url.pathname, radarGetter())
+    if (pf === null) throw new HttpError(404, 'not found')
+    if (pf) rel = pf
     let file = path.resolve(distDir, '.' + path.posix.normalize('/' + rel))
     if (file !== distDir && !file.startsWith(distDir + path.sep)) throw new HttpError(403, 'forbidden')
 
