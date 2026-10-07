@@ -17,7 +17,7 @@
 //      (the radar's daily slice, default 25 % / 10 % / 15 %) · LUSCA_RADAR_LOG_CALLS (20000/day per EVM log
 //      endpoint) · LUSCA_RADAR_WS_MB (daily Helius websocket allowance, default 200) ·
 //      LUSCA_RADAR_ETH_LOGS / _BASE_LOGS / _ARB_LOGS (comma lists) — server/radar
-//      LUSCA_CONTROL=0 (control map off) · LUSCA_CONTROL_EVM_CALLS (its daily EVM slice per chain, default 5 %) — server/control
+//      LUSCA_CONTROL=0 (control map off) · LUSCA_CONTROL_EVM_CALLS (its daily EVM slice per chain, default 10 %) — server/control
 //
 // The REST routes read stored data only (stats / feed / items / item): no RPC per request.
 

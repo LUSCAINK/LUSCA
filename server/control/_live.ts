@@ -1,6 +1,6 @@
 // Live check (manual): classify real kept items read from lusca.ink's public API, resolving EVM proxies over
 // the public RPCs. Run: npx tsx server/control/_live.ts   (≤ 1 request/s to lusca.ink)
-import type { ChainEvent, ChainRead } from '../../shared/chain.ts'
+import type { ChainRead } from '../../shared/chain.ts'
 import { createRpc } from '../chain/rpc.ts'
 import { classifySolana, resolveEvm } from './resolve.ts'
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))

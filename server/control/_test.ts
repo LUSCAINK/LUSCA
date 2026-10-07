@@ -9,7 +9,7 @@ import path from 'node:path'
 import type { ChainIndexItem, ChainRead } from '../../shared/chain.ts'
 import { base58Encode } from '../../shared/base58.ts'
 import { isOnCurve, isOnCurveBytes } from './curve.ts'
-import { classifySolana, decodeAddressArray, resolveEvm, SEL, SLOT, wordToAddress } from './resolve.ts'
+import { classifySolana, decodeAddressArray, IMPL_SLOT, resolveEvm, SEL, SLOT, wordToAddress } from './resolve.ts'
 import { createControl } from './index.ts'
 
 let passed = 0
@@ -134,9 +134,13 @@ await test('evm: transparent proxy → ProxyAdmin → Safe 3 of 5', async () => 
   assert.equal(r.hops[2].owners, 5)
 })
 await test('evm: UUPS (empty admin slot) → owner() EOA = single key; timelock admin', async () => {
-  const m = mock({ code: {}, slots: {}, calls: { [`${PROXY}:${SEL.owner}`]: W(EOA) } })
-  const r = await resolveEvm(evmRead({ proxy: { standard: 'eip1967', implementation: EOA } }), m.call)
+  const IMPL = '0x7777777777777777777777777777777777777777'
+  const notUups = mock({ code: {}, slots: {}, calls: { [`${PROXY}:${SEL.owner}`]: W(EOA) } })
+  assert.equal((await resolveEvm(evmRead({ proxy: { standard: 'eip1967', implementation: IMPL } }), notUups.call)).cls, 'unknown')
+  const m = mock({ code: {}, slots: {}, calls: { [`${PROXY}:${SEL.owner}`]: W(EOA), [`${IMPL}:${SEL.proxiableUUID}`]: IMPL_SLOT } })
+  const r = await resolveEvm(evmRead({ proxy: { standard: 'eip1967', implementation: IMPL } }), m.call)
   assert.equal(r.cls, 'key')
+  assert.equal(r.hops[0].label, 'UUPS proxy')
   assert.equal(r.hops[1].via, 'owner()')
   const t = mock({ code: { [TL]: '0x60' }, slots: { [`${PROXY}:${SLOT.eip1967Admin}`]: W(TL) }, calls: { [`${TL}:${SEL.getMinDelay}`]: U(172800) } })
   const r2 = await resolveEvm(evmRead({ proxy: { standard: 'eip1967', implementation: EOA } }), t.call)
@@ -162,7 +166,7 @@ await test('module: sweep classifies Solana with no RPC, resolves EVM proxies un
   add(solRead({ address: 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc', upgradeAuthority: 'CtXfPzz36dH5Ws4UYKZvrQ1Xqzn42ecDW6y8NKuiN8nD' }))
   add(evmRead({ proxy: { standard: 'eip1967', implementation: EOA } }))
   add(evmRead({ address: '0x6666666666666666666666666666666666666666', proxy: null }))
-  const m = mock({ code: {}, slots: {}, calls: { [`${PROXY}:${SEL.owner}`]: W(EOA) } })
+  const m = mock({ code: {}, slots: {}, calls: { [`${PROXY}:${SEL.owner}`]: W(EOA), [`${EOA}:${SEL.proxiableUUID}`]: IMPL_SLOT } })
   const store = { items: () => ({ items, next: null }), item: (c: string, a: string) => { const r = reads.get(`${c}:${a}`); return r ? { item: items.find((i) => i.address === a)!, read: r } : null } }
   const rpcCalls: string[] = []
   const rpc = {

@@ -3,8 +3,8 @@
 //   sweep (every 10 min): page through the kept index → Solana programs classified from the stored read (no RPC);
 //     EVM contracts without a proxy → immutable (no RPC); EVM proxies queued
 //   resolver (one proxy at a time, paced): resolve.ts resolveEvm through the chain agents' network layer, charged
-//     to this module's own small daily slice first (LUSCA_CONTROL_EVM_CALLS per chain, default 5 % of the agents'
-//     EVM limit, hourly share 15 %), never below the 10 % floor kept for the agents; controllers cached a week
+//     to this module's own small daily slice first (LUSCA_CONTROL_EVM_CALLS per chain, default 10 % of the agents'
+//     EVM limit, hourly share 30 %), never below the 10 % floor kept for the agents; controllers cached a week
 //   persisted: <data>/control/entries.json · controllers.json · budget.json
 //
 // Viewers never cause RPC: the REST routes read the stored entries only.
@@ -41,9 +41,9 @@ export interface ControlOptions {
   store: ControlStoreLike
   dataDir: string
   log: Log
-  /** Daily EVM calls per chain (default 5 % of the shared limit, at least 100). */
+  /** Daily EVM calls per chain (default 10 % of the shared limit, at least 100). */
   evmCalls?: number
-  /** Pause between proxies, ms (default 4000). */
+  /** Pause between proxies, ms (default 2500). */
   gapMs?: number
   /** Sweep interval, ms (default 10 min). */
   sweepMs?: number
@@ -65,8 +65,8 @@ export function createControl(o: ControlOptions): Control {
 
   const shared = o.rpc.usage()
   const limits: Record<string, number> = {}
-  for (const c of EVM) limits[c] = o.evmCalls ?? Math.max(100, Math.floor((shared[c]?.limit ?? 0) * 0.05))
-  const budget: RadarBudget = createRadarBudget(limits, path.join(dir, 'budget.json'), now, 0.15)
+  for (const c of EVM) limits[c] = o.evmCalls ?? Math.max(100, Math.floor((shared[c]?.limit ?? 0) * 0.1))
+  const budget: RadarBudget = createRadarBudget(limits, path.join(dir, 'budget.json'), now, 0.3)
 
   const sharedRoom = (k: BudgetKey, n = 1) => {
     const u = o.rpc.usage()[k]
@@ -181,7 +181,7 @@ export function createControl(o: ControlOptions): Control {
   let timer: NodeJS.Timeout | null = null
   let lastSweep = 0
   const sweepMs = o.sweepMs ?? 600_000
-  const gapMs = o.gapMs ?? 4000
+  const gapMs = o.gapMs ?? 2500
 
   async function tick(): Promise<void> {
     if (now() - lastSweep >= sweepMs || lastSweep === 0) {

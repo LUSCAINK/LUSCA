@@ -27,7 +27,11 @@ export const SEL = {
   getMinDelay: '0xf27a0c92',
   getProxyAdmin: '0xf3b7dead',
   upgradeInterfaceVersion: '0xad3cb1cc',
+  proxiableUUID: '0x52d1902d',
 } as const
+
+/** bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1): what a UUPS implementation's proxiableUUID() returns. */
+export const IMPL_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc'
 
 const PROXY_LABEL: Record<string, string> = { eip1967: 'EIP-1967 proxy', eip1822: 'EIP-1822 proxy', beacon: 'beacon proxy', eip1167: 'EIP-1167 clone', other: 'proxy' }
 
@@ -200,12 +204,18 @@ export async function resolveEvm(read: ChainRead, call: EvmCall, cache?: Identif
     controller = await slot(std === 'other' ? SLOT.zeppelinosAdmin : SLOT.eip1967Admin)
     if (!controller && std === 'other') controller = await slot(SLOT.eip1967Admin)
     if (!controller) {
-      // UUPS / custom: the implementation's owner(), read through the proxy
-      controller = wordToAddress(await tryCall(call, read.address, SEL.owner))
-      via = 'owner()'
+      // UUPS: the upgrade function lives in the implementation (proxiableUUID() names the EIP-1967 slot); its
+      // owner(), read through the proxy, is who can call it
+      const impl = read.proxy.implementation
+      const uups = /^0x[0-9a-fA-F]{40}$/.test(impl) && String(await tryCall(call, impl, SEL.proxiableUUID)).toLowerCase() === IMPL_SLOT
+      if (uups) {
+        hops[0] = { ...proxyHop, label: 'UUPS proxy' }
+        controller = wordToAddress(await tryCall(call, read.address, SEL.owner))
+        via = 'owner()'
+      } else return { ...base, cls: 'unknown', hops, basis: 'admin slot empty; the implementation is not UUPS (no proxiableUUID())' }
     }
   }
-  if (!controller) return { ...base, cls: 'unknown', hops, basis: std === 'beacon' ? 'beacon owner() did not answer' : 'admin slot empty; owner() did not answer' }
+  if (!controller) return { ...base, cls: 'unknown', hops, basis: std === 'beacon' ? 'beacon owner() did not answer' : 'UUPS proxy; owner() did not answer' }
 
   const info = await ident(controller, std === 'beacon' ? null : read.address)
   hops.push(hopOf(controller, info, via))
