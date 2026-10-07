@@ -33,6 +33,7 @@ import { createProvenanceIndex } from '../lens/provenance.ts'
 import { AnalysisLimit, Work, findPrimitives, findPrivileged } from '../lens/evm-analysis.ts'
 import { scanElf, solanaPrimitives } from '../lens/elf-syscalls.ts'
 import { createRadar, type Radar } from '../radar/index.ts'
+import { createAtlas, type Atlas } from '../atlas/index.ts'
 import type { RadarEvent } from '../../shared/radar.ts'
 
 type Log = (lvl: 'info' | 'warn' | 'error', msg: string) => void
@@ -48,6 +49,8 @@ export interface ChainAgentsApi {
   lens: Lens | null
   /** UPGRADE RADAR (server/radar): code changes caught live; null when LUSCA_RADAR=0. */
   radar: Radar | null
+  /** CODE ATLAS (server/atlas): map of kept items from stored reads only (no RPC); null when LUSCA_ATLAS=0. */
+  atlas: Atlas | null
 }
 
 function intEnv(name: string, def: number, min: number, max: number): number {
@@ -236,6 +239,11 @@ export function createChainAgents(opts: {
     }
   }
 
+  // CODE ATLAS: stored reads only (no RPC, no budget); LUSCA_ATLAS=0 turns it off
+  const atlas: Atlas | null = /^(0|false|no|off)$/i.test(process.env.LUSCA_ATLAS?.trim() ?? '')
+    ? null
+    : createAtlas({ source: { items: (q) => store.items(q), item: (c, a) => store.item(c, a) }, dataDir: opts.dataDir, log, startDelayMs: 8_000 })
+
   let started = false
   let stopped = false
 
@@ -244,6 +252,7 @@ export function createChainAgents(opts: {
       if (started || stopped) return
       started = true
       if (lens) provenance.start() // code-index hashes for Lens provenance (background, incremental)
+      atlas?.start()
       radar?.start() // listens whether or not the chain agents run (LUSCA_RADAR=0 turns it off)
       if (!enabled) {
         log('info', 'chain agents off (LUSCA_CHAIN_AGENTS=0); stored chain data is still served')
@@ -269,6 +278,7 @@ export function createChainAgents(opts: {
       await provenance.stop()
       await lens?.stop()
       await radar?.stop()
+      await atlas?.stop()
       const agentsDone = agents.stop() // wakes sleeping agents; in-flight reads end with the RPC close below
       await rpc.close()
       await agentsDone
@@ -283,5 +293,6 @@ export function createChainAgents(opts: {
     item: (chain, address) => agents.item(chain, address),
     lens,
     radar,
+    atlas,
   }
 }
