@@ -76,8 +76,13 @@ export function createAdvisoryCheck(o: AdvisoryOptions): AdvisoryCheck {
 
   // ── persistence ──
   try {
-    const j = JSON.parse(fs.readFileSync(file, 'utf8')) as { v: number; data: string; entries: Entry[] }
-    if (j?.v === 1 && j.data === ds.version && Array.isArray(j.entries)) for (const e of j.entries) entries.set(keyOf(e.chain, e.address), e)
+    const j = JSON.parse(fs.readFileSync(file, 'utf8')) as { v: number; data: string; entries: Entry[]; solana?: number }
+    if (j?.v === 1 && j.data === ds.version && Array.isArray(j.entries)) {
+      for (const e of j.entries) entries.set(keyOf(e.chain, e.address), e)
+      // until the first pass after a restart, report what the last pass saw
+      progress = { done: entries.size, total: entries.size }
+      solana = typeof j.solana === 'number' ? j.solana : 0
+    }
     else if (j) log('info', 'advisory: data or matcher changed; every kept contract is checked again')
   } catch { /* first boot */ }
 
@@ -86,7 +91,7 @@ export function createAdvisoryCheck(o: AdvisoryOptions): AdvisoryCheck {
     try {
       fs.mkdirSync(dir, { recursive: true })
       const tmp = `${file}.tmp`
-      fs.writeFileSync(tmp, JSON.stringify({ v: 1, data: ds.version, savedAt: Date.now(), entries: [...entries.values()] }))
+      fs.writeFileSync(tmp, JSON.stringify({ v: 1, data: ds.version, savedAt: Date.now(), solana, entries: [...entries.values()] }))
       fs.renameSync(tmp, file)
       dirty = false
       lastSave = Date.now()
@@ -112,7 +117,8 @@ export function createAdvisoryCheck(o: AdvisoryOptions): AdvisoryCheck {
   async function run() {
     const t0 = Date.now()
     const all = listAll()
-    solana = all.filter((it) => it.chain === 'solana').length
+    const sol = all.filter((it) => it.chain === 'solana').length
+    if (sol !== solana) { solana = sol; dirty = true; version++ }
     const evm = all.filter((it) => CHAINS.has(it.chain))
     const live = new Set(evm.map((it) => keyOf(it.chain, it.address)))
     for (const k of [...entries.keys()]) if (!live.has(k)) { entries.delete(k); dirty = true }

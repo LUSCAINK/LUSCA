@@ -278,6 +278,9 @@ await test('background check: census math, lists, item, routes, persistence', as
   // persistence: a second instance on the same data dir checks nothing again
   calls = 0
   const chk2 = createAdvisoryCheck({ source, dataDir: dir, log: () => {}, dataset: ds })
+  // before its first pass, a restarted instance reports what the last pass saw (never "0 contracts")
+  assert.deepEqual(chk2.summary().progress, { done: 5, total: 5, running: false })
+  assert.equal(chk2.summary().notChecked.solana, 1)
   await chk2.refresh()
   assert.equal(calls, 0)
   assert.equal(chk2.summary().withAdvisoryFile, 2)
