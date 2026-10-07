@@ -85,7 +85,7 @@ export interface HeldCorpus {
 
 /** Page / token totals per archive file still on disk (dataset-archives.json, written at rotation and pruning). */
 type ArchiveTotals = Record<string, { pages: number; tokens: number; bytes: number }>
-const ARCHIVES_FILE = 'dataset-archives.json'
+export const ARCHIVES_FILE = 'dataset-archives.json'
 
 export interface RotateInfo {
   archive: string
@@ -105,7 +105,7 @@ export interface DatasetWriterOptions {
 }
 
 // dataset-20261004T221500123Z.jsonl: millisecond UTC stamp, so name order is age order.
-const ARCHIVE_RE = /^dataset-\d{8}T\d{9}Z\.jsonl$/
+export const ARCHIVE_RE = /^dataset-\d{8}T\d{9}Z\.jsonl$/
 const archiveName = (ms: number) => `dataset-${new Date(ms).toISOString().replace(/[-:.]/g, '')}.jsonl`
 const ROTATE_RETRY_MS = 60_000
 

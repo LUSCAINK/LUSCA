@@ -57,6 +57,10 @@ services:
       # sends no From: header, /privacy and /terms list no contact, and boot logs a warning.
       - key: LUSCA_BOT_CONTACT
         sync: false
+      # Corpus export for the owner's PC (GET /api/export/*). Secret, ≥ 32 characters; unset = off.
+      # The same value goes into the PC's secrets.env for scripts/codex/pull_corpus.py.
+      - key: LUSCA_EXPORT_TOKEN
+        sync: false
       # Wallet sign-in: host named in the signed message; must match the public URL.
       - key: LUSCA_PUBLIC_HOST
         value: lusca.ink

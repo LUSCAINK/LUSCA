@@ -118,6 +118,8 @@ export interface Modules {
   radarDiff?: { get(id: string): Promise<{ json: string; ready: boolean } | null> } | null
   /** CONTROL MAP (server/control): stored results only. Without it /api/control/* answers 503. */
   control?: HubControl | null
+  /** CORPUS EXPORT (server/export): token-authenticated pulls of rotated archives and kept code. Without it /api/export* answers 404. */
+  export?: { handle(req: http.IncomingMessage, res: http.ServerResponse, p: string, ip: string): Promise<void> } | null
   /** ADVISORY CHECK (server/advisory): stored results only, cached per result version. Without it /api/advisories/* answers 503. */
   advisory?: { route(p: string, params: URLSearchParams): { status: number; json: string; headers?: Record<string, string> } } | null
 }
@@ -1829,6 +1831,13 @@ export function createHub(opts: HubOptions): Hub {
       if (!m.lens) throw new HttpError(503, 'LUSCA Lens is not available on this server')
       const r = await m.lens.route(p, clientIp(req))
       return sendJsonText(req, res, r.status, r.json, r.headers)
+    }
+
+    // ── corpus export for the owner's PC: bearer token, its own limits, never cached (server/export) ──
+    if (p === '/api/export' || p.startsWith('/api/export/')) {
+      const m = requireModules()
+      if (!m.export) throw new HttpError(404, 'not found')
+      return m.export.handle(req, res, p, clientIp(req))
     }
 
     // ── SEPIA-0 weights export: newest checkpoint as safetensors + manifest (server/model/export.ts) ──

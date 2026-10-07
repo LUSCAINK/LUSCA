@@ -39,6 +39,8 @@
 //      LUSCA_ETH_RPC · LUSCA_BASE_RPC · LUSCA_ARB_RPC · LUSCA_CHAIN_MAX_MB (100) — chain agents
 //      (programs / contracts found on-chain, read, kept or rejected), see server/chain/index.ts
 //      LUSCA_RADAR (1; 0 = off) · LUSCA_RADAR_BACKFILL — upgrade radar (code changes caught live), see server/radar
+//      LUSCA_EXPORT_TOKEN (unset = off; ≥ 32 characters) · LUSCA_EXPORT_MB_PER_SEC (4) — corpus export for the
+//      owner's PC (GET /api/export/manifest, /api/export/file/<path>), see server/export
 //      NODE_ENV=development disables static serving of dist/.
 //
 // One process per data directory: <data>/.lock holds the owner's pid (refreshed every
@@ -58,6 +60,7 @@ import { createPayouts } from './payouts/index.ts'
 import { createCodeIndex } from './codebase/index.ts'
 import { createChainAgents } from './chain/index.ts'
 import { createWeightsExporter } from './model/export.ts'
+import { createExport } from './export/index.ts'
 import { createProofs, resolveEpochMinutes, type ProofsApi } from './proofs/index.ts'
 import { payoutPreviewSource } from './proofs/preview.ts'
 import { loadHashSalt } from './neurons/issuance.ts'
@@ -533,7 +536,26 @@ async function main() {
     proofs = undefined
   }
   const proofsModule = proofs ? { api: proofs, preview: (payoutConfigRef ? payoutPreviewSource(coordinator, payoutConfigRef) : null) } : undefined
-  const modules = { crawler, trainer, coordinator, auth, payouts, code: codeIndex, chain: chainAgents, model: modelExport, proofs: proofsModule, lens: chainAgents?.lens, radar: chainAgents?.radar, radarDiff: chainAgents?.radarDiff, control: chainAgents?.control, atlas: chainAgents?.atlas, search: chainAgents?.search, advisory: chainAgents?.advisory, binary: chainAgents?.binary }
+  // Corpus export (GET /api/export/*): reads the data dir only, writes nothing; off unless LUSCA_EXPORT_TOKEN is set.
+  let corpusExport: ReturnType<typeof createExport> | null = null
+  if (process.env.LUSCA_EXPORT_TOKEN?.trim()) {
+    try {
+      corpusExport = createExport({
+        dataDir: DATA_DIR,
+        token: process.env.LUSCA_EXPORT_TOKEN,
+        log: (level, msg) => log[level]('export', msg),
+        datasetMaxMB: DATASET_MAX_MB,
+        datasetKeep: DATASET_KEEP,
+        mbPerSec: floatEnv('LUSCA_EXPORT_MB_PER_SEC', 4, 0.1, 1_000),
+      })
+      if (corpusExport.enabled) log.info('export', 'corpus export on (GET /api/export/manifest, bearer token)')
+      else corpusExport = null
+    } catch (e) {
+      log.error('export', 'corpus export unavailable:', (e as Error)?.message ?? e)
+      corpusExport = null
+    }
+  }
+  const modules = { crawler, trainer, coordinator, auth, payouts, code: codeIndex, chain: chainAgents, model: modelExport, proofs: proofsModule, lens: chainAgents?.lens, radar: chainAgents?.radar, radarDiff: chainAgents?.radarDiff, control: chainAgents?.control, atlas: chainAgents?.atlas, search: chainAgents?.search, advisory: chainAgents?.advisory, binary: chainAgents?.binary, export: corpusExport }
   hub.bind(modules)
 
   let port: number
@@ -600,6 +622,7 @@ async function main() {
       }
     }
     await step('hub', () => hub.close())
+    corpusExport?.stop()
     // Payouts first: an in-flight period close / send settles before the ledger's final save.
     await Promise.all([
       step('payouts', () => payouts.stop()),

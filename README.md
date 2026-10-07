@@ -303,6 +303,8 @@ Nothing reads a `.env` file.
 | `LUSCA_CORS_ORIGINS` | empty | extra allowed origins, comma list |
 | `LUSCA_DATASET_MAX_MB` | `2048` | rotate `dataset.jsonl` into an archive past this size (0 = never) |
 | `LUSCA_DATASET_KEEP` | `0` | archives kept (0 = all) |
+| `LUSCA_EXPORT_TOKEN` | empty | corpus export for the owner's PC (`GET /api/export/manifest`, `/api/export/file/<path>`); a bearer token of at least 32 characters, unset = off. See [Corpus export](#corpus-export) |
+| `LUSCA_EXPORT_MB_PER_SEC` | `4` | egress budget shared by all export downloads |
 | `LUSCA_MEMORY_PAGES` | `20000` | pages kept in memory for search and GPU jobs |
 | `LUSCA_CORPUS_CHARS` | `24000000` | SEPIA's in-memory corpus cap |
 | `LUSCA_TRAIN_DUTY` | `0.85` | share of one core the trainer may use |
@@ -629,6 +631,7 @@ empty ledger and dataset: do not upload the local `server/data`.
 | `LUSCA_DATASET_MAX_MB` | `350` | rotate `dataset.jsonl` into an archive past 350 MB |
 | `LUSCA_DATASET_KEEP` | `3` | keep the 3 newest archives so the disk never fills |
 | `LUSCA_ISSUE_MB_PER_SEC` | `1` | GPU job egress cap (bandwidth is billed per GB) |
+| `LUSCA_EXPORT_TOKEN` | secret, set in the dashboard | turns the corpus export on; the same value goes into the PC's `secrets.env` |
 | `LUSCA_BOT_CONTACT` | set in the dashboard | takedown contact; Render asks for it when the Blueprint is created |
 | `LUSCA_PUBLIC_HOST` | `lusca.ink` | host named in the wallet sign-in message |
 | `LUSCA_AUTH_SECRET` | secret, set in the dashboard | wallet session-token key (unset = generated on the disk) |
@@ -657,6 +660,39 @@ After the first deploy:
 3. Watch `/api/health` (`status`, `degraded[]`) from an external uptime monitor, and turn on a
    Render bandwidth / billing alert.
 4. Rotate any Render API key that was shared while setting this up.
+
+## Corpus export
+
+`dataset.jsonl` rotates at `LUSCA_DATASET_MAX_MB` and only `LUSCA_DATASET_KEEP` archives stay on the
+server (in production about 12 hours of pages). The export API lets one machine copy them, and the
+kept code, before they go. It reads the data directory and writes nothing to it, so the server's disk
+use does not change.
+
+| endpoint | answer |
+|---|---|
+| `GET /api/export/manifest` | every artifact: `path`, `kind`, `bytes`, `sha256`, `immutable`, `meta`; `complete: false` while hashes or builds still run |
+| `GET /api/export/file/<path>` | one artifact, with `Content-Length`, `ETag: "<sha256>"`, `Range` / `If-Range`, and `If-Match` (412 when it changed); `.jsonl` / `.json` with `Accept-Encoding: gzip` and no range are compressed on the fly |
+
+| path | content |
+|---|---|
+| `web/dataset-<stamp>.jsonl` | rotated web-text archives (immutable; emails and phone numbers are redacted at ingest) |
+| `code-index/*.jsonl.gz`, `code-index/index.json` | the protocol code index shards and its state (repository, commit, license) |
+| `kept-code/files-NNNNNN.jsonl.gz` | one line per kept source file, first occurrence only: `sha256`, `path`, `chain`, `address`, `compiler`, `license` (SPDX header), `licenseTier`, `verifiedBy`, `match`, `keptAt`, `emails` (count), `text` |
+| `kept-code/contracts-NNNNNN.jsonl.gz` | one line per stored record, superseded ones included: metadata, file list with `sha256` and license, ABI, security.txt, proxy |
+| `kept-code/idls-NNNNNN.jsonl.gz` | Solana IDLs with their program id |
+| `kept-code/refs.jsonl.gz` | per file `sha256`: every contract and path that carries it, and whether that record is current |
+| `kept-code/current.jsonl.gz` | the current record of each kept address |
+
+`NNNNNN` follows the chain store's shards: a sealed shard's three files never change; only the
+newest one grows. Auth is `Authorization: Bearer $LUSCA_EXPORT_TOKEN` (constant-time compare; 10 failed
+attempts per address in 15 minutes lock that address out). Each address gets 300 requests a minute and
+2 downloads at a time, and all downloads share `LUSCA_EXPORT_MB_PER_SEC`. Responses are
+`Cache-Control: private, no-store`.
+
+`scripts/codex/pull_corpus.py` (Python standard library only) is the puller: it reads the token from
+the environment or `C:/Users/PC/.studio/secrets.env`, downloads what is new or changed into
+`C:/lusca-codex/corpus/`, checks size and sha256, renames into place, resumes broken downloads,
+never deletes local copies, and exits. Run it every hour.
 
 ## Tests and checks
 
