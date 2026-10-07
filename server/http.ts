@@ -1016,19 +1016,25 @@ export function createHub(opts: HubOptions): Hub {
     "frame-ancestors 'self'",
   ]
 
+  // X player cards: /play/* pages run inside an iframe on x.com / twitter.com (the post's player).
+  const PLAYER_ANCESTORS = "frame-ancestors 'self' https://x.com https://*.x.com https://twitter.com https://*.twitter.com"
+  const isPlayerPath = (req: http.IncomingMessage) => (req.url ?? '/').split('?')[0].startsWith('/play/')
+
   function cspFor(req: http.IncomingMessage): string {
     // 'self' covers same-origin ws:/wss: only in CSP3 browsers: name the socket origin explicitly too.
     // Over HTTPS only wss: is ever used, so plain ws: is left out there.
     const host = req.headers.host ?? ''
     const sockets = viaHttps(req) ? `wss://${host}` : `ws://${host} wss://${host}`
     const connect = /^[a-z0-9.-]+(:\d{1,5})?$|^\[[0-9a-f:.]+\](:\d{1,5})?$/i.test(host) ? `connect-src 'self' ${sockets}` : "connect-src 'self'"
-    return [...CSP_BASE, connect].join('; ')
+    const base = isPlayerPath(req) ? CSP_BASE.map((d) => (d.startsWith('frame-ancestors') ? PLAYER_ANCESTORS : d)) : CSP_BASE
+    return [...base, connect].join('; ')
   }
 
   function applySecurityHeaders(req: http.IncomingMessage, res: http.ServerResponse) {
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
-    res.setHeader('X-Frame-Options', 'SAMEORIGIN')
+    // player pages are framed by X; everything else stays same-origin only
+    if (!isPlayerPath(req)) res.setHeader('X-Frame-Options', 'SAMEORIGIN')
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
     if (hstsMaxAge > 0 && viaHttps(req)) res.setHeader('Strict-Transport-Security', `max-age=${hstsMaxAge}; includeSubDomains`)
     if (cspMode !== 'off') res.setHeader(cspMode === 'report' ? 'Content-Security-Policy-Report-Only' : 'Content-Security-Policy', cspFor(req))
@@ -1705,6 +1711,53 @@ export function createHub(opts: HubOptions): Hub {
     return Object.prototype.hasOwnProperty.call(CLIENT_ROUTES, first) && segs.length - 1 <= CLIENT_ROUTES[first]
   }
 
+  // ── share links: X reads the player-card tags, people are sent on to the page ──
+  const SHARES: Record<string, { title: string; description: string; player: string; image: string; page: string }> = {
+    scan: {
+      title: 'LUSCA Scan · live',
+      description: 'LUSCA chain agents reading Solana programs and EVM contracts, call by call. Solana reads through Helius.',
+      player: '/play/scan',
+      image: '/play/scan-card.jpg',
+      page: '/scan',
+    },
+  }
+  const attr = (v: string) => v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+  function serveShare(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
+    const method = req.method ?? 'GET'
+    if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed', { Allow: 'GET, HEAD' })
+    const m = /^\/r\/([a-z0-9-]{1,32})\/?$/.exec(url.pathname)
+    const s = m ? SHARES[m[1]] : undefined
+    if (!s) throw new HttpError(404, 'not found')
+    const host = String(req.headers.host ?? '').toLowerCase()
+    const origin = canonicalHost ? `https://${canonicalHost}` : `${viaHttps(req) ? 'https' : 'http'}://${/^[a-z0-9.-]+(:\d{1,5})?$/.test(host) ? host : 'localhost'}`
+    // X's crawler reads the tags and must not be sent away; people go straight to the page
+    const bot = /twitterbot|facebookexternalhit|slackbot|discordbot|telegrambot|linkedinbot|whatsapp/i.test(String(req.headers['user-agent'] ?? ''))
+    const tags = [
+      ['name', 'twitter:card', 'player'],
+      ['name', 'twitter:site', '@lusca_ai'],
+      ['name', 'twitter:title', s.title],
+      ['name', 'twitter:description', s.description],
+      ['name', 'twitter:player', origin + s.player],
+      ['name', 'twitter:player:width', '480'],
+      ['name', 'twitter:player:height', '480'],
+      ['name', 'twitter:image', origin + s.image],
+      ['property', 'og:type', 'website'],
+      ['property', 'og:title', s.title],
+      ['property', 'og:description', s.description],
+      ['property', 'og:url', origin + s.page],
+      ['property', 'og:image', origin + s.image],
+    ]
+    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${attr(s.title)}</title>
+<meta name="description" content="${attr(s.description)}">
+${tags.map(([k, n, v]) => `<meta ${k}="${n}" content="${attr(v)}">`).join('\n')}
+<link rel="canonical" href="${attr(origin + s.page)}">${bot ? '' : `
+<meta http-equiv="refresh" content="0; url=${attr(s.page)}">`}
+</head><body style="background:#050505;color:#ecebe6;font:15px system-ui,sans-serif;padding:32px"><a style="color:#ff4d00" href="${attr(s.page)}">${attr(origin.replace(/^https?:\/\//, '') + s.page)}</a></body></html>`
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': Buffer.byteLength(html), 'Cache-Control': 'public, max-age=300', Vary: 'User-Agent' })
+    res.end(method === 'HEAD' ? undefined : html)
+  }
+
   async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
     const method = req.method ?? 'GET'
     if (!distReady() || !distDir) {
@@ -1838,6 +1891,7 @@ export function createHub(opts: HubOptions): Hub {
         }
         if (isApi) await handleApi(req, res, url)
         else if (url.pathname === '/ws') throw new HttpError(426, 'websocket upgrade required', { Upgrade: 'websocket' })
+        else if (url.pathname.startsWith('/r/')) serveShare(req, res, url)
         else await serveStatic(req, res, url)
       } catch (e) {
         const he = e instanceof HttpError ? e : null

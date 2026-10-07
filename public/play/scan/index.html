@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LUSCA Scan · live</title>
+<meta name="robots" content="noindex">
+<link rel="preload" href="/play/fonts/geist-mono.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/play/fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/play/scan.css">
+</head>
+<body>
+<div id="fit">
+  <main id="st" aria-label="LUSCA Scan, live">
+    <div class="glow"></div><div class="grid"></div>
+    <i class="tk tl"></i><i class="tk tr"></i><i class="tk bl"></i><i class="tk br"></i>
+
+    <header class="hd mono">
+      <span class="brand"><b>■</b> LUSCA · SCAN</span>
+      <span class="live"><i></i><span id="live">LIVE</span></span>
+    </header>
+
+    <section class="tg">
+      <div class="row mono"><span id="chain" class="chip">—</span><span id="kind" class="dim">waiting for the next read</span><span id="ago" class="ago"></span></div>
+      <div id="name" class="nm">listening</div>
+      <div id="addr" class="ad mono"></div>
+    </section>
+
+    <section class="stage">
+      <div class="octo"></div>
+      <svg class="wires" viewBox="0 0 480 160" preserveAspectRatio="none" aria-hidden="true">
+        <path id="w0" d="M128 17 C 200 17, 220 92, 300 92"/>
+        <path id="w1" d="M128 55 C 200 55, 220 92, 300 92"/>
+        <path id="w2" d="M128 93 C 200 93, 220 92, 300 92"/>
+        <path id="w3" d="M128 131 C 200 131, 220 92, 300 92"/>
+      </svg>
+      <div class="core"><i></i></div>
+      <ul class="nodes mono">
+        <li id="n0"><b>HELIUS</b><span>solana rpc</span></li>
+        <li id="n1"><b>EVM RPC</b><span>eth · base · arb</span></li>
+        <li id="n2"><b>SOURCIFY</b><span>verified source</span></li>
+        <li id="n3"><b>OTTERSEC</b><span>verified builds</span></li>
+      </ul>
+    </section>
+
+    <section id="calls" class="calls mono"></section>
+    <section id="fields" class="fields mono"></section>
+    <section id="verdict" class="vd mono"><span class="k">verdict</span><span id="vtext" class="dim">pending</span></section>
+
+    <footer class="ft mono">
+      <span id="count" class="dim"></span>
+      <a href="https://lusca.ink/scan" target="_blank" rel="noopener">lusca.ink/scan ↗</a>
+    </footer>
+  </main>
+</div>
+<script src="/play/scan.js" defer></script>
+</body>
+</html>
