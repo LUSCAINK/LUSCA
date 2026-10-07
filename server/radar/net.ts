@@ -22,7 +22,21 @@ export class RangeLimitError extends Error {
   }
 }
 
-const RANGE_RE = /range|limited to|too many|exceed|more than \d+|10000 results|response size|query timeout|block limit|blocks? (?:are )?allowed/i
+/** Unmistakable range / result-size refusals (Infura's "more than 10000 results" comes with -32005, a rate-limit code elsewhere). */
+const RANGE_EXPLICIT_RE =
+  /block range|range (?:is )?too (?:large|wide|big)|range limit|limited to (?:a )?\d+|more than \d+ (?:results|logs|blocks)|\d+ results|too many (?:results|logs|blocks)|exceed(?:s|ed)? (?:the )?(?:max(?:imum)? )?(?:block )?range|response size|query timeout|block limit|blocks? (?:are )?allowed|max(?:imum)? (?:block )?range/i
+/** Rate limits and plan capacity: transient (strike the endpoint, fail over, back off), never a narrower window. */
+const RATE_RE = /rate.?limit|too many requests|capacity|compute units|throughput|request limit|requests? per|credits|quota|daily limit|temporarily unavailable/i
+/** Broader range wording, tried after the rate-limit check. */
+const RANGE_RE = /range|limited to|too many|exceed|more than \d+|response size|query timeout|block limit|blocks? (?:are )?allowed/i
+
+/** How to handle a provider's refusal: 'range' (halve the window), 'rate' (transient: strike, fail over, back off), null (other). */
+export function refusalKind(msg: string, code: number | null): 'range' | 'rate' | null {
+  if (RANGE_EXPLICIT_RE.test(msg)) return 'range'
+  if (code === -32005 || code === 429 || RATE_RE.test(msg)) return 'rate'
+  if (RANGE_RE.test(msg)) return 'range'
+  return null
+}
 const USER_AGENT = 'LUSCA-radar/1.0 (+https://lusca.ink)'
 
 interface Endpoint {
@@ -142,9 +156,14 @@ export function createEvmPool(o: {
       if (res.status === 429) throw new RpcError('http', `${label}: rate limited (HTTP 429)`, { status: 429, transient: true })
       if (res.status < 200 || res.status >= 300) {
         // a range refusal can come with a 4xx status (Base answers 413)
-        const msg = String((j as { error?: { message?: unknown } } | null)?.error?.message ?? '')
-        if (msg && RANGE_RE.test(msg) && !/rate/i.test(msg)) throw new RangeLimitError(`${label}: ${msg.slice(0, 160)}`)
-        throw new RpcError('http', `${label}: HTTP ${res.status}`, { status: res.status, transient: res.status >= 500 || res.status === 408 || res.status === 403 })
+        const err = (j as { error?: { message?: unknown; code?: unknown } } | null)?.error
+        const msg = String(err?.message ?? '')
+        const rk = msg ? refusalKind(msg, typeof err?.code === 'number' ? err.code : null) : null
+        if (rk === 'range') throw new RangeLimitError(`${label}: ${msg.slice(0, 160)}`)
+        throw new RpcError('http', `${label}: HTTP ${res.status}${rk === 'rate' ? ' (rate limited)' : ''}`, {
+          status: res.status,
+          transient: rk === 'rate' || res.status >= 500 || res.status === 408 || res.status === 403,
+        })
       }
       if (j === null) throw new RpcError('bad-json', `${label}: response is not JSON`, { transient: true })
       return j
@@ -157,8 +176,9 @@ export function createEvmPool(o: {
   function rpcError(e: Endpoint, err: { code?: unknown; message?: unknown }): Error {
     const msg = typeof err.message === 'string' ? err.message.slice(0, 200) : 'error'
     const code = typeof err.code === 'number' ? err.code : null
-    if (RANGE_RE.test(msg) && !/rate/i.test(msg)) return new RangeLimitError(`${o.chain} radar ${e.provider}: ${msg}`)
-    const limited = code === -32005 || code === 429 || /rate.?limit|too many requests|capacity|temporarily unavailable/i.test(msg)
+    const rk = refusalKind(msg, code)
+    if (rk === 'range') return new RangeLimitError(`${o.chain} radar ${e.provider}: ${msg}`)
+    const limited = rk === 'rate'
     return new RpcError('rpc', `${o.chain} radar ${e.provider}: ${msg}${code !== null ? ` (${code})` : ''}`, { code, transient: limited || code === -32603 })
   }
 

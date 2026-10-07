@@ -31,6 +31,10 @@ export function createLoaderSubscription(o: {
   url: string
   loaders: string[]
   onLogs: (n: LogsNotification) => void
+  /** Each time a loader subscription is acknowledged (first connect and every reconnect): the caller catches up the gap. */
+  onSubscribed?: () => void
+  /** Bytes of every message received (metering: Helius bills standard WebSockets by data streamed). */
+  onBytes?: (n: number) => void
   log: Log
   /** For tests. */
   WebSocketImpl?: typeof WebSocket
@@ -125,6 +129,13 @@ export function createLoaderSubscription(o: {
       staleTimer.unref?.()
     })
     sock.on('message', (data) => {
+      if (o.onBytes) {
+        try {
+          o.onBytes(Buffer.isBuffer(data) ? data.length : Array.isArray(data) ? data.reduce((n, b) => n + b.length, 0) : (data as ArrayBuffer).byteLength)
+        } catch {
+          /* the meter never breaks the stream */
+        }
+      }
       let j: { id?: unknown; result?: unknown; error?: { message?: unknown }; method?: unknown; params?: { subscription?: unknown; result?: { context?: { slot?: unknown }; value?: { signature?: unknown; err?: unknown; logs?: unknown } } } }
       try {
         j = JSON.parse(String(data))
@@ -136,10 +147,18 @@ export function createLoaderSubscription(o: {
         pending.delete(j.id)
         if (typeof j.result === 'number') {
           subs.set(j.result, loader)
+          const first = st !== 'open'
           st = 'open'
           down = null
           retry = 0
           last = now()
+          if (first && o.onSubscribed) {
+            try {
+              o.onSubscribed()
+            } catch (e) {
+              o.log('warn', `radar websocket: ${redact((e as Error)?.message ?? String(e))}`)
+            }
+          }
         } else {
           o.log('warn', `radar websocket: logsSubscribe refused: ${redact(String(j.error?.message ?? 'no reason')).slice(0, 160)}`)
         }

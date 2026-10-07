@@ -14,8 +14,9 @@
 //      daily slice, charged on top of the shared budgets; default 15 % of the RPC limits above, 40 % of the
 //      registry limits) — server/lens
 //      LUSCA_RADAR=0 (upgrade radar off) · LUSCA_RADAR_BACKFILL=0 · LUSCA_RADAR_SOL_CALLS / _EVM_CALLS / _HTTP_CALLS
-//      (the radar's daily slice, default 15 % / 10 % / 15 %) · LUSCA_RADAR_LOG_CALLS (20000/day per EVM log
-//      endpoint) · LUSCA_RADAR_ETH_LOGS / _BASE_LOGS / _ARB_LOGS (comma lists) — server/radar
+//      (the radar's daily slice, default 25 % / 10 % / 15 %) · LUSCA_RADAR_LOG_CALLS (20000/day per EVM log
+//      endpoint) · LUSCA_RADAR_WS_MB (daily Helius websocket allowance, default 200) ·
+//      LUSCA_RADAR_ETH_LOGS / _BASE_LOGS / _ARB_LOGS (comma lists) — server/radar
 //
 // The REST routes read stored data only (stats / feed / items / item): no RPC per request.
 
@@ -194,10 +195,12 @@ export function createChainAgents(opts: {
       const evmRadar = intEnv('LUSCA_RADAR_EVM_CALLS', -1, -1, 10_000_000)
       const httpRadar = intEnv('LUSCA_RADAR_HTTP_CALLS', -1, -1, 1_000_000)
       const logCalls = intEnv('LUSCA_RADAR_LOG_CALLS', -1, -1, 10_000_000)
+      const wsMb = intEnv('LUSCA_RADAR_WS_MB', -1, -1, 1_000_000)
       if (solCalls >= 0) rl.solana = solCalls
       if (evmRadar >= 0) rl.ethereum = rl.base = rl.arbitrum = evmRadar
       if (httpRadar >= 0) rl.sourcify = rl.osec = httpRadar
       if (logCalls >= 0) rl['logs-ethereum'] = rl['logs-base'] = rl['logs-arbitrum'] = logCalls
+      if (wsMb >= 0) rl['ws-solana'] = wsMb * 10 // metered in 0.1 MB units (Helius bills per 0.1 MB streamed)
       radar = createRadar({
         rpc,
         store,

@@ -108,7 +108,7 @@ export interface Modules {
 
 /** Read side of the upgrade radar: every answer comes from stored events, no RPC. */
 export interface HubRadar {
-  list(q: { chain?: ChainId; kind?: RadarKind; known?: boolean; sort?: 'new' | 'priority'; limit?: number; cursor?: string }): RadarPage
+  list(q: { chain?: ChainId; kind?: RadarKind; other?: boolean; known?: boolean; sort?: 'new' | 'priority'; limit?: number; cursor?: string }): RadarPage
   get(id: string): RadarEvent | null
 }
 
@@ -815,6 +815,13 @@ export function createHub(opts: HubOptions): Hub {
         // the call trace and decoded fields are for /scan; every other page gets the lean event
         const { trace: _t, scan: _s, ...lean } = msg.event
         broadcast({ t: 'chain', event: lean }, (c) => !c.scan)
+        broadcast(msg, (c) => c.scan)
+        return
+      }
+      if (msg.t === 'radar' && msg.event?.trace) {
+        // the radar's calls are for /scan; /radar and every other page get the event without them
+        const { trace: _t, ...lean } = msg.event
+        broadcast({ t: 'radar', event: lean }, (c) => !c.scan)
         broadcast(msg, (c) => c.scan)
         return
       }
@@ -1663,6 +1670,8 @@ export function createHub(opts: HubOptions): Hub {
         if (kindQ && !(RADAR_KINDS as readonly string[]).includes(kindQ)) throw new HttpError(400, `kind must be one of ${RADAR_KINDS.join(', ')}`)
         const knownQ = url.searchParams.get('known') || ''
         if (knownQ && knownQ !== '1' && knownQ !== '0') throw new HttpError(400, 'known must be 1 or 0')
+        const otherQ = url.searchParams.get('other') || ''
+        if (otherQ && otherQ !== '1' && otherQ !== '0') throw new HttpError(400, 'other must be 1 or 0')
         const rawLimit = url.searchParams.get('limit')
         const n = rawLimit === null || rawLimit === '' ? 50 : Number(rawLimit)
         if (!Number.isInteger(n) || n < 1) throw new HttpError(400, 'limit must be an integer from 1 to 100')
@@ -1670,8 +1679,16 @@ export function createHub(opts: HubOptions): Hub {
         if (cursor && !RADAR_ID_RE.test(cursor)) throw new HttpError(400, 'cursor is not one this server issued')
         const sortQ = url.searchParams.get('sort') || 'new'
         if (sortQ !== 'new' && sortQ !== 'priority') throw new HttpError(400, 'sort must be new or priority')
-        const q = { chain: (chainQ || undefined) as ChainId | undefined, kind: (kindQ || undefined) as RadarKind | undefined, known: knownQ === '1', sort: sortQ as 'new' | 'priority', limit: Math.min(100, n), cursor: cursor || undefined }
-        const key = `radar:${chainQ}:${kindQ}:${knownQ}:${sortQ}:${q.limit}:${cursor}`
+        const q = {
+          chain: (chainQ || undefined) as ChainId | undefined,
+          kind: (kindQ || undefined) as RadarKind | undefined,
+          other: otherQ === '1',
+          known: knownQ === '1',
+          sort: sortQ as 'new' | 'priority',
+          limit: Math.min(100, n),
+          cursor: cursor || undefined,
+        }
+        const key = `radar:${chainQ}:${kindQ}:${otherQ}:${knownQ}:${sortQ}:${q.limit}:${cursor}`
         return sendJsonText(req, res, 200, cachedJson(key, () => radar.list(q), RADAR_CACHE_MS), shortCache)
       }
       const id = p.slice('/api/radar/'.length)

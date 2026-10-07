@@ -1,7 +1,8 @@
 // The radar's own daily slice of every budget it touches, persisted write-ahead (<data>/radar/budget.json):
 // a block of calls is written (fsync + rename) before the calls in it are made, so a hard kill can
 // never lose a charged call and the restored count is never lower than the last one shown. A share
-// per clock hour keeps a burst (a deploy wave, a backfill) from spending the day in an hour.
+// per clock hour keeps a burst (a deploy wave, a backfill) from spending the day in an hour; it is saved
+// with the day's count (at the next flush) and restored within the same hour.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -54,8 +55,10 @@ export function createRadarBudget(limits: Record<string, number>, file: string |
   let hourUsed: Record<string, number> = {}
   if (file) {
     try {
-      const j = JSON.parse(fs.readFileSync(file, 'utf8')) as { day?: number; used?: Record<string, number> }
+      const j = JSON.parse(fs.readFileSync(file, 'utf8')) as { day?: number; used?: Record<string, number>; hour?: number; hourUsed?: Record<string, number> }
       if (j.day === day && j.used) for (const [k, v] of Object.entries(j.used)) if (k in limits && Number.isFinite(v) && v > 0) used[k] = Math.floor(v)
+      // the hourly share survives a restart within the same clock hour
+      if (j.hour === hour && j.hourUsed) for (const [k, v] of Object.entries(j.hourUsed)) if (k in limits && Number.isFinite(v) && v > 0) hourUsed[k] = Math.floor(v)
     } catch {
       /* first day */
     }
@@ -65,7 +68,7 @@ export function createRadarBudget(limits: Record<string, number>, file: string |
   const hourCap = (k: string) => Math.max(1, Math.ceil((limits[k] ?? 0) * hourShare))
   const write = (v: Record<string, number>) => {
     if (!file) return
-    writeFileDurable(file, JSON.stringify({ day, used: v }))
+    writeFileDurable(file, JSON.stringify({ day, used: v, hour, hourUsed }))
     onDisk = { ...v }
   }
   const roll = () => {
@@ -96,9 +99,9 @@ export function createRadarBudget(limits: Record<string, number>, file: string |
       const w = why(k, n)
       if (w) throw new RadarBudgetError(k, w)
       const next = (used[k] ?? 0) + n
+      hourUsed[k] = (hourUsed[k] ?? 0) + n
       if (next > (onDisk[k] ?? 0)) write({ ...used, ...onDisk, [k]: Math.min(limits[k] ?? next, next + RESERVE - 1) })
       used[k] = next
-      hourUsed[k] = (hourUsed[k] ?? 0) + n
       dirty = true
     },
     usage() {

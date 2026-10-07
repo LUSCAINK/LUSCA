@@ -60,9 +60,15 @@ export interface RadarDiff {
   /** null = not comparable (one side unknown). */
   added: RadarList | null
   removed: RadarList | null
-  /** Admin-only functions present after and not before (EVM verified source), with file:line. */
+  /**
+   * New admin-only functions (EVM verified source), with file:line: a function added by this change that
+   * is guarded, or an existing function that had no access check before and has one now.
+   */
   guardsAdded: RadarGuard[] | null
+  /** Functions that had an access check before and have none now. */
   guardsRemoved: RadarGuard[] | null
+  /** Existing functions guarded before and after whose check changed (another modifier / condition), both sides with file:line. */
+  guardsChanged?: { fn: string; before: RadarGuard; after: RadarGuard }[] | null
   primitivesAdded: string[] | null
   primitivesRemoved: string[] | null
 }
@@ -89,6 +95,8 @@ export interface RadarEvent {
   count: number
   /** Aggregated EVM deploys: how many proxies, and the first few. */
   proxies?: { n: number; sample: string[] } | null
+  /** An Upgraded event that set the implementation the proxy already had one block earlier (smart wallets re-initializing): no code change, not counted as an upgrade. */
+  sameImpl?: boolean
   /** Who did it: the transaction signer / sender when it was read, else the current authority / admin. */
   actor: string | null
   actorRole: 'signer' | 'sender' | 'authority' | 'admin' | null
@@ -121,10 +129,16 @@ export interface RadarStatus {
     byChain: Partial<Record<ChainId, number>>
     /** Upgraded / BeaconUpgraded events whose proxies could not be checked (deployment or upgrade): not in byKind. */
     unchecked?: number
+    /** Upgraded events that set the same implementation again (no code change): not in byKind. */
+    sameImpl?: number
   }
-  /** First-start backfill per chain. */
+  /** First-start backfill per chain (Solana: as far back as its hard cap reached, a few hours at most). */
   backfill: Partial<Record<ChainId, { done: boolean; fromTs: number | null; events: number; note: string | null }>>
   budget: Record<string, { used: number; limit: number }>
+  /** Radar slices used up right now ('day': until 00:00 UTC · 'hour': until the next hour): reads they pay for wait. */
+  exhausted?: { key: string; why: 'day' | 'hour' }[]
+  /** Solana "New authority" lines whose program could not be identified (counted, not listed), today. */
+  unattributed?: number
   stored: number
   updatedAt: number
 }
@@ -136,5 +150,11 @@ export interface RadarPage {
   status: RadarStatus
 }
 
-// REST: GET /api/radar?chain=&kind=&known=1&sort=new|priority&limit=(≤100)&cursor= → RadarPage · GET /api/radar/:id → RadarEvent (full, with trace) | 404
-// WS: { t: 'radar'; event: RadarEvent } (compact, < 8 KB; an update of an event re-sends it with the same id)
+/** Folded Upgraded / BeaconUpgraded events that are not confirmed upgrades: proxies not checked, or the same implementation set again. */
+export const isOtherEvent = (e: Pick<RadarEvent, 'kind' | 'proxies' | 'sameImpl'>): boolean => !!e.sameImpl || (!!e.proxies && e.kind !== 'deploy')
+
+// REST: GET /api/radar?chain=&kind=&other=1&known=1&sort=new|priority&limit=(≤100)&cursor= → RadarPage
+//       (kind=upgrade / beacon_upgrade: confirmed changes only; other=1: the folded events isOtherEvent() describes)
+//       · GET /api/radar/:id → RadarEvent (full, with trace) | 404
+// WS: { t: 'radar'; event: RadarEvent } (compact, < 8 KB; an update of an event re-sends it with the same id; the call
+//     trace goes only to sockets on /scan)

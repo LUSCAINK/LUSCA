@@ -19,7 +19,8 @@ import type { ChainId } from '../../shared/chain.ts'
 
 export interface RpcCtx {
   /** `onStart` runs when the request actually goes out, after any wait for its turn (in-flight limit, spacing, cool-down). */
-  call(chain: ChainId, method: string, params: unknown[], opts?: { discovery?: boolean; timeoutMs?: number; maxBytes?: number; onStart?: () => void }): Promise<unknown>
+  /** `weight`: budget units the call costs (default 1; e.g. getProgramAccounts, which providers bill at several credits). */
+  call(chain: ChainId, method: string, params: unknown[], opts?: { discovery?: boolean; timeoutMs?: number; maxBytes?: number; onStart?: () => void; weight?: number }): Promise<unknown>
   fetchJson(url: string, opts?: { timeoutMs?: number; maxBytes?: number; host?: 'sourcify' | 'osec'; onStart?: () => void }): Promise<unknown>
   usage(): Record<string, { used: number; limit: number }>
   canSpend(chain: ChainId, n?: number, discovery?: boolean): boolean
@@ -318,10 +319,10 @@ export function createRpc(opts: RpcOptions): ChainRpc {
     return used[key] + Math.max(0, n) <= limits[key]
   }
 
-  function charge(key: BudgetKey) {
+  function charge(key: BudgetKey, n = 1) {
     roll()
-    if (used[key] + 1 > limits[key]) throw new BudgetError(key)
-    used[key]++
+    if (used[key] + n > limits[key]) throw new BudgetError(key)
+    used[key] += n
     dirty = true
   }
 
@@ -454,7 +455,7 @@ export function createRpc(opts: RpcOptions): ChainRpc {
     chain: ChainId,
     method: string,
     params: unknown[],
-    o: { discovery?: boolean; timeoutMs?: number; maxBytes?: number; onStart?: () => void } = {},
+    o: { discovery?: boolean; timeoutMs?: number; maxBytes?: number; onStart?: () => void; weight?: number } = {},
   ): Promise<unknown> {
     if (closed) throw new RpcError('closed', 'chain network layer closed')
     const key = budgetKey(chain, o.discovery === true)
@@ -464,11 +465,12 @@ export function createRpc(opts: RpcOptions): ChainRpc {
     const label = `${chain}${key === 'solana-discovery' ? ' discovery' : ''} rpc ${safeMethod}`
     const timeoutMs = Math.max(100, o.timeoutMs ?? defTimeout)
     const maxBytes = Math.max(1024, o.maxBytes ?? METHOD_MAX_BYTES[method] ?? DEFAULT_RPC_MAX_BYTES)
-    if (!canSpendKey(key)) throw new BudgetError(key)
+    const weight = Math.max(1, Math.min(100, Math.floor(o.weight ?? 1)))
+    if (!canSpendKey(key, weight)) throw new BudgetError(key)
     const g = gateOf(`rpc:${endpointKey}`)
     await acquire(g, maxInFlight, minGapMs)
     try {
-      charge(key)
+      charge(key, weight)
       started(o.onStart)
       const id = ++rpcId
       const { status, body } = await exchange(

@@ -5,9 +5,14 @@
 //            ("Deployed / Upgraded program <id>", "New authority …", "Closed Program <id>") ─▶ wait a
 //            few seconds (deploy scripts upgrade again and again: folded into one event) ─▶ read the
 //            program with the chain agents' reader (code hash, authority, IDL, OtterSec, ELF syscalls)
-//            ─▶ compare with what LUSCA had (the radar's last snapshot, else the chain agents' kept item)
-//            Socket down ▶ budgeted polling of the loader's signatures (getSignaturesForAddress +
-//            getTransaction for the transactions that land alone in their slot)
+//            ─▶ compare with what LUSCA had (the radar's last snapshot, else the chain agents' kept item),
+//            only when that state predates the change (deploy slot and read time older than it)
+//            Gaps ▶ loader signatures (getSignaturesForAddress on the discovery RPC: Helius refuses it for
+//            the loader) since the last checked one, then getTransaction (Helius) for the transactions in
+//            slots without a buffer-write burst that the socket did not deliver: after every (re)subscribe,
+//            every 10 min as a safety net, every 45 s while the socket is down
+//            The socket's bytes are metered (Helius bills standard WebSockets by data streamed): past the
+//            daily allowance the radar listens on the public websocket until 00:00 UTC
 //   EVM      eth_getLogs over all addresses for Upgraded / AdminChanged / BeaconUpgraded, bounded block
 //            windows (halved when the provider refuses, resumed from a persisted cursor) on the radar's
 //            own endpoints ─▶ per (tx, proxy): did the address have code one block earlier (deploy vs
@@ -16,18 +21,20 @@
 //            admin-only functions with file:line, Lens's analyser under its work cap)
 //            ─▶ deployments of one implementation within an hour fold into one event
 //
-// Budgets: its own slice of every shared budget (Helius 'solana', EVM reads, Sourcify, OtterSec),
-// charged on top of the shared limit, never below a 10 % floor of it (the chain agents keep the rest),
-// and a per-hour share; the log endpoints have their own daily budget. Backfill (first start only,
-// never again): a separate hard-capped allowance. Everything persisted under <data>/radar (persist.ts).
+// Budgets: its own slice of every shared budget (Helius 'solana', the discovery RPC, EVM reads, Sourcify,
+// OtterSec), charged on top of the shared limit, never below a 10 % floor of it (the chain agents keep the
+// rest), and a per-hour share; the log endpoints have their own daily budget, the Helius socket a daily
+// byte allowance. Backfill (first start only; retried once when its first call failed): a separate
+// hard-capped allowance. Everything persisted under <data>/radar (persist.ts).
 //
 // Env: LUSCA_RADAR=0 (off) · LUSCA_RADAR_BACKFILL=0 · LUSCA_RADAR_SOL_CALLS · LUSCA_RADAR_EVM_CALLS ·
-//      LUSCA_RADAR_HTTP_CALLS · LUSCA_RADAR_LOG_CALLS · LUSCA_RADAR_ETH_LOGS / _BASE_LOGS / _ARB_LOGS
-//      (comma lists of log endpoints) · LUSCA_RADAR_SOLANA_WS (explicit websocket URL)
+//      LUSCA_RADAR_HTTP_CALLS · LUSCA_RADAR_LOG_CALLS · LUSCA_RADAR_WS_MB (daily websocket allowance) ·
+//      LUSCA_RADAR_ETH_LOGS / _BASE_LOGS / _ARB_LOGS (comma lists of log endpoints) ·
+//      LUSCA_RADAR_SOLANA_WS (explicit websocket URL)
 
 import path from 'node:path'
 import type { ChainId, ChainRead } from '../../shared/chain.ts'
-import type { RadarEvent, RadarKind, RadarPage, RadarSide, RadarStatus } from '../../shared/radar.ts'
+import { isOtherEvent, type RadarEvent, type RadarKind, type RadarPage, type RadarSide, type RadarStatus } from '../../shared/radar.ts'
 import { BudgetError, RpcError, providerOfUrl, redact, registerSecretUrl, type BudgetKey, type ChainRpc, type RpcCtx } from '../chain/rpc.ts'
 import { OSEC_UNAVAILABLE, readSolana as defaultReadSolana } from '../chain/solana.ts'
 import { readEvm as defaultReadEvm } from '../chain/evm.ts'
@@ -38,13 +45,14 @@ import { safeName } from '../lens/index.ts'
 import { AnalysisLimit, Work, findPrivileged } from '../lens/evm-analysis.ts'
 import { scanElf, solanaPrimitives } from '../lens/elf-syscalls.ts'
 import { createRadarBudget, type RadarBudget } from './budget.ts'
-import { diffSnapshots, sideOf, snapshotOfRead, type Snapshot } from './diff.ts'
-import { DEFAULT_LOG_ENDPOINTS, RangeLimitError, createEvmPool, wsUrlOf, type EvmChain, type EvmPool } from './net.ts'
+import { diffGuards, diffSnapshots, sideOf, snapshotOfRead, validBefore, type Snapshot } from './diff.ts'
+import { DEFAULT_LOG_ENDPOINTS, RangeLimitError, createEvmPool, refusalKind, wsUrlOf, type EvmChain, type EvmPool } from './net.ts'
 import {
   LOADER_V4,
   RADAR_TOPICS,
   UPGRADEABLE_LOADER,
   classifyProxyGroup,
+  emptyDiff,
   groupFacts,
   groupProxyLogs,
   headlineOf,
@@ -70,6 +78,19 @@ const DAY = 86_400_000
 const EVENT_CAP = 5000
 const SNAPSHOT_CAP = 4000
 const WS_EVENT_MAX = 8 * 1024
+const PUBLIC_SOLANA_HTTP = 'https://api.mainnet-beta.solana.com'
+/** Websocket metering unit: Helius bills standard WebSockets per 0.1 MB streamed. */
+const WS_UNIT = 100 * 1024
+/** Default daily websocket allowance on a paid endpoint, in WS_UNITs (200 MB). */
+const WS_UNITS_DEFAULT = 2000
+/** Loader signature pages per gap check, and getTransaction calls per check. */
+const RECON_PAGES = 5
+const RECON_TX = 25
+/** Websocket signatures remembered so a gap check only reads what the socket missed (~1 h of loader traffic, ~2 MB). */
+const WS_SEEN_CAP = 15_000
+/** Solana backfill: hard caps (one time). */
+const BF_SOL_PAGES = 60
+const BF_SOL_TX = 500
 
 /** Average block time (block-height time estimates) and the widest getLogs window tried. */
 const BLOCK_MS: Record<EvmChain, number> = { ethereum: 12_000, base: 2_000, arbitrum: 250 }
@@ -88,8 +109,10 @@ export interface RadarTiming {
   /** Deployments of one implementation within this window fold into one event. */
   deployAggMs: number
   evmPollMs: number
-  /** Polling of loader signatures while the websocket is down. */
+  /** Gap checks of loader signatures while the websocket is down. */
   solPollMs: number
+  /** Gap check while the websocket is up (a safety net for notifications it did not deliver). */
+  reconcileMs: number
   /** The websocket counts as down after this long without being open. */
   wsDownMs: number
   /** First backfill step after start. */
@@ -104,7 +127,8 @@ export const DEFAULT_TIMING: RadarTiming = {
   coalesceMs: 15 * 60_000,
   deployAggMs: 60 * 60_000,
   evmPollMs: 45_000,
-  solPollMs: 30_000,
+  solPollMs: 45_000,
+  reconcileMs: 10 * 60_000,
   wsDownMs: 60_000,
   backfillDelayMs: 25_000,
   backfillGapMs: 1_500,
@@ -134,7 +158,10 @@ export interface RadarOptions {
 
 export interface RadarListQuery {
   chain?: ChainId
+  /** upgrade / beacon_upgrade: confirmed changes only (folded Upgraded events are listed with `other`). */
   kind?: RadarKind
+  /** Folded Upgraded / BeaconUpgraded events that are not confirmed upgrades (isOtherEvent). */
+  other?: boolean
   known?: boolean
   /** 'priority': most significant first (known protocols, bigger diffs), then newest. Default: newest first. */
   sort?: 'new' | 'priority'
@@ -154,8 +181,16 @@ export interface Radar {
   ingestEvmLogs(chain: EvmChain, logs: unknown[], o?: { backfill?: boolean; head?: { n: number; ts: number } }): Promise<void>
   /** Resolves when no Solana / EVM work is queued or running (tests). */
   idle(): Promise<void>
+  /** One gap check of loader signatures, as after a (re)subscribe (tests). */
+  checkSolanaGaps(): Promise<void>
+  /** Run the first-start backfill now (tests; it still runs at most as the state allows). */
+  runBackfill(): Promise<void>
 }
 
+const RESTART_NOTE = 'not read: the server restarted before the read'
+const NEWER_NOTE = 'no earlier state: what LUSCA had of this program was read after this change'
+/** getProgramAccounts costs 10 Helius credits: charged as 10 calls. */
+const GPA_WEIGHT = 10
 const errMsg = (e: unknown) => redact(e instanceof Error ? e.message : String(e)).slice(0, 140)
 const hex = (n: number) => `0x${Math.max(0, n).toString(16)}`
 const SOL_LOADERS = [UPGRADEABLE_LOADER, LOADER_V4]
@@ -164,7 +199,11 @@ interface SolPending {
   program: string
   kind: RadarKind
   sigs: string[]
+  /** Latest slot of the burst. */
   slot: number | null
+  /** First change of the burst: a before must predate it. */
+  firstSlot: number | null
+  firstTs: number
   firstAt: number
   timer: NodeJS.Timeout | null
   eventId: string
@@ -201,7 +240,10 @@ export function createRadar(o: RadarOptions): Radar {
   const shared = o.rpc.usage()
   const pct = (k: string, p: number, min: number) => Math.max(min, Math.floor((shared[k]?.limit ?? 0) * p))
   const limits: Record<string, number> = {
-    solana: pct('solana', 0.15, 100),
+    // ~2 calls per Solana change read (about 500 changes a day) plus getTransaction for the signer and gap checks
+    solana: pct('solana', 0.25, 100),
+    // loader signature pages for gap checks (Helius refuses getSignaturesForAddress on the loader)
+    'solana-discovery': pct('solana-discovery', 0.25, 100),
     ethereum: pct('ethereum', 0.1, 100),
     base: pct('base', 0.1, 100),
     arbitrum: pct('arbitrum', 0.1, 100),
@@ -212,11 +254,16 @@ export function createRadar(o: RadarOptions): Radar {
     'logs-arbitrum': 20_000,
     ...o.limits,
   }
+  const wsUnits = Math.max(0, Math.floor(limits['ws-solana'] ?? WS_UNITS_DEFAULT))
+  delete limits['ws-solana']
   const budget: RadarBudget = createRadarBudget(limits, path.join(dir, 'budget.json'), now, 0.15)
+  // the paid websocket's daily byte allowance (in 0.1 MB units; no hourly share: notifications come in bursts)
+  const wsBudget: RadarBudget = createRadarBudget({ 'ws-solana': wsUnits }, path.join(dir, 'ws-budget.json'), now, 1)
   // the first-start backfill: a one-time hard-capped allowance (no hourly share)
   const bfBudget: RadarBudget = createRadarBudget(
     {
-      solana: 700,
+      solana: 800,
+      'solana-discovery': BF_SOL_PAGES + 5,
       osec: 200,
       ethereum: 300,
       base: 300,
@@ -242,16 +289,17 @@ export function createRadar(o: RadarOptions): Radar {
     return u.limit - u.used - n >= Math.ceil(u.limit * 0.1)
   }
 
-  /** The chain agents' network layer, charged to the radar's slice first. */
+  /** The chain agents' network layer, charged to the radar's slice first (a call's weight on both). */
   function sharedCtx(bf: boolean): RpcCtx {
     const b = budgetOf(bf)
     const keyOf = (chain: ChainId): BudgetKey => (chain === 'solana' ? 'solana' : chain)
     return {
       call(chain, method, params, opts) {
         const k = keyOf(chain)
-        if (!sharedRoom(k)) return Promise.reject(new BudgetError(k))
+        const w = Math.max(1, Math.floor(opts?.weight ?? 1))
+        if (!sharedRoom(k, w)) return Promise.reject(new BudgetError(k))
         try {
-          b.charge(k)
+          b.charge(k, w)
         } catch (e) {
           return Promise.reject(e)
         }
@@ -270,6 +318,20 @@ export function createRadar(o: RadarOptions): Radar {
     }
   }
   const canSol = (bf: boolean, n = 1) => budgetOf(bf).can('solana', n) && sharedRoom('solana', n)
+  const canDisc = (bf: boolean, n = 1) => budgetOf(bf).can('solana-discovery', n) && sharedRoom('solana-discovery', n)
+
+  /** Loader signatures: on the discovery RPC (the public mainnet RPC by default). Helius answers getSignaturesForAddress
+   *  for the upgradeable loader with "Address is not supported" (-32602), so it never goes there. */
+  function discoveryCall(bf: boolean, method: string, params: unknown[], opts: { timeoutMs?: number; maxBytes?: number }): Promise<unknown> {
+    const k = 'solana-discovery'
+    if (!sharedRoom(k)) return Promise.reject(new BudgetError(k))
+    try {
+      budgetOf(bf).charge(k)
+    } catch (e) {
+      return Promise.reject(e)
+    }
+    return o.rpc.call('solana', method, params, { ...opts, discovery: true })
+  }
 
   // ── storage ──
   const evlog = createEventLog(path.join(dir, 'events.jsonl'), EVENT_CAP, log)
@@ -292,19 +354,12 @@ export function createRadar(o: RadarOptions): Radar {
   const beforeSnaps = new Map<string, Snapshot | null>()
   let seq = 0
 
-  for (const e of evlog.load()) {
-    // a read cut short by a restart says so instead of staying "reading…" forever
-    if (e.state === 'pending') {
-      e.state = 'partial'
-      if (!e.notes.includes('not read: the server restarted before the read')) e.notes = [...e.notes, 'not read: the server restarted before the read']
-      e.headline = headlineOf(e)
-    }
-    events.set(e.id, e)
-  }
+  // reads cut short by a restart are queued again at boot (bootRepair, below)
+  for (const e of evlog.load()) events.set(e.id, e)
   for (const e of [...events.values()].sort((a, b) => a.seenAt - b.seenAt)) latestByKey.set(keyOfEvent(e), e.id)
 
   function keyOfEvent(e: RadarEvent): string {
-    if (e.proxies) return `${e.chain}:agg:${e.kind}:${e.after?.implementation ?? e.after?.beacon ?? e.address}`
+    if (e.proxies) return `${e.chain}:agg:${e.sameImpl ? 'same' : e.kind}:${e.after?.implementation ?? e.after?.beacon ?? e.address}`
     const g = e.kind === 'admin_change' ? 'admin' : e.kind === 'beacon_upgrade' ? 'beacon' : e.kind === 'authority_change' ? 'auth' : 'code'
     return `${e.chain}:${e.address}:${g}`
   }
@@ -337,6 +392,8 @@ export function createRadar(o: RadarOptions): Radar {
   /** Store a new version of an event, persist it, broadcast it. */
   function put(ev: RadarEvent, broadcast = true) {
     ev.updatedAt = now()
+    // new facts after a restart: the restart note no longer applies
+    if (ev.state === 'read' && ev.notes.includes(RESTART_NOTE)) ev.notes = ev.notes.filter((n) => n !== RESTART_NOTE)
     ev.headline = headlineOf(ev)
     ev.priority = priorityOf(ev)
     ev.notes = [...new Set(ev.notes)].slice(0, 12)
@@ -403,11 +460,12 @@ export function createRadar(o: RadarOptions): Radar {
   // ════════════════════════════════════════════════════════════════════════
 
   const solPending = new Map<string, SolPending>()
-  const solQueue: (SolPending | { auth: true; sig: string; slot: number | null; newAuthority: string | null; via: string; backfill: boolean; blockTime: number | null })[] = []
+  type AuthTask = { auth: true; sig: string; slot: number | null; newAuthority: string | null; via: string; backfill: boolean; blockTime: number | null }
+  const solQueue: (SolPending | AuthTask)[] = []
   const seenSigs = new Set<string>()
+  /** Signatures the websocket delivered (bounded): a gap check reads only what the socket missed. */
+  const wsSeen = new Set<string>()
   let solBusy = false
-  let notAttributed = 0
-  const solVia = { ws: '', poll: '' }
 
   function seenSig(sig: string): boolean {
     if (seenSigs.has(sig)) return true
@@ -416,7 +474,15 @@ export function createRadar(o: RadarOptions): Radar {
     return false
   }
 
-  /** One loader transaction (from the websocket, the polling fallback or the backfill). */
+  /** "New authority" lines whose program could not be identified, counted per UTC day (status). */
+  function countUnattributed() {
+    const d = Math.floor(now() / DAY)
+    if (!state.unattributed || state.unattributed.day !== d) state.unattributed = { day: d, n: 0 }
+    state.unattributed.n++
+    markState()
+  }
+
+  /** One loader transaction (from the websocket, a gap check or the backfill). */
   function onSolanaTx(sig: string, slot: number | null, err: unknown, logs: string[], via: string, backfill: boolean, blockTime: number | null, signers?: string[]) {
     if (err) return
     const acts = interestingActions(parseLoaderLogs(logs))
@@ -442,12 +508,19 @@ export function createRadar(o: RadarOptions): Radar {
 
   function notePending(program: string, kind: RadarKind, sig: string, slot: number | null, via: string, backfill: boolean, blockTime: number | null, newAuthority?: string | null, signers?: string[]) {
     const key = `solana:${program}`
-    const p = solPending.get(key)
+    let p = solPending.get(key)
+    // the backfill hands changes over oldest first: one far from the burst before it starts its own event
+    if (p && p.backfill && blockTime && p.blockTime && blockTime - p.blockTime > T.coalesceMs) {
+      enqueueSol(key)
+      p = undefined
+    }
     if (p) {
       const fresh = !p.sigs.includes(sig)
       if (fresh) p.sigs.push(sig)
       if (p.sigs.length > 50) p.sigs.shift()
       p.slot = Math.max(p.slot ?? 0, slot ?? 0) || p.slot
+      if (slot != null && (p.firstSlot == null || slot < p.firstSlot)) p.firstSlot = slot
+      if (blockTime && blockTime < p.firstTs) p.firstTs = blockTime
       // deploy then upgrade in one burst is still the deployment; a close wins; an upgrade beats an authority change
       if (kind === 'close' || (kind === 'deploy' && p.kind !== 'close') || (kind === 'upgrade' && p.kind === 'authority_change')) p.kind = kind
       if (newAuthority !== undefined) p.newAuthority = newAuthority
@@ -458,6 +531,8 @@ export function createRadar(o: RadarOptions): Radar {
         if (fresh) ev.count += 1
         ev.tx = sig
         ev.kind = p.kind
+        ev.slot = p.slot ?? ev.slot
+        if (blockTime) ev.ts = Math.max(ev.ts, blockTime)
         put(ev)
       }
       if (p.timer && !backfill) {
@@ -486,10 +561,10 @@ export function createRadar(o: RadarOptions): Radar {
       ev = blankEvent('solana', kind, program, { tx: sig, slot, ts, via, backfill: backfill || undefined })
     }
     put(ev)
-    const np: SolPending = { program, kind: ev.kind, sigs: [sig], slot, firstAt: now(), timer: null, eventId: ev.id, newAuthority, signers, blockTime, via, backfill }
+    const np: SolPending = { program, kind: ev.kind, sigs: [sig], slot, firstSlot: slot, firstTs: ts, firstAt: now(), timer: null, eventId: ev.id, newAuthority, signers, blockTime, via, backfill }
     solPending.set(key, np)
-    if (backfill) enqueueSol(key)
-    else {
+    // a backfill's changes are queued together once it has collected them (flushBackfill)
+    if (!backfill) {
       np.timer = setTimeout(() => enqueueSol(key), T.solDelayMs)
       np.timer.unref?.()
     }
@@ -503,6 +578,11 @@ export function createRadar(o: RadarOptions): Radar {
     p.timer = null
     solQueue.push(p)
     pumpSol()
+  }
+
+  /** Queue the backfill's collected changes (in the order they landed). */
+  function flushBackfill() {
+    for (const [k, p] of [...solPending]) if (p.backfill) enqueueSol(k)
   }
 
   function pumpSol() {
@@ -522,20 +602,28 @@ export function createRadar(o: RadarOptions): Radar {
       })
   }
 
-  /** What LUSCA knew of a program before this change: the radar's snapshot, else the chain agents' kept item. */
-  function priorSolana(program: string): { snap: Snapshot; from: RadarSide['from'] } | null {
+  /**
+   * What LUSCA knew of a program before a change: the radar's snapshot, else the chain agents' kept item —
+   * each only when it predates the change (validBefore). `newer`: LUSCA has a state, but read after the change.
+   */
+  function priorSolana(program: string, change: { slot: number | null; ts: number }): { snap: Snapshot | null; from: RadarSide['from']; newer: boolean } {
+    let newer = false
     const s = snapshots.get(`solana:${program}`)
-    if (s) return { snap: s, from: 'radar' }
+    if (s) {
+      if (validBefore(s, change)) return { snap: s, from: 'radar', newer: false }
+      newer = true
+    }
     try {
       const it = o.store.item('solana', program)
       if (it) {
         const snap = snapshotOfRead(it.read, { registryAsked: !!it.read.codeHash && !it.read.notes.some((n) => n.startsWith(OSEC_UNAVAILABLE)), at: it.item.readAt })
-        return { snap, from: 'chain-index' }
+        if (validBefore(snap, change)) return { snap, from: 'chain-index', newer: false }
+        newer = true
       }
     } catch {
       /* not readable now */
     }
-    return null
+    return { snap: null, from: 'radar', newer }
   }
 
   async function readProgramEvent(p: SolPending) {
@@ -550,13 +638,18 @@ export function createRadar(o: RadarOptions): Radar {
       prior = { snap: s, from: ev.before?.from ?? 'radar' }
     } else {
       // a deployment has no before (a closed program id cannot be deployed again)
-      const pr = p.kind === 'deploy' ? null : priorSolana(p.program)
-      prior = pr ?? { snap: null, from: 'radar' }
+      const pr = p.kind === 'deploy' ? null : priorSolana(p.program, { slot: p.firstSlot, ts: p.firstTs })
+      if (pr?.newer && !pr.snap) notes.push(NEWER_NOTE)
+      prior = pr ? { snap: pr.snap, from: pr.from } : { snap: null, from: 'radar' }
       beforeSnaps.set(ev.id, prior.snap)
     }
     let after: Snapshot | null = null
     let read: ChainRead | null = null
-    if (canSol(p.backfill)) {
+    // the backfill reads a program once: a read of minutes ago that already includes this change is the after
+    const recentRead = p.backfill ? snapshots.get(`solana:${p.program}`) : null
+    if (recentRead && recentRead.codeHash && now() - recentRead.at < 10 * 60_000 && (recentRead.deploySlot ?? 0) >= (p.slot ?? 0)) {
+      after = recentRead
+    } else if (canSol(p.backfill)) {
       try {
         let prims: string[] | null = null
         const res = await readSolana(p.program, tracer.ctx, {
@@ -578,14 +671,16 @@ export function createRadar(o: RadarOptions): Radar {
       }
     } else notes.push('program not read: radar budget used up for now')
 
-    // who signed: the transaction, when the budget allows; else the authority
+    // who signed: the transaction, when the budget allows (and the slice is not running low); else the authority
     let actor: string | null = null
     let role: RadarEvent['actorRole'] = null
     let blockTime = p.blockTime
+    const slice = budget.usage().solana
+    const tight = !p.backfill && !!slice && slice.used > slice.limit * 0.75
     if (p.signers?.length) {
       actor = p.signers[0]
       role = 'signer'
-    } else if (canSol(p.backfill) && p.sigs.length) {
+    } else if (!tight && canSol(p.backfill) && p.sigs.length) {
       try {
         const tx = await tracer.ctx.call('solana', 'getTransaction', [p.sigs[p.sigs.length - 1], { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }], { timeoutMs: 8000, maxBytes: 1048576 })
         const signers = txSigners(tx)
@@ -605,8 +700,13 @@ export function createRadar(o: RadarOptions): Radar {
       role = 'authority'
     }
 
-    const why = knownWhy('solana', [p.program]) ?? (read?.verified?.repo && inCodeIndex(read.verified.repo) ? 'OtterSec build repository is in the code index' : null) ?? prior.snap?.known ?? null
-    if (after) {
+    const reused = after !== null && after === recentRead
+    const repo = read ? (read as ChainRead).verified?.repo : null
+    let why: string | null = knownWhy('solana', [p.program])
+    if (!why && repo && inCodeIndex(repo)) why = 'OtterSec build repository is in the code index'
+    if (!why && reused) why = after?.known ?? null
+    if (!why) why = prior.snap?.known ?? null
+    if (after && !reused) {
       after.known = why
       snapshots.put(`solana:${p.program}`, after)
       try {
@@ -618,10 +718,11 @@ export function createRadar(o: RadarOptions): Radar {
     const cur = events.get(p.eventId)
     if (!cur) return
     cur.kind = p.kind
+    cur.slot = p.slot ?? cur.slot
     cur.known = !!why
     cur.knownWhy = why
-    const verified = read?.verified ?? null
-    cur.name = why || verified || read?.idl ? safeName(read?.name ?? prior.snap?.name ?? null) : null
+    const published = !!after && (after.verified === 'osec' || !!after.surface)
+    cur.name = why || published ? safeName(after?.name ?? prior.snap?.name ?? null) : null
     cur.before = prior.snap ? sideOf(prior.snap, prior.from) : null
     cur.after = after ? sideOf(after, 'read') : cur.after
     cur.diff = after ? diffSnapshots(prior.snap, after) : cur.diff
@@ -632,9 +733,12 @@ export function createRadar(o: RadarOptions): Radar {
     if (p.kind === 'authority_change' && p.newAuthority !== undefined && after && (after.authority ?? null) !== (p.newAuthority ?? null)) {
       notes.push(`the transaction set ${p.newAuthority ?? 'no authority'}; the program now reads ${after.authority ?? 'no authority'} (changed again since)`)
     }
+    if ((p.kind === 'upgrade' || p.kind === 'deploy') && after?.deploySlot != null && p.slot != null && after.deploySlot > p.slot) {
+      notes.push(`upgraded again at slot ${after.deploySlot} before this read: the state after is that later one`)
+    }
     if (p.backfill) notes.push('found by the first-start backfill: the state shown after is the state read now')
     if (prior.from === 'chain-index' && prior.snap) notes.push(`before: as the chain agents read it on ${new Date(prior.snap.at).toISOString().slice(0, 16).replace('T', ' ')} UTC`)
-    if (!prior.snap && p.kind === 'upgrade') notes.push('first time LUSCA sees this program: no earlier state to compare')
+    if (!prior.snap && p.kind === 'upgrade' && !notes.includes(NEWER_NOTE) && !cur.notes.includes(NEWER_NOTE)) notes.push('first time LUSCA sees this program: no earlier state to compare')
     cur.notes = [...cur.notes.filter((n) => !/^(program not read|transaction not read|not read: the server)/.test(n)), ...notes]
     const calls = tracer.calls()
     if (calls.length) cur.trace = calls.slice(0, 12)
@@ -642,7 +746,7 @@ export function createRadar(o: RadarOptions): Radar {
   }
 
   /** "New authority …" without a program in the same transaction: find which program it was for. */
-  async function resolveAuthority(t: { sig: string; slot: number | null; newAuthority: string | null; via: string; backfill: boolean; blockTime: number | null }) {
+  async function resolveAuthority(t: AuthTask) {
     if (!canSol(t.backfill, 2)) return
     const ctx = sharedCtx(t.backfill)
     let tx: unknown
@@ -657,14 +761,15 @@ export function createRadar(o: RadarOptions): Radar {
     const blockTime = Number.isFinite(bt) && bt > 0 ? bt * 1000 : t.blockTime
     for (const target of targets.slice(0, 2)) {
       let program = snapshots.programOfData(target)
-      if (!program && canSol(t.backfill)) {
+      // getProgramAccounts: Helius bills it at 10 credits, so it is charged as 10 calls
+      if (!program && canSol(t.backfill, GPA_WEIGHT)) {
         // the program account holds its programdata address at byte 4: one indexed lookup on the loader
         try {
           const res = await ctx.call(
             'solana',
             'getProgramAccounts',
             [UPGRADEABLE_LOADER, { encoding: 'base64', dataSlice: { offset: 0, length: 0 }, filters: [{ dataSize: 36 }, { memcmp: { offset: 4, bytes: target } }] }],
-            { timeoutMs: 10_000, maxBytes: 65_536 },
+            { timeoutMs: 10_000, maxBytes: 65_536, weight: GPA_WEIGHT },
           )
           const first = Array.isArray(res) ? (res[0] as { pubkey?: unknown } | undefined) : undefined
           if (first && typeof first.pubkey === 'string') {
@@ -676,62 +781,158 @@ export function createRadar(o: RadarOptions): Radar {
         }
       }
       if (!program) {
-        notAttributed++
+        countUnattributed()
         continue
       }
       notePending(program, 'authority_change', t.sig, t.slot, t.via, t.backfill, blockTime, t.newAuthority, signers)
     }
+    if (t.backfill) flushBackfill()
   }
 
-  // ── websocket + polling fallback ──
-  const solanaHttp = o.solanaRpcUrl?.trim() || 'https://api.mainnet-beta.solana.com'
-  const wsUrl = o.solanaWsUrl?.trim() || wsUrlOf(solanaHttp)
-  if (wsUrl) registerSecretUrl(wsUrl)
-  const wsProvider = providerOfUrl(wsUrl || solanaHttp, 'Solana RPC') // name the socket actually opened
-  solVia.ws = `${wsProvider === 'Solana public RPC' ? 'Solana public' : wsProvider} websocket`
-  solVia.poll = `${o.rpc.provider('solana')} · loader signatures`
+  // ── websocket (Helius, metered; the public one past the allowance) + gap checks ──
+  const solanaHttp = o.solanaRpcUrl?.trim() || PUBLIC_SOLANA_HTTP
+  const publicWs = wsUrlOf(PUBLIC_SOLANA_HTTP) as string
+  const primaryWs = o.solanaWsUrl?.trim() || wsUrlOf(solanaHttp) || publicWs
+  registerSecretUrl(primaryWs)
+  const wsName = (u: string) => {
+    const pr = providerOfUrl(u, 'Solana RPC')
+    return `${pr === 'Solana public RPC' ? 'Solana public' : pr} websocket`
+  }
+  /** A paid socket (Helius): metered, and swapped for the public one when its allowance runs out. */
+  const primaryPaid = providerOfUrl(primaryWs, 'Solana RPC') !== 'Solana public RPC'
+  let wsTarget: 'primary' | 'fallback' = 'primary'
+  let wsBytes = 0
+  const viaWs = () => (wsTarget === 'primary' ? wsName(primaryWs) : `${wsName(publicWs)} (${wsName(primaryWs)} allowance for today used)`)
+  const viaPoll = () => `${o.rpc.provider('solana')} · loader signatures`
   let sub: LoaderSubscription | null = null
-  let lastSolPoll = 0
-  let polling = false
+  let lastCheck = 0
+  let lastDownCheck = 0
+  let checking = false
 
-  function ingestNotification(n: LogsNotification, via = solVia.ws) {
-    if (n.signature && /^[1-9A-HJ-NP-Za-km-z]{60,100}$/.test(n.signature)) {
-      if (state.solanaSig !== n.signature) {
-        state.solanaSig = n.signature
-        markState()
-      }
-    }
-    onSolanaTx(n.signature, n.slot, n.err, n.logs, via, false, null)
+  function openSocket(target: 'primary' | 'fallback') {
+    sub?.stop()
+    wsTarget = target
+    wsBytes = 0
+    statusCache = null
+    sub = createLoaderSubscription({
+      url: target === 'primary' ? primaryWs : publicWs,
+      loaders: SOL_LOADERS,
+      onLogs: (n) => ingestNotification(n),
+      // every (re)subscribe: catch up what landed while the socket was not listening
+      onSubscribed: () => void checkGaps('subscribed'),
+      onBytes: meterWs,
+      log,
+      WebSocketImpl: o.WebSocketImpl as never,
+      now,
+    })
+    sub.start()
   }
 
-  /** Loader signatures newer than the last seen one, then the transactions that land alone in their slot. */
-  async function pollSolana() {
-    if (polling || stopped) return
-    polling = true
-    lastSolPoll = now()
+  function meterWs(n: number) {
+    if (!primaryPaid || wsTarget !== 'primary') return
+    wsBytes += n
+    while (wsBytes >= WS_UNIT) {
+      wsBytes -= WS_UNIT
+      if (!wsBudget.can('ws-solana')) break
+      wsBudget.charge('ws-solana')
+    }
+  }
+
+  /** The paid socket past its daily allowance: the public one until 00:00 UTC, then back. */
+  function checkWsAllowance() {
+    if (!primaryPaid || stopped || !sub) return
+    const over = !wsBudget.can('ws-solana')
+    if (over && wsTarget === 'primary') {
+      log('info', `radar: ${wsName(primaryWs)} allowance for today used (${wsUnits / 10} MB); listening on the public websocket until 00:00 UTC`)
+      openSocket('fallback')
+    } else if (!over && wsTarget === 'fallback') openSocket('primary')
+  }
+
+  function ingestNotification(n: LogsNotification, via?: string) {
+    if (n.signature) {
+      wsSeen.add(n.signature)
+      if (wsSeen.size > WS_SEEN_CAP) wsSeen.delete(wsSeen.values().next().value!)
+    }
+    checkWsAllowance()
+    onSolanaTx(n.signature, n.slot, n.err, n.logs, via ?? viaWs(), false, null)
+  }
+
+  /**
+   * Loader signatures since the last checked one (discovery RPC, up to RECON_PAGES pages), then
+   * getTransaction for the candidates the websocket did not deliver, oldest first, up to RECON_TX. The
+   * cursor moves only past what was handled; a gap longer than the pages read is logged and skipped.
+   */
+  async function checkGaps(reason: 'subscribed' | 'interval' | 'down') {
+    if (checking || stopped || !solOn) return
+    checking = true
+    lastCheck = now()
+    if (reason === 'down') lastDownCheck = now()
+    const via = reason === 'down' ? viaPoll() : `${viaPoll()} (gap check)`
     try {
-      if (!canSol(false, 2)) return
-      const ctx = sharedCtx(false)
+      if (!canDisc(false, 1)) return
       const until = state.solanaSig ?? undefined
-      const page = (await ctx.call('solana', 'getSignaturesForAddress', [UPGRADEABLE_LOADER, { limit: until ? 1000 : 300, ...(until ? { until } : {}), commitment: 'confirmed' }], { timeoutMs: 10_000, maxBytes: 2 * 1048576 })) as SigInfo[] | null
-      if (!Array.isArray(page) || !page.length) return
-      state.solanaSig = page[0].signature
-      markState()
-      for (const c of loaderCandidates(page).slice(0, 15)) {
-        if (stopped || !canSol(false)) break
-        if (seenSigs.has(c.signature)) continue
+      const sigs: SigInfo[] = []
+      let before: string | undefined
+      let reached = !until
+      for (let pg = 0; pg < (until ? RECON_PAGES : 1); pg++) {
+        if (stopped || !canDisc(false, 1)) break
+        const page = (await discoveryCall(false, 'getSignaturesForAddress', [UPGRADEABLE_LOADER, { limit: 1000, ...(until ? { until } : {}), ...(before ? { before } : {}), commitment: 'confirmed' }], {
+          timeoutMs: 12_000,
+          maxBytes: 2 * 1048576,
+        })) as SigInfo[] | null
+        if (!Array.isArray(page) || !page.length) {
+          reached = true
+          break
+        }
+        sigs.push(...page)
+        if (page.length < 1000) {
+          reached = true
+          break
+        }
+        before = page[page.length - 1].signature
+      }
+      if (!sigs.length) return
+      if (!until) {
+        // the first check on this data directory starts from the newest (history is the backfill's)
+        state.solanaSig = sigs[0].signature
+        markState(true)
+        return
+      }
+      if (!reached) log('info', `radar solana: over ${RECON_PAGES * 1000} loader transactions since the last check; older ones not inspected`)
+      const candidates = loaderCandidates(sigs)
+        .filter((c) => !wsSeen.has(c.signature) && !seenSigs.has(c.signature))
+        .reverse()
+      const ctx = sharedCtx(false)
+      let handled: string | null = null
+      let all = true
+      for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i]
+        if (stopped || i >= RECON_TX || !canSol(false)) {
+          all = false
+          break
+        }
         try {
-          const tx = (await ctx.call('solana', 'getTransaction', [c.signature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }], { timeoutMs: 8000, maxBytes: 1048576 })) as { meta?: { err?: unknown; logMessages?: unknown } } | null
+          const tx = (await ctx.call('solana', 'getTransaction', [c.signature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }], { timeoutMs: 8000, maxBytes: 1048576 })) as {
+            meta?: { err?: unknown; logMessages?: unknown }
+          } | null
           const logs = Array.isArray(tx?.meta?.logMessages) ? (tx!.meta!.logMessages as string[]) : []
-          onSolanaTx(c.signature, c.slot, tx?.meta?.err ?? null, logs, solVia.poll, false, c.blockTime ? c.blockTime * 1000 : null, txSigners(tx))
-        } catch (e) {
-          if (e instanceof BudgetError) break
+          onSolanaTx(c.signature, c.slot, tx?.meta?.err ?? null, logs, via, false, c.blockTime ? c.blockTime * 1000 : null, txSigners(tx))
+          handled = c.signature
+        } catch {
+          // budget or endpoint trouble: the rest waits for the next check
+          all = false
+          break
         }
       }
+      const next = all ? sigs[0].signature : (handled ?? (reached ? null : sigs[sigs.length - 1].signature))
+      if (next && next !== state.solanaSig) {
+        state.solanaSig = next
+        markState(true)
+      }
     } catch (e) {
-      if (!(e instanceof BudgetError)) log('warn', `radar solana polling: ${errMsg(e)}`)
+      if (!(e instanceof BudgetError)) log('warn', `radar solana gap check: ${errMsg(e)}`)
     } finally {
-      polling = false
+      checking = false
     }
   }
 
@@ -742,62 +943,80 @@ export function createRadar(o: RadarOptions): Radar {
     return n
   }
 
-  // ── Solana backfill (first start only) ──
+  // ── Solana backfill (first start only; once more when its very first call failed) ──
   async function backfillSolana() {
-    if (state.backfill.solana) return
-    state.backfill.solana = { started: now(), done: false, fromTs: null, events: 0, note: null }
+    const prev = state.backfill.solana
+    if (prev && (prev.done || (prev.attempts ?? 1) >= 2)) return
+    const attempt = (prev?.attempts ?? 0) + 1
+    const t0 = now()
+    state.backfill.solana = { started: t0, done: false, fromTs: null, events: 0, note: null, attempts: attempt }
     saveState(stateFile, state, log)
     const ctx = sharedCtx(true)
     const target = now() - DAY
+    const via = `${viaPoll()} (backfill)`
     let before: string | undefined
     let pages = 0
     let txs = 0
     let oldest: number | null = null
     let note: string | null = null
+    let failed: string | null = null
+    const found: { sig: string; slot: number; logs: string[]; blockTime: number | null; signers: string[] }[] = []
     try {
-      while (!stopped && pages < 40) {
-        if (!bfBudget.can('solana', 2) || !sharedRoom('solana', 2)) {
+      while (!stopped && pages < BF_SOL_PAGES) {
+        if (!canDisc(true, 1) || !canSol(true, 1)) {
           note = 'stopped at the backfill budget'
           break
         }
         let page: SigInfo[] | null = null
-        for (let attempt = 1; ; attempt++) {
+        for (let a = 1; ; a++) {
           try {
-            page = (await ctx.call('solana', 'getSignaturesForAddress', [UPGRADEABLE_LOADER, { limit: 1000, ...(before ? { before } : {}), commitment: 'confirmed' }], { timeoutMs: 15_000, maxBytes: 2 * 1048576 })) as SigInfo[] | null
+            page = (await discoveryCall(true, 'getSignaturesForAddress', [UPGRADEABLE_LOADER, { limit: 1000, ...(before ? { before } : {}), commitment: 'confirmed' }], { timeoutMs: 15_000, maxBytes: 2 * 1048576 })) as SigInfo[] | null
             break
           } catch (e) {
-            if (!(e instanceof RpcError && e.transient) || attempt >= 4) throw e
-            await sleep(5_000 * attempt)
+            if (!(e instanceof RpcError && e.transient) || a >= 4) throw e
+            await sleep(5_000 * a)
           }
         }
         if (!Array.isArray(page) || !page.length) break
         pages++
         before = page[page.length - 1].signature
         const bt = page[page.length - 1].blockTime
-        if (pages === 1 && !state.solanaSig) state.solanaSig = page[0].signature
+        if (pages === 1 && !state.solanaSig) {
+          state.solanaSig = page[0].signature
+          markState(true)
+        }
         // coverage: up to the oldest transaction actually inspected (the whole page when all its candidates were)
         let whole = true
         for (const c of loaderCandidates(page)) {
-          if (stopped || txs >= 260 || !bfBudget.can('solana', 1)) {
+          if (stopped || txs >= BF_SOL_TX || !canSol(true, 1)) {
             whole = false
             break
           }
           if (seenSigs.has(c.signature)) continue
           txs++
           try {
-            const tx = (await ctx.call('solana', 'getTransaction', [c.signature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }], { timeoutMs: 8000, maxBytes: 1048576 })) as { meta?: { err?: unknown; logMessages?: unknown } } | null
+            const tx = (await ctx.call('solana', 'getTransaction', [c.signature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }], { timeoutMs: 8000, maxBytes: 1048576 })) as {
+              meta?: { err?: unknown; logMessages?: unknown }
+            } | null
             const logs = Array.isArray(tx?.meta?.logMessages) ? (tx!.meta!.logMessages as string[]) : []
-            onSolanaTx(c.signature, c.slot, tx?.meta?.err ?? null, logs, `${o.rpc.provider('solana')} · loader signatures (backfill)`, true, c.blockTime ? c.blockTime * 1000 : null, txSigners(tx))
+            if (!tx?.meta?.err && interestingActions(parseLoaderLogs(logs)).length) found.push({ sig: c.signature, slot: c.slot, logs, blockTime: c.blockTime ? c.blockTime * 1000 : null, signers: txSigners(tx) })
             if (c.blockTime) oldest = c.blockTime * 1000
           } catch (e) {
-            if (e instanceof BudgetError) break
+            if (e instanceof BudgetError) {
+              whole = false
+              break
+            }
             if (e instanceof RpcError && e.transient) await sleep(2_000) // rate limited: slow down
           }
           await sleep(250)
         }
         if (whole && bt) oldest = bt * 1000
-        if (txs >= 260) {
-          note = 'stopped at the backfill cap (260 transactions inspected)'
+        if (txs >= BF_SOL_TX) {
+          note = `stopped at the backfill cap (${BF_SOL_TX} transactions inspected)`
+          break
+        }
+        if (!whole) {
+          note = 'stopped at the backfill budget'
           break
         }
         if (oldest !== null && oldest <= target) break
@@ -805,11 +1024,19 @@ export function createRadar(o: RadarOptions): Radar {
       }
       if (!note && oldest !== null && oldest > target) note = `stopped at the backfill cap (${pages} pages of loader signatures)`
     } catch (e) {
-      note = `stopped: ${errMsg(e)}`
+      // the very first call refused (an endpoint that does not serve this): not a backfill that ran
+      if (pages === 0 && !(e instanceof BudgetError)) failed = errMsg(e)
+      else note = `stopped: ${errMsg(e)}`
     }
-    state.backfill.solana = { started: state.backfill.solana.started, done: true, fromTs: oldest, events: backfilled('solana'), note }
+    // oldest first: a program changed twice is read in order, each change against what came before it
+    found.sort((a, b) => a.slot - b.slot)
+    for (const f of found) onSolanaTx(f.sig, f.slot, null, f.logs, via, true, f.blockTime, f.signers)
+    flushBackfill()
+    if (failed && attempt < 2) state.backfill.solana = { started: t0, done: false, fromTs: null, events: 0, note: `not run: ${failed} (tried again at the next start)`, attempts: attempt }
+    else state.backfill.solana = { started: t0, done: true, fromTs: failed ? null : oldest, events: backfilled('solana'), note: failed ? `not run: ${failed}` : note, attempts: attempt }
     saveState(stateFile, state, log)
-    log('info', `radar: Solana backfill done (${pages} signature pages, ${txs} transactions inspected${note ? `; ${note}` : ''})`)
+    statusCache = null
+    log('info', `radar: Solana backfill ${failed ? 'not run' : 'done'} (${pages} signature pages, ${txs} transactions inspected, ${found.length} changes${note || failed ? `; ${failed ?? note}` : ''})`)
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -834,6 +1061,8 @@ export function createRadar(o: RadarOptions): Radar {
   const evmQueue: EvmTask[] = []
   /** Calls per JSON-RPC batch, per chain (Base's public endpoint takes 10 at most; learned from its refusal). */
   const batchSize = new Map<EvmChain, number>()
+  /** Last "calls not answered" log line per chain (at most one a minute). */
+  const batchWarnAt = new Map<EvmChain, number>()
   let evmBusy = false
 
   async function headOf(chain: EvmChain, charge?: (n: number) => void): Promise<{ n: number; ts: number }> {
@@ -932,16 +1161,30 @@ export function createRadar(o: RadarOptions): Radar {
       const out: ({ result: unknown } | { error: string } | null)[] = calls.map(() => null)
       if (!pool) return out
       let i = 0
+      let retried = 0
+      let unanswered = 0
+      let firstErr: string | null = null
       while (i < calls.length) {
         const size = batchSize.get(chain) ?? 10
         const chunk = calls.slice(i, i + size)
         if (!b.can(ck, chunk.length)) break
         try {
           const res = await pool.batch(chunk, { charge: (n) => b.charge(ck, n), maxBytes: 4 * 1048576 })
+          const errs = res.filter((r): r is { error: string } => 'error' in r)
+          // a whole batch refused for rate / capacity: wait and ask again (twice per ingest at most)
+          if (errs.length === res.length && res.length > 0 && retried < 2 && refusalKind(errs[0].error, null) === 'rate') {
+            retried++
+            await sleep(2_000 * retried)
+            continue
+          }
+          if (errs.length) {
+            unanswered += errs.length
+            firstErr ??= errs[0].error
+          }
           res.forEach((r, k) => (out[i + k] = r))
           i += chunk.length
-          // a backfill spreads its batches out (public endpoints rate-limit bursts)
-          if (x.backfill && i < calls.length) await sleep(400)
+          // spread batches out (public endpoints rate-limit bursts); the backfill more
+          if (i < calls.length) await sleep(x.backfill ? 400 : 120)
         } catch (e) {
           if (e instanceof BudgetError) break
           const m = /(?:maximum|max|limit(?:ed)? (?:to|of)?)\D{0,20}(\d{1,3})\D{0,12}(?:calls|requests|items)?[^.]*batch|batch[^.]*?(\d{1,3})/i.exec((e as Error).message ?? '')
@@ -953,6 +1196,11 @@ export function createRadar(o: RadarOptions): Radar {
           log('warn', `radar ${chain} ${what}: ${errMsg(e)}`)
           break
         }
+      }
+      const skipped = out.filter((r) => r === null).length
+      if ((unanswered || skipped) && now() - (batchWarnAt.get(chain) ?? 0) > 60_000) {
+        batchWarnAt.set(chain, now())
+        log('info', `radar ${chain} ${what}: ${unanswered + skipped} of ${calls.length} calls not answered${firstErr ? ` (${redact(firstErr).slice(0, 100)})` : skipped ? ' (radar budget)' : ''}`)
       }
       return out
     }
@@ -1026,12 +1274,17 @@ export function createRadar(o: RadarOptions): Radar {
       const { ts, estimated } = tsOf(chain, g.block, tsRaw.get(g.tx), x.head)
       const p = prev.get(g.key)
       if (kind === 'deploy' || (ex === null && (kind === 'upgrade' || kind === 'beacon_upgrade'))) {
-        aggregate(chain, kind, g, f, ts, estimated, via, x.backfill, ex === null && kind !== 'deploy')
+        aggregate(chain, kind, g, f, ts, estimated, via, x.backfill, { unchecked: ex === null && kind !== 'deploy' })
         continue
       }
       // an EIP-7702 account setting its first implementation (smart-wallet setup): a deployment, folded like one
       if (kind === 'upgrade' && delegated.has(g.key) && p && p.impl === null) {
-        aggregate(chain, 'deploy', g, f, ts, estimated, via, x.backfill, false, 'includes EIP-7702 delegated accounts setting their first implementation (the slot was empty one block earlier)')
+        aggregate(chain, 'deploy', g, f, ts, estimated, via, x.backfill, { note: 'includes EIP-7702 delegated accounts setting their first implementation (the slot was empty one block earlier)' })
+        continue
+      }
+      // the implementation it already had, set again (smart wallets re-initializing): no code change, folded
+      if (kind === 'upgrade' && p?.impl && p.impl === f.implementation && (!f.admin || f.admin.previous === f.admin.next)) {
+        aggregate(chain, 'upgrade', g, f, ts, estimated, via, x.backfill, { sameImpl: true })
         continue
       }
       const k = `${chain}:${g.address}:${kind === 'admin_change' ? 'admin' : kind === 'beacon_upgrade' ? 'beacon' : 'code'}`
@@ -1069,9 +1322,11 @@ export function createRadar(o: RadarOptions): Radar {
       ev.after = after
       ev.actor = p?.sender ?? ev.actor ?? (f.admin?.next ?? null)
       ev.actorRole = p?.sender ? 'sender' : ev.actor ? 'admin' : null
-      const why = knownWhy(chain, [g.address, f.implementation, before.implementation])
+      // known: the proxy itself (a shared implementation does not make every proxy of it a known protocol)
+      const why = knownWhy(chain, [g.address])
       ev.known = !!why
       ev.knownWhy = why
+      for (const n of [implNote(chain, f.implementation), implNote(chain, before.implementation)]) if (n && !ev.notes.includes(n)) ev.notes.push(n)
       ev.state = kind === 'upgrade' ? 'pending' : 'read'
       if (kind === 'admin_change') ev.diff = { code: 'unknown', authority: f.admin && f.admin.previous !== f.admin.next ? 'changed' : 'same', verified: 'unknown', surface: null, added: null, removed: null, guardsAdded: null, guardsRemoved: null, primitivesAdded: null, primitivesRemoved: null }
       put(ev)
@@ -1079,12 +1334,21 @@ export function createRadar(o: RadarOptions): Radar {
     }
   }
 
-  /** Deployments (and unchecked Upgraded events) of one implementation / beacon within an hour: one event. */
-  function aggregate(chain: EvmChain, kind: RadarKind, g: ProxyTxGroup, f: ReturnType<typeof groupFacts>, ts: number, estimated: boolean, via: string, backfill: boolean, unchecked: boolean, note?: string) {
+  /** Is an implementation kept in the chain index? Said in a note only: proxies of a shared implementation are not "known" through it. */
+  function implNote(chain: EvmChain, impl: string | null | undefined): string | null {
+    return impl && knownWhy(chain, [impl]) ? 'implementation kept in the chain index (the proxy itself is not)' : null
+  }
+
+  /**
+   * Deployments, unchecked Upgraded events and same-implementation Upgraded events of one implementation /
+   * beacon within an hour: one event each. Known only when one of its proxies is itself kept.
+   */
+  function aggregate(chain: EvmChain, kind: RadarKind, g: ProxyTxGroup, f: ReturnType<typeof groupFacts>, ts: number, estimated: boolean, via: string, backfill: boolean, x: { unchecked?: boolean; note?: string; sameImpl?: boolean } = {}) {
     const target = f.implementation ?? f.beacon ?? g.address
-    const k = `${chain}:agg:${kind}:${target}`
+    const k = `${chain}:agg:${x.sameImpl ? 'same' : kind}:${target}`
     const id = latestByKey.get(k)
     let ev = id ? events.get(id) : undefined
+    const proxyKnown = knownWhy(chain, [g.address])
     if (ev && ev.proxies && Math.abs(ts - ev.ts) < T.deployAggMs && !!ev.backfill === backfill) {
       if (ev.proxies.sample.includes(g.address) && ev.tx === g.tx) return
       if (!ev.proxies.sample.includes(g.address)) {
@@ -1095,22 +1359,32 @@ export function createRadar(o: RadarOptions): Radar {
       ev.tx = g.tx
       ev.block = Math.max(ev.block ?? 0, g.block)
       ev.ts = Math.max(ev.ts, ts)
+      if (proxyKnown && !ev.known) {
+        ev.known = true
+        ev.knownWhy = `a proxy (${g.address}) is kept in the chain index`
+      }
+      // folded facts are complete as caught (a note from before a restart no longer applies)
+      if (ev.state === 'partial' && ev.notes.includes(RESTART_NOTE)) ev.state = 'read'
       put(ev)
       return
     }
     ev = blankEvent(chain, kind, g.address, { via, backfill: backfill || undefined, ts, tx: g.tx, block: g.block })
     ev.proxies = { n: 1, sample: [g.address] }
+    if (x.sameImpl) ev.sameImpl = true
     ev.after = { at: null, from: 'event', codeHash: null, authority: f.admin?.next ?? null, upgradeable: true, verified: 'unknown', name: null, surfaceCount: null, implementation: f.implementation, ...(f.beacon ? { beacon: f.beacon } : {}) }
+    if (x.sameImpl) ev.before = { at: null, from: 'event', codeHash: null, authority: null, upgradeable: true, verified: 'unknown', name: null, surfaceCount: null, implementation: f.implementation }
     // the event's facts are complete as caught; reading the implementation (name, surface) only adds to them
     ev.state = 'read'
-    if (note) ev.notes.push(note)
-    if (unchecked) ev.notes.push('not checked whether these proxies had code one block earlier (radar budget, or the endpoint no longer serves that block’s state): each is a deployment or an upgrade')
+    if (x.note) ev.notes.push(x.note)
+    if (x.sameImpl) ev.notes.push('the EIP-1967 slot one block earlier already held this implementation: no code change')
+    if (x.unchecked) ev.notes.push('not checked whether these proxies had code one block earlier (radar budget, or the endpoint no longer serves that block’s state): each is a deployment or an upgrade')
     if (estimated && chain === 'arbitrum') ev.notes.push('time estimated from block height')
-    const why = knownWhy(chain, [g.address, f.implementation])
-    ev.known = !!why
-    ev.knownWhy = why
+    const inote = implNote(chain, f.implementation)
+    if (inote) ev.notes.push(inote)
+    ev.known = !!proxyKnown
+    ev.knownWhy = proxyKnown
     put(ev)
-    if (f.implementation) queueEvm({ eventId: ev.id, chain, type: 'name', newImpl: f.implementation, prevImpl: null, prio: why ? 40 : 5, backfill })
+    if (f.implementation) queueEvm({ eventId: ev.id, chain, type: 'name', newImpl: f.implementation, prevImpl: null, prio: proxyKnown ? 40 : x.sameImpl ? 3 : 5, backfill })
   }
 
   function queueEvm(t: EvmTask) {
@@ -1206,16 +1480,19 @@ export function createRadar(o: RadarOptions): Radar {
     cur.after = implSide(after, t.newImpl, cur.after, after ? 'read' : 'event')
     if (t.type === 'upgrade') {
       if (t.prevImpl) cur.before = implSide(before, t.prevImpl, cur.before, before ? 'read' : 'event')
-      cur.diff = after && before ? diffSnapshots(before, after) : after && t.prevImpl === t.newImpl ? { ...diffSnapshots(after, after) } : null
-      if (t.prevImpl === t.newImpl) notes.push('the same implementation was set again')
+      cur.diff = after && before ? diffSnapshots(before, after) : null
+      if (t.prevImpl === t.newImpl) {
+        cur.sameImpl = true
+        notes.push('the EIP-1967 slot one block earlier already held this implementation: no code change')
+      }
     }
-    const why = cur.knownWhy ?? knownWhy(t.chain, [cur.address, t.newImpl, t.prevImpl])
+    const why = cur.knownWhy ?? knownWhy(t.chain, [cur.address])
     cur.known = !!why
     cur.knownWhy = why
     const verified = after && (after.verified === 'sourcify-full' || after.verified === 'sourcify-partial')
     cur.name = verified ? safeName(after?.name ?? null) : (cur.name ?? null)
-    cur.state = t.type === 'name' ? 'read' : after && (!t.prevImpl || before) ? 'read' : 'partial'
-    cur.notes = [...cur.notes.filter((n) => !/^implementation .* not read/.test(n)), ...notes]
+    cur.state = t.type === 'name' || cur.sameImpl ? 'read' : after && (!t.prevImpl || before) ? 'read' : 'partial'
+    cur.notes = [...cur.notes.filter((n) => !/^implementation .* not read/.test(n) && n !== RESTART_NOTE), ...notes]
     const calls = tracer.calls()
     if (calls.length) cur.trace = calls.slice(0, 12)
     put(cur, t.type === 'upgrade' || cur.known)
@@ -1274,6 +1551,7 @@ export function createRadar(o: RadarOptions): Radar {
     const fromTs = head.ts - (head.n - (to + 1)) * BLOCK_MS[chain]
     state.backfill[chain] = { started: state.backfill[chain].started, done: true, fromTs, events: backfilled(chain), note: note ?? (to > target ? 'partial' : null) }
     saveState(stateFile, state, log)
+    statusCache = null
     log('info', `radar: ${chain} backfill done (${calls} eth_getLogs windows${note ? `; ${note}` : ''})`)
   }
 
@@ -1335,18 +1613,20 @@ export function createRadar(o: RadarOptions): Radar {
     const byChain: Partial<Record<ChainId, number>> = {}
     let total = 0
     let unchecked = 0
+    let sameImpl = 0
     for (const e of list()) {
       if (e.ts < since) break
       total++
-      if (e.proxies && e.kind !== 'deploy') unchecked++
+      if (e.sameImpl) sameImpl++
+      else if (e.proxies && e.kind !== 'deploy') unchecked++
       else byKind[e.kind] = (byKind[e.kind] ?? 0) + 1
       byChain[e.chain] = (byChain[e.chain] ?? 0) + 1
     }
     const sources: RadarStatus['sources'] = {}
     if (solOn) {
       const open = sub?.state() === 'open'
-      const pollingNow = !open && lastSolPoll > 0 && now() - lastSolPoll < T.solPollMs * 3
-      sources.solana = { via: open ? solVia.ws : pollingNow ? solVia.poll : `${solVia.ws} (connecting)`, up: open || pollingNow, lastAt: sub?.lastAt() ?? null }
+      const pollingNow = !open && lastDownCheck > 0 && now() - lastDownCheck < T.solPollMs * 3
+      sources.solana = { via: open ? viaWs() : pollingNow ? viaPoll() : `${viaWs()} (connecting)`, up: open || pollingNow, lastAt: sub?.lastAt() ?? null }
     }
     for (const c of evmOn) {
       const st = evmState.get(c)!
@@ -1355,10 +1635,132 @@ export function createRadar(o: RadarOptions): Radar {
     }
     const backfill: RadarStatus['backfill'] = {}
     for (const [k, v] of Object.entries(state.backfill)) backfill[k as ChainId] = { done: v.done, fromTs: v.fromTs, events: v.events, note: v.note }
-    const usage = { ...budget.usage() }
-    const v: RadarStatus = { sources, last24h: { total, byKind, byChain, unchecked }, backfill, budget: usage, stored: events.size, updatedAt: now() }
+    const usage: Record<string, { used: number; limit: number }> = { ...budget.usage(), ...(primaryPaid && solOn ? wsBudget.usage() : {}) }
+    const exhausted: { key: string; why: 'day' | 'hour' }[] = []
+    for (const k of Object.keys(budget.usage())) {
+      const w = budget.why(k)
+      if (w) exhausted.push({ key: k, why: w })
+    }
+    if (primaryPaid && solOn && !wsBudget.can('ws-solana')) exhausted.push({ key: 'ws-solana', why: 'day' })
+    const today = Math.floor(now() / DAY)
+    const v: RadarStatus = {
+      sources,
+      last24h: { total, byKind, byChain, unchecked, sameImpl },
+      backfill,
+      budget: usage,
+      exhausted,
+      unattributed: state.unattributed?.day === today ? state.unattributed.n : 0,
+      stored: events.size,
+      updatedAt: now(),
+    }
     statusCache = { at: now(), v }
     return v
+  }
+
+  // ── boot: reads cut short by a restart are queued again; facts an earlier version got wrong are corrected ──
+  const requeueSol: SolPending[] = []
+  const requeueEvm: EvmTask[] = []
+  function bootRepair() {
+    // a Solana backfill whose first call was refused (Helius on getSignaturesForAddress) ran zero pages: once more
+    const bs = state.backfill.solana
+    if (bs && bs.done && !bs.attempts && bs.events === 0 && bs.fromTs === null && /^stopped: /.test(bs.note ?? '')) {
+      state.backfill.solana = { ...bs, done: false, attempts: 1, note: `not run: ${(bs.note ?? '').slice(9)} (tried again at the next start)` }
+      saveState(stateFile, state, log)
+    }
+    let queued = 0
+    for (const e of [...events.values()]) {
+      let changed = false
+      // 1. pending at shutdown (or left partial by a restart before this version): read again (bounded), else said so
+      if (e.proxies && e.state !== 'read') {
+        // folded proxy events: their facts are complete as caught; the implementation's name is a later addition
+        e.state = 'read'
+        e.notes = e.notes.filter((n) => n !== RESTART_NOTE)
+        if (queued < 200 && e.after?.implementation && !e.name) {
+          queued++
+          requeueEvm.push({ eventId: e.id, chain: e.chain as EvmChain, type: 'name', newImpl: e.after.implementation, prevImpl: null, prio: 2, backfill: !!e.backfill })
+        }
+        changed = true
+      } else if (e.state === 'pending' || (e.state === 'partial' && e.notes.includes(RESTART_NOTE))) {
+        if (queued < 200 && e.chain === 'solana') {
+          queued++
+          requeueSol.push({ program: e.address, kind: e.kind, sigs: e.tx ? [e.tx] : [], slot: e.slot, firstSlot: e.slot, firstTs: e.ts, firstAt: now(), timer: null, eventId: e.id, blockTime: null, via: e.via, backfill: !!e.backfill })
+          e.state = 'pending'
+          e.notes = [...e.notes.filter((n) => n !== RESTART_NOTE), 'read after a server restart']
+          changed = true
+        } else if (queued < 200 && e.chain !== 'solana' && e.kind === 'upgrade' && !e.sameImpl && e.after?.implementation && e.before?.implementation !== e.after.implementation) {
+          queued++
+          requeueEvm.push({ eventId: e.id, chain: e.chain as EvmChain, type: 'upgrade', newImpl: e.after.implementation, prevImpl: e.before?.implementation ?? null, prio: 20, backfill: !!e.backfill })
+          e.state = 'pending'
+          e.notes = [...e.notes.filter((n) => n !== RESTART_NOTE), 'read after a server restart']
+          changed = true
+        } else {
+          e.state = 'partial'
+          if (!e.notes.includes(RESTART_NOTE)) e.notes = [...e.notes, RESTART_NOTE]
+          changed = true
+        }
+      }
+      if (e.chain === 'solana') {
+        // 2. a before read after the change is no before
+        if (e.before && e.before.from !== 'event' && !validBefore({ at: e.before.at ?? 0, deploySlot: e.before.deploySlot ?? null }, { slot: e.slot, ts: e.ts })) {
+          e.before = null
+          e.diff = e.after ? { ...emptyDiff(), surface: 'instructions' } : null
+          e.notes = [...e.notes.filter((n) => !n.startsWith('before: as the chain agents read it') && !n.startsWith('first time LUSCA sees')), NEWER_NOTE]
+          changed = true
+        }
+        // 3. the authority is compared only between two program reads (a closed program has none)
+        if (e.diff && e.diff.authority !== 'unknown' && !(e.before?.codeHash && e.after?.codeHash)) {
+          e.diff = { ...e.diff, authority: 'unknown' }
+          changed = true
+        }
+      } else {
+        const chain = e.chain as EvmChain
+        if (e.kind === 'upgrade' && e.diff && e.diff.authority !== 'unknown') {
+          e.diff = { ...e.diff, authority: 'unknown' } // implementation reads carry no proxy admin
+          changed = true
+        }
+        // 4. admin-only functions compared by function (a guard that changed on an existing function is no new one)
+        if (e.kind === 'upgrade' && e.diff?.guardsAdded?.length && e.before?.implementation && e.after?.implementation) {
+          const sb = snapshots.get(`impl:${chain}:${e.before.implementation}`)
+          const sa = snapshots.get(`impl:${chain}:${e.after.implementation}`)
+          const added = new Set(e.diff.added?.items ?? [])
+          const g =
+            sb?.guards && sa?.guards
+              ? diffGuards(sb.guards, sa.guards)
+              : { guardsAdded: e.diff.guardsAdded.filter((x) => added.has(x.fn)), guardsRemoved: e.diff.guardsRemoved, guardsChanged: e.diff.guardsChanged ?? null }
+          if (JSON.stringify(g.guardsAdded) !== JSON.stringify(e.diff.guardsAdded) || JSON.stringify(g.guardsChanged ?? null) !== JSON.stringify(e.diff.guardsChanged ?? null)) {
+            e.diff = { ...e.diff, ...g }
+            changed = true
+          }
+        }
+        // 5. the implementation it already had, set again: no upgrade
+        if (e.kind === 'upgrade' && !e.proxies && !e.sameImpl && e.before?.implementation && e.before.implementation === e.after?.implementation) {
+          e.sameImpl = true
+          e.state = 'read'
+          e.diff = null
+          e.notes = [...e.notes.filter((n) => n !== 'the same implementation was set again'), 'the EIP-1967 slot one block earlier already held this implementation: no code change']
+          changed = true
+        }
+        // 6. known only through the proxy itself
+        if (e.known && !knownWhy(chain, [e.address]) && !e.proxies?.sample.some((a) => knownWhy(chain, [a]))) {
+          e.known = false
+          e.knownWhy = null
+          const n = implNote(chain, e.after?.implementation)
+          if (n && !e.notes.includes(n)) e.notes = [...e.notes, n]
+          changed = true
+        }
+      }
+      if (changed || headlineOf(e) !== e.headline || priorityOf(e) !== e.priority) put(e, false)
+    }
+    // put() above may have indexed older events last: the coalescing index follows the newest again
+    latestByKey.clear()
+    for (const e of [...events.values()].sort((x, y) => x.seenAt - y.seenAt)) latestByKey.set(keyOfEvent(e), e.id)
+  }
+  bootRepair()
+
+  function drainRequeue() {
+    for (const p of requeueSol.splice(0)) solQueue.push(p)
+    for (const t of requeueEvm.splice(0)) queueEvm(t)
+    pumpSol()
   }
 
   return {
@@ -1368,18 +1770,23 @@ export function createRadar(o: RadarOptions): Radar {
       const flushTimer = setInterval(() => flushAll(false), 1500)
       flushTimer.unref?.()
       timers.push(flushTimer)
-      if (solOn && wsUrl) {
-        sub = createLoaderSubscription({ url: wsUrl, loaders: SOL_LOADERS, onLogs: (n) => ingestNotification(n), log, WebSocketImpl: o.WebSocketImpl as never, now })
-        sub.start()
+      if (solOn) {
+        lastCheck = now() // the first gap check runs when the socket subscribes
+        openSocket(primaryPaid && !wsBudget.can('ws-solana') ? 'fallback' : 'primary')
         const pollTimer = setInterval(() => {
+          checkWsAllowance()
           const down = sub?.downSince()
-          if (down !== null && down !== undefined && now() - down > T.wsDownMs && now() - lastSolPoll >= T.solPollMs) void pollSolana()
+          const isDown = down !== null && down !== undefined && now() - down > T.wsDownMs
+          if (isDown ? now() - lastDownCheck >= T.solPollMs : now() - lastCheck >= T.reconcileMs) void checkGaps(isDown ? 'down' : 'interval')
         }, 5_000)
         pollTimer.unref?.()
         timers.push(pollTimer)
       }
       evmOn.forEach((c, i) => scheduleEvm(c, 3_000 + i * 4_000))
-      if (backfillOn) {
+      drainRequeue()
+      const sb = state.backfill.solana
+      const bfDue = (solOn && (!sb || (!sb.done && (sb.attempts ?? 1) < 2))) || evmOn.some((c) => !state.backfill[c])
+      if (backfillOn && bfDue) {
         const bt = setTimeout(async () => {
           // never again after the first start: each chain's backfill is marked started before its first call
           const jobs: Promise<void>[] = []
@@ -1390,12 +1797,9 @@ export function createRadar(o: RadarOptions): Radar {
         bt.unref?.()
         timers.push(bt)
       }
-      log(
-        'info',
-        `upgrade radar: Solana via ${solOn ? solVia.ws : 'off'}; EVM eth_getLogs via ${evmOn.map((c) => `${c} ${pools.get(c)!.provider()}`).join(', ') || 'off'}; ${events.size} stored events${
-          backfillOn && !Object.keys(state.backfill).length ? '; first-start backfill in ~25 s' : ''
-        }`,
-      )
+      const evmVia = evmOn.map((c) => `${c} ${pools.get(c)!.provider()}`).join(', ') || 'off'
+      const solVia = solOn ? `${viaWs()} (gap checks: loader signatures on ${o.rpc.provider('solana-discovery')})` : 'off'
+      log('info', `upgrade radar: Solana via ${solVia}; EVM eth_getLogs via ${evmVia}; ${events.size} stored events${backfillOn && bfDue ? `; backfill in ~${Math.round(T.backfillDelayMs / 1000)} s` : ''}`)
     },
     async stop() {
       if (stopped) return
@@ -1414,7 +1818,9 @@ export function createRadar(o: RadarOptions): Radar {
       const lim = Math.max(1, Math.min(100, q.limit ?? 50))
       let all = list()
       if (q.chain) all = all.filter((e) => e.chain === q.chain)
-      if (q.kind) all = all.filter((e) => e.kind === q.kind)
+      // Upgraded / BeaconUpgraded: confirmed changes only; the folded events are listed with `other`
+      if (q.kind) all = all.filter((e) => e.kind === q.kind && ((q.kind !== 'upgrade' && q.kind !== 'beacon_upgrade') || !isOtherEvent(e)))
+      if (q.other) all = all.filter(isOtherEvent)
       if (q.known) all = all.filter((e) => e.known)
       if (q.sort === 'priority') all = [...all].sort((a, b) => b.priority - a.priority || b.ts - a.ts || (a.id < b.id ? 1 : -1))
       let start = 0
@@ -1433,12 +1839,18 @@ export function createRadar(o: RadarOptions): Radar {
     idle() {
       return new Promise<void>((resolve) => {
         waiters.push(resolve)
+        drainRequeue()
         // pending Solana actions wait for their timer: run them now
         for (const k of [...solPending.keys()]) enqueueSol(k)
         wake()
         pumpSol()
         pumpEvm()
       })
+    },
+    checkSolanaGaps: () => checkGaps('subscribed'),
+    async runBackfill() {
+      if (solOn) await backfillSolana()
+      for (const c of evmOn) await backfillEvm(c)
     },
   }
 }

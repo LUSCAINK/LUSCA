@@ -9,10 +9,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ChainId, ChainRead } from '../../shared/chain.ts'
 import type { RadarEvent } from '../../shared/radar.ts'
-import { BudgetError, type ChainRpc } from '../chain/rpc.ts'
+import { BudgetError, RpcError, type ChainRpc } from '../chain/rpc.ts'
 import type { SolanaReadResult } from '../chain/solana.ts'
 import type { EvmReadResult } from '../chain/evm.ts'
 import {
+  BURST_PER_SLOT,
   LOADER_V4,
   TOPIC_ADMIN_CHANGED,
   TOPIC_BEACON_UPGRADED,
@@ -30,9 +31,9 @@ import {
   setAuthorityTargets,
   txSigners,
 } from './parse.ts'
-import { diffSnapshots, type Snapshot } from './diff.ts'
+import { diffGuards, diffSnapshots, validBefore, type Snapshot } from './diff.ts'
 import { RadarBudgetError, createRadarBudget } from './budget.ts'
-import { RangeLimitError, createEvmPool, wsUrlOf } from './net.ts'
+import { RangeLimitError, createEvmPool, refusalKind, wsUrlOf } from './net.ts'
 import { createEventLog, createSnapshotStore } from './persist.ts'
 import { createRadar } from './index.ts'
 
@@ -104,17 +105,19 @@ await test('loader logs: a program cannot fake a loader line (msg! output and li
   assert.deepEqual(parseLoaderLogs([null, 3, ...loaderInvoke([])] as unknown[]), [])
 })
 
-await test('loader signatures: the transactions alone in their slot are the candidates; failed ones skipped', () => {
+await test('loader signatures: slots without a buffer-write burst are the candidates (an upgrade next to one other loader tx counts); failed ones skipped', () => {
+  const burst = Array.from({ length: BURST_PER_SLOT }, (_, i) => ({ signature: `w${i}`, slot: 6, err: null }))
   const sigs = [
     { signature: 'a', slot: 10, err: null },
-    { signature: 'b', slot: 9, err: null },
+    { signature: 'b', slot: 9, err: null }, // an upgrade landing next to someone else's buffer write
     { signature: 'c', slot: 9, err: null },
     { signature: 'd', slot: 8, err: { InstructionError: [0, 'Custom'] } },
     { signature: 'e', slot: 7, err: null },
+    ...burst,
   ]
   assert.deepEqual(
     loaderCandidates(sigs).map((s) => s.signature),
-    ['a', 'e'],
+    ['a', 'b', 'c', 'e'],
   )
 })
 
@@ -553,7 +556,7 @@ await test('radar (Solana): an upgrade is read and diffed against the radar snap
   await radar2.stop()
 })
 
-await test('radar (Solana): deploy, close and the chain index as the before; known protocol; pending survives a restart as partial', async () => {
+await test('radar (Solana): deploy, close and the chain index as the before; known protocol; a read cut short by a restart is done after it', async () => {
   const dir = freshDir()
   const kept = solRead(PROG, { codeHash: 'old', ix: ['init'], verified: true }).read
   const radar = createRadar({
@@ -588,13 +591,24 @@ await test('radar (Solana): deploy, close and the chain index as the before; kno
   const p2 = radar.list({ limit: 1, cursor: p1.next! })
   assert.notEqual(p2.items[0].id, p1.items[0].id)
   assert.equal(p2.next, null)
-  // caught but not read when the server stops: partial after the restart, never "reading…" forever
+  // caught but not read when the server stops: queued again after the restart, never "reading…" forever
   radar.ingestSolanaLogs({ signature: `${SIG.slice(0, -1)}z`, slot: 30, err: null, logs: loaderInvoke([`Closed Program ${PROG2}`]), loader: UPGRADEABLE_LOADER })
   await radar.stop()
-  const radar2 = createRadar({ rpc: stubRpc(), store: { item: () => null, keptAt: () => null }, dataDir: dir, log: quiet, broadcast: () => {}, chains: { solana: true, evm: [] }, backfill: false })
+  let reads = 0
+  const closedRead = (a: string): SolanaReadResult => {
+    reads++
+    const r = solRead(a, { codeHash: 'x', ix: null, authority: null })
+    return { ...r, read: { ...r.read, kind: 'program', codeHash: null, programBytes: null, lastDeploySlot: null, notes: ['program closed'] } }
+  }
+  const radar2 = createRadar({ rpc: stubRpc(), store: { item: () => null, keptAt: () => null }, dataDir: dir, log: quiet, broadcast: () => {}, chains: { solana: true, evm: [] }, backfill: false, readSolana: async (a) => closedRead(a) })
+  assert.equal(radar2.list({ kind: 'close' }).items[0].state, 'pending', 'still to be read')
+  await radar2.idle()
   const closed = radar2.list({ kind: 'close' }).items[0]
-  assert.equal(closed.state, 'partial')
-  assert.match(closed.notes.join(' '), /restarted before the read/)
+  assert.equal(reads, 1, 'read once after the restart')
+  assert.equal(closed.state, 'read')
+  assert.match(closed.notes.join(' '), /read after a server restart/)
+  assert.match(closed.headline, /^Closed · program data removed/)
+  assert.equal(closed.diff?.authority ?? 'unknown', 'unknown', 'no authority comparison for a closed program')
   await radar2.stop()
 })
 
@@ -757,6 +771,476 @@ await test('radar (EVM): a provider batch limit is learned; proxies that cannot 
   await radar.stop()
 })
 
+// ─── review fixes: backfill, gap checks, guards, known, same implementation, metering, repair ─────
+
+await test('EVM pool: rate limits are transient (fail over), range refusals halve the window', async () => {
+  assert.equal(refusalKind('Too many requests', null), 'rate')
+  assert.equal(refusalKind('Your app has exceeded its compute units per second capacity', null), 'rate')
+  assert.equal(refusalKind('query returned more than 10000 results', -32005), 'range', 'Infura: -32005 with a result-size message')
+  assert.equal(refusalKind('eth_getLogs is limited to a 500 range', -32614), 'range')
+  assert.equal(refusalKind('block range too large', null), 'range')
+  assert.equal(refusalKind('daily request limit reached', -32005), 'rate')
+  assert.equal(refusalKind('execution reverted', 3), null)
+  const { f, calls } = fakeFetch((url, body) => {
+    if (url.startsWith('http://a.test')) return { json: { jsonrpc: '2.0', id: (body as { id: number }).id, error: { code: -32005, message: 'Too many requests' } } }
+    return { json: { jsonrpc: '2.0', id: (body as { id: number }).id, result: [] } }
+  })
+  const pool = createEvmPool({ chain: 'ethereum', urls: ['http://a.test', 'http://b.test'], charge: () => {}, fetch: f })
+  assert.deepEqual(await pool.call('eth_getLogs', [{}]), [], 'the rate-limited endpoint is struck and the next one answers')
+  assert.deepEqual(calls, ['http://a.test', 'http://b.test'])
+  const { f: f2 } = fakeFetch((_u, body) => ({ status: 429, json: { jsonrpc: '2.0', id: (body as { id: number }).id, error: { message: 'Too many requests' } } }))
+  const one = createEvmPool({ chain: 'ethereum', urls: ['http://c.test'], charge: () => {}, fetch: f2 })
+  await assert.rejects(one.call('eth_getLogs', [{}]), (e: unknown) => e instanceof RpcError && e.transient && !(e instanceof RangeLimitError))
+})
+
+await test('diff: admin-only functions compared by function (changed check ≠ new function); before must predate the change; closed / EVM sides compare no authority', () => {
+  const before = [
+    { fn: 'unlockCallback(bytes)', guard: 'msg.sender == poolManager', at: 'ClaimArbitrage.sol:171' },
+    { fn: 'pause()', guard: 'onlyOwner', at: 'A.sol:10' },
+    { fn: 'sweep(address)', guard: 'onlyOwner', at: 'A.sol:30' },
+  ]
+  const after = [
+    { fn: 'unlockCallback(bytes)', guard: 'onlyPoolManager', at: 'FeeEfficientHook.sol:343' },
+    { fn: 'pause()', guard: 'onlyOwner', at: 'A.sol:12' }, // moved only
+    { fn: 'deposit()', guard: 'onlyOwner', at: 'A.sol:40' }, // existed unguarded before, or new: guarded now
+    { fn: 'runArbitrage()', guard: 'onlyOwner', at: 'FeeEfficientHook.sol:90' },
+  ]
+  const g = diffGuards(before, after)
+  assert.deepEqual(
+    g.guardsAdded?.map((x) => x.fn),
+    ['deposit()', 'runArbitrage()'],
+  )
+  assert.deepEqual(g.guardsChanged, [{ fn: 'unlockCallback(bytes)', before: before[0], after: after[0] }])
+  assert.deepEqual(
+    g.guardsRemoved?.map((x) => x.fn),
+    ['sweep(address)'],
+  )
+  const d = diffSnapshots(snap({ chain: 'base', guards: before, surface: ['unlockCallback(bytes)', 'pause()', 'deposit()'] }), snap({ chain: 'base', guards: after, surface: ['unlockCallback(bytes)', 'pause()', 'deposit()', 'runArbitrage()'] }))
+  assert.equal(d.authority, 'unknown', 'implementation reads carry no proxy admin')
+  const h = headlineOf({ kind: 'upgrade', chain: 'base', count: 1, proxies: null, before: null, after: null, diff: d, state: 'read' })
+  assert.match(h, /1 function added · 2 new admin-only functions · 1 access check changed/)
+  // validBefore: the radar's read of a newer deploy, or read after the change, is no before
+  assert.equal(validBefore({ at: 1000, deploySlot: 90 }, { slot: 100, ts: 2000 }), true)
+  assert.equal(validBefore({ at: 1000, deploySlot: 100 }, { slot: 100, ts: 2000 }), false)
+  assert.equal(validBefore({ at: 1000, deploySlot: 120 }, { slot: 100, ts: 2000 }), false)
+  assert.equal(validBefore({ at: 3000, deploySlot: 90 }, { slot: 100, ts: 2000 }), false)
+  // a closed program on both sides: nothing to compare the authority of
+  const closed = diffSnapshots(snap({ codeHash: null, authority: null }), snap({ codeHash: null, authority: null, at: 2000 }))
+  assert.equal(closed.authority, 'unknown')
+})
+
+/** A stub RPC for the Solana loader paths: getSignaturesForAddress answered only on the discovery RPC, like Helius. */
+function loaderRpc(o: {
+  pages: (params: { before?: string; until?: string }) => unknown[]
+  txs: Record<string, { slot: number; blockTime: number; logs: string[] }>
+  discoveryRefuses?: () => boolean
+  failTx?: (sig: string) => boolean
+}) {
+  const made: { method: string; discovery: boolean; params: unknown[] }[] = []
+  const base = stubRpc()
+  const rpc: ChainRpc = {
+    ...base,
+    usage: () => ({ ...base.usage(), 'solana-discovery': { used: 0, limit: 3000 } }),
+    provider: (k) => (k === 'solana' ? 'Helius' : 'Solana public RPC'),
+    async call(_chain, method, params, opts) {
+      const discovery = opts?.discovery === true
+      made.push({ method, discovery, params })
+      if (method === 'getSignaturesForAddress') {
+        if (!discovery) throw new RpcError('rpc', 'solana rpc getSignaturesForAddress: Invalid params: Address is not supported (-32602)', { code: -32602 })
+        if (o.discoveryRefuses?.()) throw new RpcError('rpc', 'solana discovery rpc getSignaturesForAddress: method not allowed (-32601)', { code: -32601 })
+        return o.pages((params[1] ?? {}) as { before?: string; until?: string })
+      }
+      if (method === 'getTransaction') {
+        const sig = String(params[0])
+        if (o.failTx?.(sig)) throw new RpcError('http', 'solana rpc getTransaction: rate limited (HTTP 429)', { status: 429, transient: true })
+        const t = o.txs[sig]
+        if (!t) return null
+        return { slot: t.slot, blockTime: t.blockTime, meta: { err: null, logMessages: t.logs }, transaction: { message: { header: { numRequiredSignatures: 1 }, accountKeys: [AUTH, UPGRADEABLE_LOADER] } } }
+      }
+      return null
+    },
+  }
+  return { rpc, made }
+}
+
+const sig = (n: number) => `${'5'.repeat(80)}${String(n).padStart(8, '0')}`
+
+await test('radar (Solana backfill): loader signatures on the discovery RPC (Helius refuses them); two upgrades of one program read oldest first, never against a newer read', async () => {
+  const dir = freshDir()
+  const T1 = Date.now() - 2 * 3_600_000
+  const T2 = Date.now() - 3_600_000
+  const txs = {
+    [sig(2)]: { slot: 2000, blockTime: Math.floor(T2 / 1000), logs: loaderInvoke([`Upgraded program ${PROG}`]) },
+    [sig(1)]: { slot: 1000, blockTime: Math.floor(T1 / 1000), logs: loaderInvoke([`Upgraded program ${PROG}`]) },
+  }
+  const page = [
+    { signature: sig(2), slot: 2000, err: null, blockTime: Math.floor(T2 / 1000) },
+    ...Array.from({ length: BURST_PER_SLOT }, (_, i) => ({ signature: sig(100 + i), slot: 1500, err: null, blockTime: Math.floor((T1 + 1000) / 1000) })),
+    { signature: sig(1), slot: 1000, err: null, blockTime: Math.floor(T1 / 1000) },
+    { signature: sig(9), slot: 10, err: null, blockTime: Math.floor((Date.now() - 2 * 86_400_000) / 1000) },
+  ]
+  const { rpc, made } = loaderRpc({ pages: (p) => (p.before ? [] : page), txs })
+  let reads = 0
+  // the program as it is now: the later upgrade (deploy slot 2000)
+  const radar = createRadar({
+    rpc,
+    store: { item: () => null, keptAt: () => null },
+    dataDir: dir,
+    log: quiet,
+    broadcast: () => {},
+    chains: { solana: true, evm: [] },
+    timing: { backfillGapMs: 0 },
+    readSolana: async (a) => {
+      reads++
+      const r = solRead(a, { codeHash: 'now', ix: null })
+      return { ...r, read: { ...r.read, lastDeploySlot: 2000 } }
+    },
+  })
+  await radar.runBackfill()
+  await radar.idle()
+  assert.ok(made.some((m) => m.method === 'getSignaturesForAddress' && m.discovery), 'signatures from the discovery RPC')
+  assert.ok(!made.some((m) => m.method === 'getSignaturesForAddress' && !m.discovery), 'never from Helius')
+  assert.equal(made.filter((m) => m.method === 'getTransaction').length, 3, 'the burst slot is skipped')
+  const evs = radar.list({ chain: 'solana' }).items
+  assert.equal(evs.length, 2, 'an hour apart: two events')
+  const older = evs.find((e) => e.slot === 1000)!
+  const newer = evs.find((e) => e.slot === 2000)!
+  for (const e of [older, newer]) {
+    assert.equal(e.before, null, 'no before read after the change')
+    assert.doesNotMatch(e.headline, /same code hash|authority unchanged/)
+    assert.equal(e.backfill, true)
+  }
+  assert.match(older.headline, /upgraded again since/)
+  assert.match(older.notes.join(' '), /upgraded again at slot 2000/)
+  assert.match(newer.headline, /no earlier state/)
+  assert.doesNotMatch(newer.headline, /again since/)
+  assert.equal(reads, 1, 'the program is read once for both')
+  const bf = radar.status().backfill.solana!
+  assert.equal(bf.done, true)
+  assert.equal(bf.events, 2)
+  await radar.stop()
+})
+
+await test('radar (Solana backfill): a refused first call is not a finished backfill: it runs once more at the next start, then never again', async () => {
+  const dir = freshDir()
+  let refuse = true
+  const txs = { [sig(1)]: { slot: 1000, blockTime: Math.floor(Date.now() / 1000) - 600, logs: loaderInvoke([`Deployed program ${PROG2}`]) } }
+  const page = [{ signature: sig(1), slot: 1000, err: null, blockTime: Math.floor(Date.now() / 1000) - 600 }]
+  const mk = () => {
+    const { rpc, made } = loaderRpc({ pages: (p) => (p.before ? [] : page), txs, discoveryRefuses: () => refuse })
+    const radar = createRadar({ rpc, store: { item: () => null, keptAt: () => null }, dataDir: dir, log: quiet, broadcast: () => {}, chains: { solana: true, evm: [] }, timing: { backfillGapMs: 0 }, readSolana: async (a) => solRead(a, { codeHash: 'd', ix: null }) })
+    return { radar, made }
+  }
+  const a = mk()
+  await a.radar.runBackfill()
+  let bf = a.radar.status().backfill.solana!
+  assert.equal(bf.done, false)
+  assert.match(bf.note ?? '', /^not run: .*tried again at the next start/)
+  await a.radar.stop()
+  refuse = false
+  const b = mk()
+  await b.radar.runBackfill()
+  await b.radar.idle()
+  bf = b.radar.status().backfill.solana!
+  assert.equal(bf.done, true)
+  assert.equal(b.radar.list({ kind: 'deploy' }).items.length, 1)
+  await b.radar.stop()
+  const c = mk()
+  await c.radar.runBackfill()
+  assert.equal(c.made.filter((m) => m.method === 'getSignaturesForAddress').length, 0, 'done: never again')
+  await c.radar.stop()
+})
+
+await test('radar (Solana backfill): a backfill an earlier version marked done after Helius refused its first call runs once more', async () => {
+  const dir = freshDir()
+  mkdirSync(join(dir, 'radar'), { recursive: true })
+  appendFileSync(
+    join(dir, 'radar', 'state.json'),
+    JSON.stringify({ cursors: {}, solanaSig: null, backfill: { solana: { started: 1, done: true, fromTs: null, events: 0, note: 'stopped: solana rpc getSignaturesForAddress: Invalid params: Address is not supported (-32602)' } } }),
+  )
+  const txs = { [sig(1)]: { slot: 1000, blockTime: Math.floor(Date.now() / 1000) - 600, logs: loaderInvoke([`Upgraded program ${PROG}`]) } }
+  const { rpc } = loaderRpc({ pages: (p) => (p.before ? [] : [{ signature: sig(1), slot: 1000, err: null, blockTime: Math.floor(Date.now() / 1000) - 600 }]), txs })
+  const radar = createRadar({ rpc, store: { item: () => null, keptAt: () => null }, dataDir: dir, log: quiet, broadcast: () => {}, chains: { solana: true, evm: [] }, timing: { backfillGapMs: 0 }, readSolana: async (a) => solRead(a, { codeHash: 'u', ix: null }) })
+  assert.equal(radar.status().backfill.solana?.done, false)
+  await radar.runBackfill()
+  await radar.idle()
+  assert.equal(radar.status().backfill.solana?.done, true)
+  assert.equal(radar.list({ chain: 'solana' }).items.length, 1)
+  await radar.stop()
+})
+
+await test('radar (Solana gap check): only what the websocket missed is read, oldest first; the cursor moves only past what was handled', async () => {
+  const dir = freshDir()
+  const now = Math.floor(Date.now() / 1000)
+  const txs = {
+    [sig(3)]: { slot: 3000, blockTime: now - 10, logs: loaderInvoke([`Upgraded program ${PROG}`]) },
+    [sig(2)]: { slot: 2000, blockTime: now - 20, logs: loaderInvoke([`Upgraded program ${PROG2}`]) },
+    [sig(1)]: { slot: 1000, blockTime: now - 30, logs: loaderInvoke([`Deployed program ${PROG2}`]) },
+  }
+  let untilSeen: string[] = []
+  let page = [
+    { signature: sig(3), slot: 3000, err: null, blockTime: now - 10 },
+    { signature: sig(2), slot: 2000, err: null, blockTime: now - 20 },
+    { signature: sig(1), slot: 1000, err: null, blockTime: now - 30 },
+  ]
+  let fail = new Set<string>([sig(3)])
+  const { rpc, made } = loaderRpc({
+    pages: (p) => {
+      if (p.until) untilSeen.push(p.until)
+      return p.before ? [] : page
+    },
+    txs,
+    failTx: (s) => fail.has(s),
+  })
+  const radar = createRadar({ rpc, store: { item: () => null, keptAt: () => null }, dataDir: dir, log: quiet, broadcast: () => {}, chains: { solana: true, evm: [] }, backfill: false, readSolana: async (a) => solRead(a, { codeHash: 'c', ix: null }) })
+  // first check on a fresh data directory: the cursor starts at the newest signature
+  await radar.checkSolanaGaps()
+  assert.equal(made.filter((m) => m.method === 'getTransaction').length, 0)
+  // newer loader traffic; the socket delivered sig(4) itself
+  const txs2 = { [sig(4)]: { slot: 4000, blockTime: now - 5, logs: loaderInvoke([`Upgraded program ${PROG}`]) } }
+  Object.assign(txs, txs2)
+  radar.ingestSolanaLogs({ signature: sig(4), slot: 4000, err: null, logs: txs2[sig(4)].logs, loader: UPGRADEABLE_LOADER })
+  page = [{ signature: sig(6), slot: 6000, err: null, blockTime: now }, { signature: sig(5), slot: 5000, err: null, blockTime: now - 1 }, { signature: sig(4), slot: 4000, err: null, blockTime: now - 5 }]
+  txs[sig(5)] = { slot: 5000, blockTime: now - 1, logs: loaderInvoke([`Upgraded program ${PROG2}`]) }
+  txs[sig(6)] = { slot: 6000, blockTime: now, logs: loaderInvoke([`Upgraded program ${PROG}`]) }
+  fail = new Set([sig(6)])
+  made.length = 0
+  await radar.checkSolanaGaps()
+  assert.deepEqual(untilSeen, [sig(3)], 'from the cursor')
+  assert.deepEqual(
+    made.filter((m) => m.method === 'getTransaction').map((m) => m.params[0]),
+    [sig(5), sig(6)],
+    'oldest first; sig(4) came over the socket',
+  )
+  // sig(6) failed: the next check starts after sig(5), the last handled
+  fail = new Set()
+  untilSeen = []
+  page = [{ signature: sig(6), slot: 6000, err: null, blockTime: now }]
+  made.length = 0
+  await radar.checkSolanaGaps()
+  assert.deepEqual(untilSeen, [sig(5)])
+  assert.deepEqual(
+    made.filter((m) => m.method === 'getTransaction').map((m) => m.params[0]),
+    [sig(6)],
+  )
+  await radar.idle()
+  assert.ok(radar.list({ chain: 'solana' }).items.some((e) => e.address === PROG2), 'the change the socket missed is an event')
+  await radar.stop()
+})
+
+await test('radar (EVM): known only through the proxy itself; the same implementation set again is folded and not an upgrade', async () => {
+  const dir = freshDir()
+  const SAME_IMPL = IMPL_A
+  const { f } = fakeFetch((_url, body) => {
+    const answer = (c: { id: number; method: string; params: unknown[] }) => {
+      if (c.method === 'eth_getCode') return { jsonrpc: '2.0', id: c.id, result: '0x6080604052' }
+      // every proxy had IMPL_A one block earlier
+      if (c.method === 'eth_getStorageAt') return { jsonrpc: '2.0', id: c.id, result: word(SAME_IMPL) }
+      if (c.method === 'eth_getTransactionByHash') return { jsonrpc: '2.0', id: c.id, result: { from: ADMIN } }
+      return { jsonrpc: '2.0', id: c.id, result: null }
+    }
+    return { json: Array.isArray(body) ? body.map(answer) : answer(body as never) }
+  })
+  const kept = new Set([IMPL_B]) // the implementation is kept; the proxies are not
+  const radar = createRadar({
+    rpc: stubRpc(),
+    store: { item: () => null, keptAt: (_c, a) => (kept.has(a) ? 1000 : null) },
+    dataDir: dir,
+    log: quiet,
+    broadcast: () => {},
+    chains: { solana: false, evm: ['base'] },
+    logEndpoints: { base: ['http://127.0.0.1:9/rpc'] },
+    fetch: f,
+    backfill: false,
+    readEvm: async (c, a, ctx) => (await ctx.call(c, 'eth_getCode', [a, 'latest']), evmRead(a, VAULT_V2, ['deposit()'])),
+  })
+  const t = Date.now() - 60_000
+  await radar.ingestEvmLogs('base', [
+    // three wallets re-initializing with the implementation they already had
+    ...[0, 1, 2].map((i) => log({ address: `0x${(i + 64).toString(16).padStart(40, '0')}`, topics: [TOPIC_UPGRADED, word(SAME_IMPL)], tx: `0x${(i + 64).toString(16).padStart(64, '0')}`, block: 700 + i, ts: t + i * 2000 })),
+    // a real upgrade A → B of a proxy whose new implementation is kept
+    log({ address: PROXY, topics: [TOPIC_UPGRADED, word(IMPL_B)], tx: TX1, block: 710, ts: t + 10_000 }),
+  ])
+  await radar.idle()
+  const same = radar.list({ other: true }).items
+  assert.equal(same.length, 1)
+  assert.equal(same[0].sameImpl, true)
+  assert.equal(same[0].proxies?.n, 3)
+  assert.equal(same[0].state, 'read')
+  assert.match(same[0].headline, /^Upgraded event · 3 proxies · → 0xaa…aaaa · same implementation set again$/)
+  const ups = radar.list({ kind: 'upgrade' }).items
+  assert.equal(ups.length, 1, 'kind=upgrade lists confirmed upgrades only')
+  assert.equal(ups[0].address, PROXY)
+  assert.equal(ups[0].known, false, 'a kept implementation does not make the proxy known')
+  assert.match(ups[0].notes.join(' '), /implementation kept in the chain index/)
+  const st = radar.status()
+  assert.equal(st.last24h.sameImpl, 1)
+  assert.equal(st.last24h.byKind.upgrade, 1)
+  assert.equal(radar.list({ known: true }).items.length, 0)
+  await radar.stop()
+  // the proxy itself kept: known
+  kept.add(PROXY2)
+  const radar2 = createRadar({ rpc: stubRpc(), store: { item: () => null, keptAt: (_c, a) => (kept.has(a) ? 1000 : null) }, dataDir: freshDir(), log: quiet, broadcast: () => {}, chains: { solana: false, evm: ['base'] }, logEndpoints: { base: ['http://127.0.0.1:9/rpc'] }, fetch: f, backfill: false, readEvm: async (c, a, ctx) => (await ctx.call(c, 'eth_getCode', [a, 'latest']), evmRead(a, VAULT_V2, ['deposit()'])) })
+  await radar2.ingestEvmLogs('base', [log({ address: PROXY2, topics: [TOPIC_UPGRADED, word(IMPL_B)], tx: TX2, block: 720, ts: t })])
+  await radar2.idle()
+  assert.equal(radar2.list({ known: true }).items.length, 1)
+  await radar2.stop()
+})
+
+await test('radar (boot): stored facts an earlier version got wrong are corrected (newer before, guard changes, same implementation, known via implementation)', async () => {
+  const dir = freshDir()
+  mkdirSync(join(dir, 'radar'), { recursive: true })
+  const t = Date.now() - 3_600_000
+  const side = (x: Partial<RadarEvent['after'] & object>) => ({ at: t, from: 'read' as const, codeHash: 'h', authority: AUTH, upgradeable: true, verified: 'none' as const, name: null, surfaceCount: null, ...x })
+  const stored: RadarEvent[] = [
+    // a backfilled upgrade whose "before" was read after it (deploy slot newer than the event)
+    mkEv('sol-old', t, { slot: 1000, backfill: true, before: side({ from: 'radar', at: t + 1_800_000, deploySlot: 2000, codeHash: 'now' }), after: side({ at: t + 1_800_000, deploySlot: 2000, codeHash: 'now' }), diff: { code: 'same', authority: 'same', verified: 'same', surface: 'instructions', added: null, removed: null, guardsAdded: null, guardsRemoved: null, primitivesAdded: null, primitivesRemoved: null } }),
+    // an EVM upgrade listing a guard that only changed, and known through its implementation
+    mkEv('eth-guard', t, {
+      chain: 'ethereum',
+      address: PROXY,
+      known: true,
+      knownWhy: 'kept in the chain index',
+      before: side({ from: 'read', implementation: IMPL_A }),
+      after: side({ from: 'read', implementation: IMPL_B }),
+      diff: {
+        code: 'changed',
+        authority: 'same',
+        verified: 'same',
+        surface: 'functions',
+        added: { items: ['runArbitrage()'], more: 0 },
+        removed: { items: [], more: 0 },
+        guardsAdded: [
+          { fn: 'unlockCallback(bytes)', guard: 'onlyPoolManager', at: 'Hook.sol:343' },
+          { fn: 'runArbitrage()', guard: 'onlyOwner', at: 'Hook.sol:90' },
+        ],
+        guardsRemoved: [],
+        primitivesAdded: null,
+        primitivesRemoved: null,
+      },
+    }),
+    // the implementation it already had, set again
+    mkEv('bas-same', t, { chain: 'base', address: PROXY2, before: side({ from: 'event', implementation: IMPL_A }), after: side({ from: 'event', implementation: IMPL_A }), state: 'partial' }),
+  ]
+  appendFileSync(join(dir, 'radar', 'events.jsonl'), stored.map((e) => JSON.stringify(e)).join('\n') + '\n')
+  const radar = createRadar({ rpc: stubRpc(), store: { item: () => null, keptAt: (_c, a) => (a === IMPL_B ? 1000 : null) }, dataDir: dir, log: quiet, broadcast: () => {}, chains: { solana: true, evm: ['ethereum', 'base'] }, logEndpoints: { ethereum: ['http://127.0.0.1:9'], base: ['http://127.0.0.1:9'] }, backfill: false })
+  const sol = radar.get('sol-old')!
+  assert.equal(sol.before, null)
+  assert.match(sol.headline, /no earlier state/)
+  assert.doesNotMatch(sol.headline, /same code hash|authority unchanged/)
+  const eth = radar.get('eth-guard')!
+  assert.deepEqual(
+    eth.diff?.guardsAdded?.map((g) => g.fn),
+    ['runArbitrage()'],
+  )
+  assert.equal(eth.known, false)
+  assert.match(eth.headline, /1 new admin-only function/)
+  const same = radar.get('bas-same')!
+  assert.equal(same.sameImpl, true)
+  assert.equal(same.state, 'read')
+  assert.match(same.headline, /same implementation set again/)
+  const st = radar.status()
+  assert.equal(st.last24h.byKind.upgrade, 2, 'the Solana and the EVM upgrade; not the same implementation set again')
+  assert.equal(st.last24h.sameImpl, 1)
+  await radar.stop()
+})
+
+await test('radar (Solana websocket): the paid socket is metered; past its daily allowance the radar listens on the public one (no key anywhere)', async () => {
+  const { EventEmitter } = await import('node:events')
+  const opened: string[] = []
+  const sockets: InstanceType<typeof FakeWS>[] = []
+  class FakeWS extends EventEmitter {
+    constructor(readonly url: string) {
+      super()
+      opened.push(url)
+      sockets.push(this)
+      setTimeout(() => this.emit('open'), 1)
+    }
+    send(data: string) {
+      const j = JSON.parse(data) as { id: number }
+      setTimeout(() => this.emit('message', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: j.id, result: j.id }))), 1)
+    }
+    ping() {}
+    terminate() {
+      this.emit('close')
+    }
+  }
+  const radar = createRadar({
+    rpc: stubRpc(),
+    store: { item: () => null, keptAt: () => null },
+    dataDir: freshDir(),
+    log: quiet,
+    broadcast: () => {},
+    chains: { solana: true, evm: [] },
+    backfill: false,
+    solanaRpcUrl: 'https://mainnet.helius-rpc.com/?api-key=secret-key-123456',
+    limits: { 'ws-solana': 1 }, // 0.1 MB a day
+    WebSocketImpl: FakeWS,
+  })
+  radar.start()
+  await new Promise((r) => setTimeout(r, 30))
+  assert.equal(opened.length, 1)
+  assert.match(opened[0], /^wss:\/\/mainnet\.helius-rpc\.com/)
+  assert.match(radar.status().sources.solana!.via, /^Helius websocket/)
+  const big = (n: number) => Buffer.from(JSON.stringify({ jsonrpc: '2.0', method: 'logsNotification', params: { subscription: 1, result: { context: { slot: n }, value: { signature: sig(n), err: null, logs: ['x'.repeat(70_000)] } } } }))
+  sockets[0].emit('message', big(1))
+  sockets[0].emit('message', big(2))
+  sockets[0].emit('message', big(3))
+  await new Promise((r) => setTimeout(r, 30))
+  assert.equal(opened.length, 2, 'reopened')
+  assert.equal(opened[1], 'wss://api.mainnet-beta.solana.com/')
+  const st = radar.status()
+  assert.match(st.sources.solana!.via, /^Solana public websocket \(Helius websocket allowance for today used\)/)
+  assert.ok(st.exhausted?.some((x) => x.key === 'ws-solana'))
+  assert.doesNotMatch(JSON.stringify(st), /secret-key/)
+  await radar.stop()
+})
+
+await test('budget: the hourly share survives a restart within the same hour', () => {
+  const file = join(freshDir(), 'budget.json')
+  const t = Date.UTC(2026, 9, 6, 10, 5, 0)
+  const b = createRadarBudget({ solana: 100 }, file, () => t, 0.1)
+  for (let i = 0; i < 10; i++) b.charge('solana')
+  b.flush()
+  const b2 = createRadarBudget({ solana: 100 }, file, () => t + 60_000, 0.1)
+  assert.equal(b2.why('solana'), 'hour', 'still this hour: the share is used up')
+  const b3 = createRadarBudget({ solana: 100 }, file, () => t + 3_600_000, 0.1)
+  assert.equal(b3.why('solana'), null, 'next hour')
+})
+
+await test('hub: radar events carry the call trace only to /scan sockets', async () => {
+  const { createHub } = await import('../http.ts')
+  const { WebSocket } = await import('ws')
+  const hub = createHub({ distDir: null })
+  const port = await hub.listen(0, '127.0.0.1')
+  type Msg = { t: string; event?: RadarEvent }
+  const open = async () => {
+    const msgs: Msg[] = []
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+    ws.on('message', (d) => msgs.push(JSON.parse(String(d)) as Msg))
+    await new Promise((r) => ws.once('open', r))
+    return { ws, msgs }
+  }
+  const scan = await open()
+  const lean = await open()
+  scan.ws.send(JSON.stringify({ t: 'chain.scan', on: true }))
+  await new Promise((r) => setTimeout(r, 80))
+  hub.emit({ t: 'radar', event: mkEv('sol-trace01', Date.now(), { trace: [{ kind: 'rpc', method: 'getMultipleAccounts', target: 'x', provider: 'Helius', t: 0, ms: 3, ok: true, result: 'ok' }] }) })
+  const got = async (msgs: Msg[]) => {
+    for (let i = 0; i < 100; i++) {
+      const m = msgs.find((x) => x.t === 'radar')
+      if (m?.event) return m.event
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    throw new Error('no radar event')
+  }
+  assert.equal((await got(scan.msgs)).trace?.length, 1)
+  assert.equal((await got(lean.msgs)).trace, undefined)
+  scan.ws.close()
+  lean.ws.close()
+  await hub.close()
+})
+
 // ─── REST ───────────────────────────────────────────────────────────────────
 
 await test('REST: /api/radar pages and filters, /api/radar/:id detail, validation, 503 without the radar', async () => {
@@ -784,6 +1268,8 @@ await test('REST: /api/radar pages and filters, /api/radar/:id detail, validatio
   assert.deepEqual((base.body.items as RadarEvent[]).map((e) => e.id), ['bas-bbbbbbbb'])
   assert.equal((await get('/api/radar?chain=doge')).status, 400)
   assert.equal((await get('/api/radar?kind=rug')).status, 400)
+  assert.equal((await get('/api/radar?other=2')).status, 400)
+  assert.equal((await get('/api/radar?other=1')).status, 200)
   assert.equal((await get('/api/radar?limit=0')).status, 400)
   assert.equal((await get('/api/radar?cursor=../../x')).status, 400)
   const one = await get('/api/radar/sol-aaaaaaaa')

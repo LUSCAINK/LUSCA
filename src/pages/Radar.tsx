@@ -15,7 +15,7 @@ import { bus } from '@/lib/bus'
 import { CHAINS, CHAIN_LABEL, CHAIN_SHORT, explorerName, explorerUrl, shortAddress } from '@/lib/chain'
 import { DASH, fmtAgo, fmtInt } from '@/lib/format'
 import { useConn, useMedia, useNow } from '@/lib/hooks'
-import { KIND_BADGE, KIND_FILTER, VERIFIED_WORD, fetchRadar, fetchRadarEvent, matches, txUrl, type RadarQuery } from '@/lib/radar'
+import { BUDGET_LABEL, KIND_FILTER, VERIFIED_WORD, badgeOf, fetchRadar, fetchRadarEvent, isOtherEvent, matches, txUrl, type RadarQuery } from '@/lib/radar'
 import './radar.css'
 
 /** Position of /radar in the primary navigation (src/components/shell/Shell.tsx NAV). */
@@ -39,7 +39,7 @@ export default function Radar() {
   const conn = useConn()
   const reduced = useMedia('(prefers-reduced-motion: reduce)')
   const now = useNow(15_000)
-  const [q, setQ] = useState<RadarQuery>({ chain: '', kind: '', known: false, sort: 'new' })
+  const [q, setQ] = useState<RadarQuery>({ chain: '', kind: '', other: false, known: false, sort: 'new' })
   const [items, setItems] = useState<RadarEvent[]>([])
   const [next, setNext] = useState<string | null>(null)
   const [status, setStatus] = useState<RadarStatus | null>(null)
@@ -180,6 +180,11 @@ export default function Radar() {
           })}
         </ul>
       </section>
+      {status?.exhausted && status.exhausted.length > 0 && (
+        <p className="rd-limits mono">
+          <span className="k">radar budget used up</span> {status.exhausted.map((x) => `${BUDGET_LABEL[x.key] ?? x.key} (${x.why === 'day' ? 'until 00:00 UTC' : 'until the next hour'})`).join(' · ')}
+        </p>
+      )}
 
       <nav className="rd-filters mono" aria-label="Filters">
         <div className="rd-seg" role="group" aria-label="Chain">
@@ -190,11 +195,20 @@ export default function Radar() {
           ))}
         </div>
         <div className="rd-seg" role="group" aria-label="Kind of change">
-          {KIND_FILTER.map((k) => (
-            <button key={k.k || 'all'} className={q.kind === k.k ? 'on' : ''} aria-pressed={q.kind === k.k} onClick={() => applyQ((x) => ({ ...x, kind: k.k as RadarKind | '' }))}>
-              {k.label}
-            </button>
-          ))}
+          {KIND_FILTER.map((k) => {
+            const on = k.k === 'other' ? !!q.other : !q.other && q.kind === k.k
+            return (
+              <button
+                key={k.k || 'all'}
+                className={on ? 'on' : ''}
+                aria-pressed={on}
+                title={k.title}
+                onClick={() => applyQ((x) => (k.k === 'other' ? { ...x, kind: '', other: true } : { ...x, kind: k.k as RadarKind | '', other: false }))}
+              >
+                {k.label}
+              </button>
+            )
+          })}
         </div>
         <div className="rd-seg" role="group" aria-label="Order">
           {(
@@ -221,7 +235,7 @@ export default function Radar() {
               ? 'Can’t reach the LUSCA server — retrying…'
               : load === 'loading'
                 ? 'Loading…'
-                : q.chain || q.kind || q.known
+                : q.chain || q.kind || q.other || q.known
                   ? 'listening · nothing matches these filters yet'
                   : 'listening · no upgrades yet'}
           </p>
@@ -241,12 +255,14 @@ export default function Radar() {
 
       <footer className="rd-foot mono">
         <span>
-          Facts read on-chain and from Sourcify / OtterSec. A change is described, not judged. Backfill:{' '}
+          Facts read on-chain and from Sourcify / OtterSec. A change is described, not judged. First-start backfill:{' '}
           {status
             ? Object.entries(status.backfill)
-                .map(([c, b]) => `${CHAIN_SHORT[c as ChainId] ?? c} ${b?.done ? `since ${b.fromTs ? utc(b.fromTs).slice(5, 16) : '—'}` : 'running'}`)
+                .map(([c, b]) => `${CHAIN_SHORT[c as ChainId] ?? c} ${b?.done ? (b.fromTs ? `from ${utc(b.fromTs).slice(5, 16)}` : 'none') : b?.note ? 'waiting for the next start' : 'running'}`)
                 .join(' · ') || 'none'
             : DASH}
+          {status?.backfill.solana?.done && ' (Solana: a hard cap of loader transactions, a few hours back at most)'}
+          {status?.unattributed ? ` · ${fmtInt(status.unattributed)} authority change${status.unattributed === 1 ? '' : 's'} today not matched to a program (counted, not listed)` : ''}
         </span>
         <Link to="/scan" className="rd-foot-a">
           Watch reads live on /scan →
@@ -342,7 +358,8 @@ function Card({ e, now, fresh }: { e: RadarEvent; now: number; fresh: boolean })
   const b = ev.before
   const a = ev.after
   const d = ev.diff
-  const low = !ev.known && (ev.priority < 20 || ev.kind === 'deploy' || !!ev.proxies)
+  const other = isOtherEvent(ev)
+  const low = !ev.known && (ev.priority < 20 || ev.kind === 'deploy' || !!ev.proxies || other)
   const unit = d?.surface === 'functions' || !sol ? 'functions' : 'instructions'
   const tx = txUrl(ev.chain, ev.tx)
   const addrUrl = explorerUrl(ev.chain, ev.address)
@@ -360,6 +377,8 @@ function Card({ e, now, fresh }: { e: RadarEvent; now: number; fresh: boolean })
   }, [open, e.id, e.updatedAt, full])
 
   const authLabel = sol ? 'Upgrade authority' : 'Admin'
+  /** A closed Solana program: nothing left to verify. */
+  const closed = sol && (ev.kind === 'close' || (a?.from === 'read' && !a.codeHash))
   const codeSame = d?.code === 'same'
   const listAdded = d?.added && d.added.items.length + d.added.more > 0 ? d.added : null
   const listRemoved = d?.removed && d.removed.items.length + d.removed.more > 0 ? d.removed : null
@@ -371,7 +390,7 @@ function Card({ e, now, fresh }: { e: RadarEvent; now: number; fresh: boolean })
     <li className={`rd-card k-${ev.kind} ${fresh ? 'fresh' : ''} ${low ? 'low' : ''} ${ev.known ? 'known' : ''} ${ev.state === 'pending' ? 'pending' : ''}`}>
       {fresh && <span className="rd-card-sweep" aria-hidden="true" />}
       <div className="rd-card-h mono">
-        <span className={`rd-badge ${ev.kind === 'deploy' || ev.proxies ? 'quiet' : ''}`}>{ev.proxies && ev.kind !== 'deploy' ? `${KIND_BADGE[ev.kind]} EVENT` : KIND_BADGE[ev.kind]}</span>
+        <span className={`rd-badge ${ev.kind === 'deploy' || ev.proxies || other ? 'quiet' : ''}`}>{badgeOf(ev)}</span>
         <span className="rd-chip">{CHAIN_SHORT[ev.chain]}</span>
         {ev.known && (
           <span className="rd-chip known" title={ev.knownWhy ?? undefined}>
@@ -406,14 +425,14 @@ function Card({ e, now, fresh }: { e: RadarEvent; now: number; fresh: boolean })
             <Row
               k={authLabel}
               before={b && (sol ? b.from !== 'event' : true) ? (b.authority ?? (b.from === 'event' && !sol ? 'none' : b.upgradeable === false ? 'none · immutable' : 'none')) : null}
-              after={a && (a.from !== 'event' || !sol) ? (a.authority ?? (a.upgradeable === false ? 'none · immutable' : 'none')) : null}
+              after={a && (a.from !== 'event' || !sol) ? (a.authority ?? (sol && (ev.kind === 'close' || !a.codeHash) ? 'none · program closed' : a.upgradeable === false ? 'none · immutable' : 'none')) : null}
               same={d?.authority === 'same'}
             />
           )}
           {(a?.surfaceCount != null || b?.surfaceCount != null) && (
             <Row k={sol ? 'IDL instructions' : 'ABI functions'} before={b && b.from !== 'event' ? (b.surfaceCount == null ? 'none' : fmtInt(b.surfaceCount)) : null} after={a ? (a.surfaceCount == null ? 'none' : fmtInt(a.surfaceCount)) : null} />
           )}
-          {(verifiedA || verifiedB) && <Row k="Verified" before={verifiedB} after={verifiedA} same={d?.verified === 'same'} />}
+          {(verifiedA || verifiedB) && !closed && <Row k="Verified" before={verifiedB} after={verifiedA} same={d?.verified === 'same'} />}
           {sol && a?.primitives && a.primitives.length > 0 && <Row k="Primitives" before={b?.primitives ? b.primitives.join(' · ') || 'none' : null} after={a.primitives.join(' · ')} />}
         </dl>
       ) : null}
@@ -455,6 +474,18 @@ function Card({ e, now, fresh }: { e: RadarEvent; now: number; fresh: boolean })
             {d.guardsAdded.map((g) => (
               <li key={`${g.fn}|${g.guard}`} className="mono">
                 <b>{g.fn}</b> <span className="dim">guarded by</span> {g.guard} <span className="at">{g.at}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {d?.guardsChanged && d.guardsChanged.length > 0 && (
+        <div className="rd-guards chg">
+          <span className="mono k">Access check changed</span>
+          <ul>
+            {d.guardsChanged.map((g) => (
+              <li key={g.fn} className="mono">
+                <b>{g.fn}</b> <span className="dim">was</span> {g.before.guard} <span className="at">{g.before.at}</span> <span className="dim">→ now</span> {g.after.guard} <span className="at">{g.after.at}</span>
               </li>
             ))}
           </ul>

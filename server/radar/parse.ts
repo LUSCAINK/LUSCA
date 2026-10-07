@@ -86,15 +86,20 @@ export interface SigInfo {
   blockTime?: number | null
 }
 
+/** Loader transactions in one slot from which the slot counts as a buffer-write burst. */
+export const BURST_PER_SLOT = 4
+
 /**
- * Loader signatures worth a getTransaction: a deploy writes its buffer in hundreds of transactions
- * packed into a few slots; the deploy / upgrade / authority transaction itself usually lands alone in
- * its slot. Failed transactions are skipped. Newest first, as given.
+ * Loader signatures worth a getTransaction: a deploy writes its buffer in hundreds of transactions packed
+ * into dense slots (mainnet, 2026-10: 97 % of loader transactions sit in slots holding 7 or more); the
+ * deploy / upgrade / authority / close transaction lands alone or next to one or two unrelated loader
+ * transactions. Slots with fewer than BURST_PER_SLOT loader transactions are kept; failed transactions
+ * skipped. Order kept as given (newest first from getSignaturesForAddress).
  */
 export function loaderCandidates(sigs: readonly SigInfo[]): SigInfo[] {
   const perSlot = new Map<number, number>()
   for (const s of sigs) perSlot.set(s.slot, (perSlot.get(s.slot) ?? 0) + 1)
-  return sigs.filter((s) => !s.err && perSlot.get(s.slot) === 1)
+  return sigs.filter((s) => !s.err && (perSlot.get(s.slot) ?? 0) < BURST_PER_SLOT)
 }
 
 /** The writable account of a SetAuthority / SetAuthorityChecked instruction of the upgradeable loader, from a getTransaction (json) result. */
@@ -312,8 +317,10 @@ export function verifiedWord(v: RadarVerified | undefined | null): string {
   }
 }
 
+type HeadlineInput = Pick<RadarEvent, 'kind' | 'chain' | 'count' | 'proxies' | 'before' | 'after' | 'diff' | 'state'> & { slot?: number | null; sameImpl?: boolean }
+
 /** "Upgraded · 2 instructions added · authority unchanged · verified: no" */
-export function headlineOf(e: Pick<RadarEvent, 'kind' | 'chain' | 'count' | 'proxies' | 'before' | 'after' | 'diff' | 'state'>): string {
+export function headlineOf(e: HeadlineInput): string {
   const parts: string[] = [KIND_WORD[e.kind]]
   const d = e.diff
   const a = e.after
@@ -321,15 +328,21 @@ export function headlineOf(e: Pick<RadarEvent, 'kind' | 'chain' | 'count' | 'pro
   const proxies = (n: number) => `${n} ${n === 1 ? 'proxy' : 'proxies'}`
   if (e.kind === 'deploy' && e.proxies && e.proxies.n > 1) parts[0] = `Deployed · ${proxies(e.proxies.n)}`
   // Upgraded / BeaconUpgraded events whose proxies could not be checked (deployment or upgrade): said as such
-  const unchecked = !!e.proxies && e.kind !== 'deploy'
-  if (unchecked) parts[0] = `${e.kind === 'beacon_upgrade' ? 'BeaconUpgraded' : 'Upgraded'} event · ${proxies(e.proxies!.n)}`
+  const unchecked = !!e.proxies && e.kind !== 'deploy' && !e.sameImpl
+  if (e.proxies && e.kind !== 'deploy') parts[0] = `${e.kind === 'beacon_upgrade' ? 'BeaconUpgraded' : 'Upgraded'} event · ${proxies(e.proxies.n)}`
+  if (e.sameImpl) {
+    // the implementation the proxy already had, set again: no code change
+    if (a?.implementation) parts.push(`→ ${shortAddr(a.implementation)}`)
+    parts.push('same implementation set again')
+    return parts.join(' · ')
+  }
   if (e.count > 1 && e.kind !== 'deploy' && !unchecked) parts.push(`${e.count}×`)
   if (e.kind === 'admin_change') {
     parts.push(`${shortAddr(b?.authority)} → ${shortAddr(a?.authority)}`)
     return parts.join(' · ')
   }
   if (e.kind === 'authority_change') {
-    parts.push(a?.authority ? `→ ${shortAddr(a.authority)}` : a && a.upgradeable === false ? 'now immutable' : 'new authority')
+    parts.push(a?.authority ? `→ ${shortAddr(a.authority)}` : a && a.from === 'read' && !a.codeHash ? 'program closed since' : a && a.upgradeable === false ? 'now immutable' : 'new authority')
     return parts.join(' · ')
   }
   if (e.kind === 'close') {
@@ -345,6 +358,7 @@ export function headlineOf(e: Pick<RadarEvent, 'kind' | 'chain' | 'count' | 'pro
     if (add) parts.push(`${plural(add, unit)} added`)
     if (rem) parts.push(`${plural(rem, unit)} removed`)
     if (d.guardsAdded?.length) parts.push(`${plural(d.guardsAdded.length, 'new admin-only function')}`)
+    if (d.guardsChanged?.length) parts.push(`${plural(d.guardsChanged.length, 'access check')} changed`)
     if (d.primitivesAdded?.length) parts.push(`primitives + ${d.primitivesAdded.join(', ')}`)
     if (!add && !rem && d.added && d.removed) parts.push(`same ${unit}s`)
     if (d.code === 'same' && e.kind === 'upgrade') parts.push('same code hash')
@@ -356,6 +370,10 @@ export function headlineOf(e: Pick<RadarEvent, 'kind' | 'chain' | 'count' | 'pro
     if (e.chain === 'solana' && e.kind === 'upgrade') {
       if (!b) parts.push('no earlier state')
       else parts.push(d.authority === 'same' ? 'authority unchanged' : d.authority === 'changed' ? 'authority changed' : 'authority before unknown')
+    }
+    // the state read after is newer than this change (a later upgrade landed before the read: backfill, restart)
+    if (e.chain === 'solana' && (e.kind === 'upgrade' || e.kind === 'deploy') && e.slot != null && a?.deploySlot != null && a.deploySlot > e.slot) {
+      parts.push(e.kind === 'deploy' ? 'upgraded since' : 'upgraded again since')
     }
   } else if (unchecked) {
     parts.push('not checked: deployment or upgrade')
@@ -369,8 +387,11 @@ export function headlineOf(e: Pick<RadarEvent, 'kind' | 'chain' | 'count' | 'pro
 
 const KIND_BASE: Record<RadarKind, number> = { upgrade: 50, beacon_upgrade: 44, authority_change: 40, admin_change: 34, close: 30, deploy: 12 }
 
-/** Significance for display: known protocols and larger diffs first; test deploys and repeated redeploys lower. */
-export function priorityOf(e: Pick<RadarEvent, 'kind' | 'known' | 'count' | 'proxies' | 'after' | 'before' | 'diff' | 'chain'>): number {
+/** Significance for display: known protocols and larger diffs first; test deploys, repeated redeploys and folded proxy events lower. */
+export function priorityOf(e: Pick<RadarEvent, 'kind' | 'known' | 'count' | 'proxies' | 'after' | 'before' | 'diff' | 'chain'> & { sameImpl?: boolean }): number {
+  // folded Upgraded events: the same implementation set again, or proxies not checked (mostly wallet / deposit-address set-ups)
+  if (e.sameImpl) return e.known ? 30 : 4
+  if (e.proxies && e.kind !== 'deploy') return Math.max(0, (e.known ? 50 : 18) - (e.proxies.n > 3 ? 4 : 0))
   let p = KIND_BASE[e.kind]
   if (e.known) p += 40
   const d = e.diff

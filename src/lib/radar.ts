@@ -2,7 +2,9 @@
 // WebSocket { t: 'radar', event } stream (an update of an event re-sends its id). Real data only:
 // every event was caught and read by the server; nothing is filled in here.
 import type { ChainId } from '@shared/chain'
-import type { RadarEvent, RadarKind, RadarPage, RadarVerified } from '@shared/radar'
+import { isOtherEvent, type RadarEvent, type RadarKind, type RadarPage, type RadarVerified } from '@shared/radar'
+
+export { isOtherEvent }
 
 export const KIND_BADGE: Record<RadarKind, string> = {
   upgrade: 'UPGRADED',
@@ -13,7 +15,8 @@ export const KIND_BADGE: Record<RadarKind, string> = {
   close: 'CLOSED',
 }
 
-export const KIND_FILTER: { k: RadarKind | ''; label: string }[] = [
+/** 'other': folded Upgraded events that are not confirmed upgrades (proxies not checked, or the same implementation set again). */
+export const KIND_FILTER: { k: RadarKind | '' | 'other'; label: string; title?: string }[] = [
   { k: '', label: 'All' },
   { k: 'upgrade', label: 'Upgraded' },
   { k: 'deploy', label: 'Deployed' },
@@ -21,7 +24,38 @@ export const KIND_FILTER: { k: RadarKind | ''; label: string }[] = [
   { k: 'admin_change', label: 'Admin' },
   { k: 'beacon_upgrade', label: 'Beacon' },
   { k: 'close', label: 'Closed' },
+  { k: 'other', label: 'Other events', title: 'Upgraded events that are not confirmed upgrades: proxies not checked, or the same implementation set again' },
 ]
+
+/** What the badge of a change says. */
+export function badgeOf(e: Pick<RadarEvent, 'kind' | 'proxies' | 'sameImpl'>): string {
+  return isOtherEvent(e) ? `${KIND_BADGE[e.kind]} EVENT` : KIND_BADGE[e.kind]
+}
+
+/** /scan: the label of a caught change, by kind ("RADAR · CLOSE CAUGHT"). */
+export const CAUGHT_WORD: Record<RadarKind, string> = {
+  upgrade: 'Upgrade',
+  deploy: 'Deploy',
+  authority_change: 'Authority change',
+  admin_change: 'Admin change',
+  beacon_upgrade: 'Beacon change',
+  close: 'Close',
+}
+
+/** Radar budget slices, named for the page. */
+export const BUDGET_LABEL: Record<string, string> = {
+  solana: 'Solana reads',
+  'solana-discovery': 'Solana gap checks',
+  ethereum: 'Ethereum implementation reads',
+  base: 'Base implementation reads',
+  arbitrum: 'Arbitrum implementation reads',
+  sourcify: 'Sourcify',
+  osec: 'OtterSec',
+  'logs-ethereum': 'Ethereum log queries',
+  'logs-base': 'Base log queries',
+  'logs-arbitrum': 'Arbitrum log queries',
+  'ws-solana': 'Helius websocket',
+}
 
 export const VERIFIED_WORD: Record<RadarVerified, string> = {
   osec: 'OtterSec verified build',
@@ -51,7 +85,10 @@ export function isRadarEvent(v: unknown): v is RadarEvent {
 
 export interface RadarQuery {
   chain?: ChainId | ''
+  /** upgrade / beacon_upgrade: confirmed changes only. */
   kind?: RadarKind | ''
+  /** Folded Upgraded events that are not confirmed upgrades. */
+  other?: boolean
   known?: boolean
   /** 'priority': most significant first. */
   sort?: 'new' | 'priority'
@@ -63,6 +100,7 @@ export async function fetchRadar(q: RadarQuery, signal?: AbortSignal): Promise<R
   const p = new URLSearchParams()
   if (q.chain) p.set('chain', q.chain)
   if (q.kind) p.set('kind', q.kind)
+  if (q.other) p.set('other', '1')
   if (q.known) p.set('known', '1')
   if (q.sort === 'priority') p.set('sort', 'priority')
   if (q.cursor) p.set('cursor', q.cursor)
@@ -90,7 +128,9 @@ export async function fetchRadarEvent(id: string, signal?: AbortSignal): Promise
   return isRadarEvent(j) ? j : null
 }
 
-/** Does an event pass the page's filters? */
+/** Does an event pass the page's filters? (The server's rules: GET /api/radar.) */
 export function matches(e: RadarEvent, q: RadarQuery): boolean {
-  return (!q.chain || e.chain === q.chain) && (!q.kind || e.kind === q.kind) && (!q.known || e.known)
+  const other = isOtherEvent(e)
+  const kindOk = !q.kind || (e.kind === q.kind && ((q.kind !== 'upgrade' && q.kind !== 'beacon_upgrade') || !other))
+  return (!q.chain || e.chain === q.chain) && kindOk && (!q.other || other) && (!q.known || e.known)
 }

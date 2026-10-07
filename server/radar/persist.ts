@@ -3,7 +3,7 @@
 //   events.jsonl     every version of every event, appended (fsync per flush); the last line of an id
 //                    wins; compacted to the newest `cap` events (tmp + fsync + rename) when it grows
 //   snapshots.json   what the radar last read of each program / proxy / implementation (bounded, LRU)
-//   state.json       EVM block cursors, newest Solana loader signature, backfill status
+//   state.json       EVM block cursors, the Solana gap checks' cursor, backfill status, unattributed count
 //   budget.json      the radar's budget slice (server/radar/budget.ts)
 //
 // A torn last line (a kill mid-append) is skipped on load.
@@ -145,9 +145,12 @@ export function createSnapshotStore(file: string, cap: number, log: Log, now: ()
 export interface RadarState {
   /** Last EVM block fully read, per chain. */
   cursors: Record<string, number>
-  /** Newest loader signature seen (polling resumes from it). */
+  /** Newest loader signature the gap checks have covered (the next check reads from it). */
   solanaSig: string | null
-  backfill: Record<string, { started: number; done: boolean; fromTs: number | null; events: number; note: string | null }>
+  /** attempts: Solana's backfill runs once more when its very first call failed. */
+  backfill: Record<string, { started: number; done: boolean; fromTs: number | null; events: number; note: string | null; attempts?: number }>
+  /** "New authority" lines whose program could not be identified, on one UTC day. */
+  unattributed?: { day: number; n: number }
 }
 
 export function loadState(file: string): RadarState {
@@ -157,6 +160,7 @@ export function loadState(file: string): RadarState {
       cursors: j.cursors && typeof j.cursors === 'object' ? j.cursors : {},
       solanaSig: typeof j.solanaSig === 'string' ? j.solanaSig : null,
       backfill: j.backfill && typeof j.backfill === 'object' ? j.backfill : {},
+      ...(j.unattributed && Number.isFinite(j.unattributed.day) && Number.isFinite(j.unattributed.n) ? { unattributed: { day: j.unattributed.day, n: j.unattributed.n } } : {}),
     }
   } catch {
     return { cursors: {}, solanaSig: null, backfill: {} }

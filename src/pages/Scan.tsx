@@ -16,7 +16,8 @@
 // sleeps while nothing moves (and between frames in reduced motion) and stops while the tab is hidden.
 //
 // Upgrade radar: a code change the radar caught and read ({ t: 'radar', event }) plays on the same stage,
-// labelled "RADAR · UPGRADE CAUGHT", with the radar's own calls and the before → after it read.
+// labelled by what changed ("RADAR · UPGRADE CAUGHT", "RADAR · CLOSE CAUGHT" …), with the radar's own calls and the
+// before → after it read.
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { Link } from 'react-router-dom'
 import type { ChainEvent, ChainId, ScanCall } from '@shared/chain'
@@ -28,7 +29,7 @@ import { CHAIN_LABEL, CHAIN_SHORT, KIND_LABEL, VERDICT_LABEL, isChainId, shortAd
 import { useConn, useMedia } from '@/lib/hooks'
 import { send } from '@/lib/live'
 import { DASH, fmtInt } from '@/lib/format'
-import { KIND_BADGE, VERIFIED_WORD } from '@/lib/radar'
+import { CAUGHT_WORD, KIND_BADGE, VERIFIED_WORD, isOtherEvent } from '@/lib/radar'
 import './scan.css'
 
 /** Position of /scan in the primary navigation (src/components/shell/Shell.tsx NAV). */
@@ -80,12 +81,17 @@ interface Src {
 /** A read to play: a chain agent's read, or a code change caught by the upgrade radar. */
 type PlayEvent = ChainEvent & { radar?: RadarEvent }
 
-/** Radar events worth the stage: read, and a real change (EVM proxy deployments are left to /radar). */
+/** Radar events worth the stage: read, and a real change (EVM proxy deployments and folded proxy events are left to /radar). */
 function playableRadar(r: RadarEvent): boolean {
   // caught live only: a backfilled change is history, not a catch
-  if (r.state === 'pending' || r.backfill) return false
+  if (r.state === 'pending' || r.backfill || isOtherEvent(r)) return false
+  // a change caught long ago and only read now (after a restart) is not a catch to replay as live
+  if (Date.now() - r.seenAt > 10 * 60_000) return false
   return r.kind !== 'deploy' || r.chain === 'solana' || r.known
 }
+
+/** "RADAR · CLOSE CAUGHT" */
+const caughtLabel = (r: RadarEvent) => `RADAR · ${CAUGHT_WORD[r.kind].toUpperCase()} CAUGHT`
 
 /** The radar event as a read the player understands; its trace is the calls the radar made for it. */
 function radarToPlay(r: RadarEvent): PlayEvent {
@@ -299,7 +305,7 @@ function planRadar(ev: PlayEvent, r: RadarEvent, live: boolean, backlog: number,
   const d: Draft[] = []
   const arrow = (x: string | null | undefined, y: string | null | undefined) => (x != null ? `${x} → ${y ?? 'not read'}` : (y ?? 'not read'))
   const h = (x: string | null | undefined) => (x ? `${x.slice(0, 16)}…` : null)
-  d.push({ id: 'name', kind: 'name', label: `${KIND_BADGE[r.kind]} · ${CHAIN_LABEL[r.chain]}`, value: r.name ?? short(r.address), addr: !r.name, after: -1, tag: 'RADAR', tone: 'hot', chip: { label: 'RADAR · UPGRADE CAUGHT', value: KIND_BADGE[r.kind] } })
+  d.push({ id: 'name', kind: 'name', label: `${KIND_BADGE[r.kind]} · ${CHAIN_LABEL[r.chain]}`, value: r.name ?? short(r.address), addr: !r.name, after: -1, tag: 'RADAR', tone: 'hot', chip: { label: caughtLabel(r), value: KIND_BADGE[r.kind] } })
   d.push({ id: 'addr', label: sol ? 'Program' : 'Proxy', value: r.address, addr: true, after: -1 })
   d.push({ id: 'what', label: 'Caught', value: r.headline, sub: `via ${r.via}${r.tx ? ` · tx ${r.tx.slice(0, 10)}…` : ''}`, after: -1, tag: 'CHANGE', tone: 'hot' })
   if ((sol || r.kind === 'upgrade') && (a?.codeHash || b?.codeHash)) {
@@ -327,7 +333,8 @@ function planRadar(ev: PlayEvent, r: RadarEvent, live: boolean, backlog: number,
     })
   }
   if (a && (sol || r.kind === 'admin_change')) {
-    const av = a.authority ? short(a.authority) : a.upgradeable === false ? 'none · immutable' : 'none'
+    // a closed program has no authority to speak of: it is gone, not immutable
+    const av = a.authority ? short(a.authority) : sol && (r.kind === 'close' || !a.codeHash) ? 'none · program closed' : a.upgradeable === false ? 'none · immutable' : 'none'
     const bv = b && (b.from !== 'event' || !sol) ? (b.authority ? short(b.authority) : 'none') : null
     d.push({
       id: 'auth',
@@ -720,7 +727,7 @@ export default function Scan() {
             <span className={show?.live ? 'led on pulse' : conn === 'live' ? 'led white' : connLed(conn)} aria-hidden="true" />
             {show
               ? show.ev.radar
-                ? `radar · upgrade caught ${show.lag < 2 ? 'just now' : `${show.lag} s ago`}`
+                ? `radar · ${CAUGHT_WORD[show.ev.radar.kind].toLowerCase()} caught ${show.lag < 2 ? 'just now' : `${show.lag} s ago`}`
                 : show.live
                 ? `live · read ${show.lag < 2 ? 'just now' : `${show.lag} s ago`}`
                 : `replay · read at ${clock(show.ev.ts)}`
@@ -1283,7 +1290,7 @@ function Stage({ show, reduced, wide, skipRef, onDone, feedState, conn }: StageP
               <i />
               <i />
             </span>
-            <span className="sc-win-title mono">{ev ? `${ev.radar ? 'RADAR · UPGRADE CAUGHT — ' : ''}${ev.name ?? short(ev.address)} — LUSCA Lens` : 'LUSCA Lens'}</span>
+            <span className="sc-win-title mono">{ev ? `${ev.radar ? `${caughtLabel(ev.radar)} — ` : ''}${ev.name ?? short(ev.address)} — LUSCA Lens` : 'LUSCA Lens'}</span>
             {show?.rpcProvider && (
               <span className={`sc-via mono ${isHelius(show.rpcProvider) ? 'hot' : ''}`} title="Who answered this read's RPC calls">
                 RPC · {show.rpcProvider}
@@ -1361,7 +1368,7 @@ function Stage({ show, reduced, wide, skipRef, onDone, feedState, conn }: StageP
           </div>
           {ev && (
             <div className="sc-hub-l mono" ref={capRef}>
-              <b>{ev.radar ? 'LUSCA · RADAR · UPGRADE CAUGHT' : `LUSCA · ${ev.agent}`}</b>
+              <b>{ev.radar ? `LUSCA · ${caughtLabel(ev.radar)}` : `LUSCA · ${ev.agent}`}</b>
               <span>
                 {ev.radar ? 're-reading' : 'reading'} {CHAIN_LABEL[ev.chain]}
                 {show?.rpcProvider && (
@@ -1405,7 +1412,7 @@ function Stage({ show, reduced, wide, skipRef, onDone, feedState, conn }: StageP
         </div>
         {show && show.ev.radar ? (
           <div className="sc-stamp kept radar" data-at={show.stampAt} ref={stampRef} key={`stamp-${show.seq}`}>
-            <b>Upgrade caught</b>
+            <b>{CAUGHT_WORD[show.ev.radar.kind]} caught</b>
             <span className="mono">
               <em>RADAR · {KIND_BADGE[show.ev.radar.kind]}</em> · {show.ev.radar.headline}
             </span>

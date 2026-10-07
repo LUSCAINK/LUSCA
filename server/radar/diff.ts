@@ -85,7 +85,54 @@ export function minus(a: readonly string[], b: readonly string[]): string[] {
   return [...new Set(a)].filter((x) => !set.has(x))
 }
 
-const guardKey = (g: RadarGuard) => `${g.fn}|${g.guard}`
+function byFn(gs: readonly RadarGuard[]): Map<string, RadarGuard[]> {
+  const m = new Map<string, RadarGuard[]>()
+  for (const g of gs) {
+    const l = m.get(g.fn)
+    if (l) l.push(g)
+    else m.set(g.fn, [g])
+  }
+  return m
+}
+
+/**
+ * Admin-only functions before → after, compared by function: new = guarded now and not guarded at all
+ * before (added by this change, or an existing function that gained an access check); removed = guarded
+ * before and not now; changed = guarded on both sides by a different check. A guard that only moved to
+ * another line is no change.
+ */
+export function diffGuards(before: readonly RadarGuard[], after: readonly RadarGuard[]): Pick<RadarDiff, 'guardsAdded' | 'guardsRemoved' | 'guardsChanged'> {
+  const b = byFn(before)
+  const a = byFn(after)
+  const added: RadarGuard[] = []
+  const removed: RadarGuard[] = []
+  const changed: { fn: string; before: RadarGuard; after: RadarGuard }[] = []
+  for (const [fn, gs] of a) {
+    const was = b.get(fn)
+    if (!was) {
+      added.push(gs[0])
+      continue
+    }
+    const wasSet = new Set(was.map((g) => g.guard))
+    const nowSet = new Set(gs.map((g) => g.guard))
+    if (wasSet.size === nowSet.size && [...nowSet].every((x) => wasSet.has(x))) continue
+    const newOne = gs.find((g) => !wasSet.has(g.guard)) ?? gs[0]
+    const oldOne = was.find((g) => !nowSet.has(g.guard)) ?? was[0]
+    changed.push({ fn, before: oldOne, after: newOne })
+  }
+  for (const [fn, gs] of b) if (!a.has(fn)) removed.push(gs[0])
+  return { guardsAdded: added.slice(0, 20), guardsRemoved: removed.slice(0, 20), guardsChanged: changed.slice(0, 20) }
+}
+
+/**
+ * Before and after can only be compared when `before` describes the program before this change: its
+ * last deploy is older than the change's slot, and it was read before the change landed. A read taken
+ * after the change (a backfill that read the program first for a newer upgrade, a restart) is not a before.
+ */
+export function validBefore(s: Pick<Snapshot, 'at' | 'deploySlot'>, change: { slot: number | null; ts: number }): boolean {
+  if (s.deploySlot != null && change.slot != null && s.deploySlot >= change.slot) return false
+  return !!s.at && s.at < change.ts
+}
 
 /**
  * Difference between what was known before and what was read after. Each part is 'unknown' / null
@@ -97,19 +144,15 @@ export function diffSnapshots(before: Snapshot | null, after: Snapshot | null): 
   d.surface = after.chain === 'solana' ? 'instructions' : 'functions'
   if (!before) return d
   if (before.codeHash && after.codeHash) d.code = before.codeHash === after.codeHash ? 'same' : 'changed'
-  if (before.at && after.at) d.authority = (before.authority ?? null) === (after.authority ?? null) ? 'same' : 'changed'
+  // the upgrade authority is a fact of a program read on both sides (a closed program has none to compare);
+  // EVM implementation reads carry no proxy admin
+  if (after.chain === 'solana' && before.codeHash && after.codeHash && before.at && after.at) d.authority = (before.authority ?? null) === (after.authority ?? null) ? 'same' : 'changed'
   if (before.verified !== 'unknown' && after.verified !== 'unknown') d.verified = before.verified === after.verified ? 'same' : 'changed'
   if (before.surface && after.surface) {
     d.added = list(minus(after.surface, before.surface))
     d.removed = list(minus(before.surface, after.surface))
   }
-  if (before.guards && after.guards) {
-    // a function that was guarded before is not "new"; one whose guard changed is listed with its new guard
-    const was = new Set(before.guards.map(guardKey))
-    const now = new Set(after.guards.map(guardKey))
-    d.guardsAdded = after.guards.filter((g) => !was.has(guardKey(g))).slice(0, 20)
-    d.guardsRemoved = before.guards.filter((g) => !now.has(guardKey(g))).slice(0, 20)
-  }
+  if (before.guards && after.guards) Object.assign(d, diffGuards(before.guards, after.guards))
   if (before.primitives && after.primitives) {
     d.primitivesAdded = minus(after.primitives, before.primitives)
     d.primitivesRemoved = minus(before.primitives, after.primitives)
