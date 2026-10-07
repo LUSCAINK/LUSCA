@@ -399,7 +399,8 @@ Nothing reads a `.env` file.
 | `LUSCA_LENS_EVM_CALLS` | 15 % of the agents' EVM limit (2,250 at the default) | Lens's daily share of RPC calls per EVM chain |
 | `LUSCA_LENS_HTTP_CALLS` | 40 % of the registry limit | Lens's daily share of Sourcify and OtterSec calls, each |
 | `LUSCA_MCP` | on | `0` = no MCP endpoint; `/mcp` is then only the setup page |
-| `LUSCA_MCP_REQ_PER_MIN` · `_TOOLS_PER_MIN` · `_GLOBAL_PER_MIN` | 90 · 40 · 2,400 | POST `/mcp` per client address, `tools/call` per client address, POST `/mcp` for all clients together, per minute |
+| `LUSCA_MCP_REQ_PER_MIN` · `_TOOLS_PER_MIN` · `_GLOBAL_PER_MIN` | 90 · 40 · 2,400 | POST `/mcp` per client address, `tools/call` per client address, tool calls that run (not answered from the cache) for all clients together, per minute; `/mcp` accepts any browser Origin (public, read-only, no credentials) |
+| `LUSCA_MCP_SHARED_CLIENT_RANGES` · `LUSCA_MCP_SHARED_FACTOR` | Anthropic's outbound range `160.79.104.0/21` · 20 | hosted MCP clients (claude.ai / Claude Desktop connectors) call from shared addresses: their per-address windows are this many times larger; `none` = no shared ranges |
 | `LUSCA_RADAR` | on | `0` = upgrade radar off; `/api/radar*` answers 503 |
 | `LUSCA_RADAR_BACKFILL` | on | `0` = no first-start backfill (it runs once per data directory; once more only when its very first call was refused). EVM: the last 24 h. Solana: at most 500 loader transactions inspected, a few hours back |
 | `LUSCA_RADAR_SOL_CALLS` | 25 % of the agents' Solana limit (2,000 at the default) | the radar's daily share of Solana RPC calls (re-reads, getTransaction; getProgramAccounts counts as 10), on top of the agents' budget and never below a 10 % floor of it |

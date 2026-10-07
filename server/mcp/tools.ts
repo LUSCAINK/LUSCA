@@ -16,7 +16,7 @@ import { isSolanaAddress } from '../../shared/base58.ts'
 import { isOnCurve } from '../control/curve.ts'
 import type { JsonSchema } from './schema.ts'
 import { SourceError, type McpSource } from './source.ts'
-import { ago, bound, bytes, DASH, int, iso, list, pct, yesNo } from './format.ts'
+import { ago, bound, bytes, DASH, hopExtra, int, iso, lines, list, nm, pct, safe, srcPath, title, yesNo } from './format.ts'
 
 export const CHAINS: readonly ChainId[] = ['solana', 'ethereum', 'base', 'arbitrum']
 const VERDICTS: readonly Verdict[] = ['kept', 'duplicate', 'boilerplate', 'unverified', 'token-mint', 'not-code', 'error']
@@ -57,6 +57,8 @@ export interface McpTool {
   cacheS: number
   /** Longer limit than the core default (Lens: a fresh read can take up to its own 60 s timeout). */
   timeoutMs?: number
+  /** In-flight pool: 'lens' for tools that may start a Lens read (small, shared with nothing else); default 'store'. */
+  pool?: 'store' | 'lens'
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutput>
 }
 
@@ -152,10 +154,24 @@ async function from<T>(p: Promise<T>): Promise<T> {
 const links = (site: string, ...paths: string[]) => [...new Set(paths.filter(Boolean).map((p) => (p.startsWith('http') ? p : site + p)))]
 const lensPath = (chain: ChainId, address: string) => `/lens/${chain}/${address}`
 
-/** How an event was caught, without endpoint names ('eth_getLogs · <endpoint>' → 'eth_getLogs'). */
+/**
+ * How an event was caught, as methods only: endpoint and provider names are dropped
+ * ('eth_getLogs · MEV Blocker' → 'eth_getLogs', '<provider> websocket' → 'websocket').
+ */
 export function viaText(v: string): string {
-  const parts = v.split(' · ').filter((x) => !/public|node/i.test(x))
-  return parts.join(' · ') || 'chain RPC'
+  const backfill = /backfill/i.test(v)
+  const parts = v
+    .replace(/\([^)]*\)/g, ' ')
+    .split(' · ')
+    .map((p) => p.trim())
+    .map((p) => {
+      const method = /\b([a-z][a-z0-9]*(?:_[A-Za-z0-9]+|[A-Z][a-z0-9]+)+)\b/.exec(p)
+      if (method) return method[1]
+      if (/websocket/i.test(p)) return 'websocket'
+      return /^[a-z][a-z ]{2,40}$/.test(p) ? p : ''
+    })
+    .filter(Boolean)
+  return `${[...new Set(parts)].join(' · ') || 'chain RPC'}${backfill ? ' (backfill)' : ''}`
 }
 
 // ─── trace summary (chain feed, radar events) ───────────────────────────────
@@ -214,7 +230,7 @@ const statsTool = defineTool({
     if (out.length === 1) out.push('No module answered on this server.')
     const l = links(ctx.site, '/live', '/chain', '/api/stats', '/api/chain/stats', '/api/code/stats')
     out.push(`Sources: ${l.join(' · ')}`)
-    return { text: out.join('\n'), data: { ...s, links: l, asOf: now } }
+    return { text: lines(out), data: { ...s, links: l, asOf: now } }
   },
 })
 
@@ -270,15 +286,15 @@ const scanTool = defineTool({
     const out = [`Latest chain reads${filt ? ` (${filt})` : ''} — ${items.length} of the newest ${feed.length} in the feed`]
     if (!items.length) out.push(feed.length ? 'No read in the recent feed matches these filters.' : 'The feed is empty on this server.')
     items.forEach((r, i) => {
-      out.push(`${i + 1}. ${r.ago} · ${r.chain} · ${r.verdict.toUpperCase()} · ${r.name ?? '(no name)'} ${r.address}`)
+      out.push(`${i + 1}. ${r.ago} · ${r.chain} · ${r.verdict.toUpperCase()} · ${title(r.name)} ${r.address}`)
       out.push(`   found via ${r.foundVia} · ${r.kind}${r.verifiedBy ? ` · verified source (${r.verifiedBy}, ${int(r.sourceFiles)} files, ${bytes(r.sourceBytes)})` : ''}${r.idl ? ' · IDL' : ''}${r.upgradeable !== null ? ` · upgradeable: ${yesNo(r.upgradeable)}` : ''}`)
-      out.push(`   reason: ${r.reason}`)
+      out.push(`   reason: ${safe(r.reason, 240)}`)
       out.push(`   ${traceLine(r.calls)}`)
       out.push(`   ${r.url}`)
     })
     const l = links(ctx.site, '/scan', '/api/chain/feed?limit=50&scan=1')
     out.push(`Sources: ${l.join(' · ')}`)
-    return { text: bound(out.join('\n'), TEXT_MAX), data: { items, feedSize: feed.length, links: l, asOf: now } }
+    return { text: bound(lines(out), TEXT_MAX), data: { items, feedSize: feed.length, links: l, asOf: now } }
   },
 })
 
@@ -323,15 +339,16 @@ function lensData(r: LensReport) {
                 verified: code.verified,
                 sources: code.sources.length,
                 functions: { write: code.functions.write.length, payable: code.functions.payable.length, view: code.functions.view.length },
-                privileged: code.privileged.slice(0, 16).map((p) => ({ fn: p.fn, guard: p.guard, at: `${p.file}:${p.line}` })),
+                privileged: code.privileged.slice(0, 16).map((p) => ({ fn: p.fn, guard: p.guard, at: srcPath(`${p.file}:${p.line}`) })),
                 privilegedCount: code.privileged.length,
                 analysis: code.analysis ?? null,
               }
             : null,
         }
       : null,
-    primitives: r.primitives.slice(0, 16).map((p) => ({ name: p.name, group: p.group, via: p.via, at: p.at.slice(0, 2).map((a) => `${a.file}:${a.line}`) })),
-    provenance: { checked: r.provenance.checked, matches: r.provenance.matches.slice(0, 8).map((m) => ({ file: m.file, repo: m.repo, path: m.path, exact: m.exact })), matchCount: r.provenance.matches.length, osecRepo: r.provenance.osecRepo },
+    primitives: r.primitives.slice(0, 16).map((p) => ({ name: p.name, group: p.group, via: p.via, at: p.at.slice(0, 2).map((a) => srcPath(`${a.file}:${a.line}`)) })),
+    primitiveCount: r.primitives.length,
+    provenance: { checked: r.provenance.checked, matches: r.provenance.matches.slice(0, 8).map((m) => ({ file: srcPath(m.file), repo: m.repo, path: m.path, exact: m.exact })), matchCount: r.provenance.matches.length, osecRepo: r.provenance.osecRepo },
     dataset: { verdict: r.dataset.verdict, reason: r.dataset.reason, added: r.dataset.added },
     notes: r.notes.slice(0, 8),
     cites: r.cites.slice(0, 10),
@@ -347,6 +364,7 @@ const lensTool = defineTool({
   annotations: { openWorldHint: true },
   cacheS: 60,
   timeoutMs: 62_000,
+  pool: 'lens',
   async run(args, ctx) {
     const { chain, address } = targetOf(args)
     const r = await from(ctx.source.lens(chain, address, ctx.ip))
@@ -355,35 +373,35 @@ const lensTool = defineTool({
     const d = lensData(rep)
     const s = rep.summary
     const now = ctx.now()
-    const out = [`LUSCA Lens · ${rep.chain} · ${rep.name ?? '(no name)'} · ${rep.address}`, `kind: ${rep.kind} · read ${iso(rep.readAt)} (${ago(rep.readAt, now)}${r.answer.cached ? ', from cache' : ', fresh read'}) · ${int(rep.rpcCalls)} RPC + ${int(rep.registryCalls)} registry calls`]
+    const out = [`LUSCA Lens · ${rep.chain} · ${title(rep.name)} · ${rep.address}`, `kind: ${rep.kind} · read ${iso(rep.readAt)} (${ago(rep.readAt, now)}${r.answer.cached ? ', from cache' : ', fresh read'}) · ${int(rep.rpcCalls)} RPC + ${int(rep.registryCalls)} registry calls`]
     out.push(`verified: ${s.verified === null ? 'no verified build/source found' : s.verified === 'unknown' ? 'unknown (the registry could not be asked)' : s.verified}`)
     out.push(`upgradeable: ${yesNo(s.upgradeable)}${s.authority ? ` · ${rep.chain === 'solana' ? 'upgrade authority' : 'proxy admin'}: ${s.authority}` : ''}`)
     if (d.solana) {
       const so = d.solana
       out.push(`loader: ${so.loader ?? DASH} · program ${bytes(so.programBytes)} · last deploy slot ${int(so.lastDeploySlot)} · code hash ${so.codeHash ?? DASH}`)
       if (so.osec) out.push(`OtterSec verified build: ${so.osec.verified ? 'yes' : 'no'}${so.osec.repo ? ` · ${so.osec.repo}${so.osec.commit ? `@${so.osec.commit.slice(0, 10)}` : ''}` : ''}`)
-      if (so.idl) out.push(`IDL (${so.idl.source}): ${so.idl.instructionCount} instructions — ${list(so.idl.instructions, 24)} · ${so.idl.accounts} account types · ${so.idl.errors} errors · ${so.idl.events} events`)
+      if (so.idl) out.push(`IDL (${safe(so.idl.source, 60)}): ${so.idl.instructionCount} instructions — ${list(so.idl.instructions.map((x) => nm(x)), 24, ', ', so.idl.instructionCount)} · ${so.idl.accounts} account types · ${so.idl.errors} errors · ${so.idl.events} events`)
       else out.push('IDL: none published on-chain')
-      if (so.signerRoles.length) out.push(`authority-like signers: ${list(so.signerRoles.map((x) => `${x.instruction}(${x.account})`), 10)}`)
-      if (so.securityTxt) out.push(`security.txt: ${list(Object.entries(so.securityTxt).map(([k, v]) => `${k}=${v}`), 4, ' · ')}`)
+      if (so.signerRoles.length) out.push(`authority-like signers: ${list(so.signerRoles.map((x) => `${nm(x.instruction)}(${nm(x.account)})`), 10)}`)
+      if (so.securityTxt) out.push(`security.txt (published by the deployer): ${list(Object.entries(so.securityTxt).map(([k, v]) => `${nm(k, 32)}=${JSON.stringify(safe(v, 120))}`), 4, ' · ')}`)
     }
     if (d.evm) {
       const e = d.evm
       if (e.proxy) out.push(`proxy: ${e.proxy.label} → implementation ${e.proxy.implementation}${e.proxy.admin ? ` · admin ${e.proxy.admin}` : ''}${e.proxy.beacon ? ` · beacon ${e.proxy.beacon}` : ''}`)
       if (e.code) {
         const c = e.code
-        out.push(`code: ${c.name ?? '(unnamed)'} ${c.address} · ${c.verified ? `verified (${c.verified.match} match${c.verified.compiler ? `, ${c.verified.compiler}` : ''}), ${c.sources} source files` : 'source not verified'} · functions: ${c.functions.write} write, ${c.functions.payable} payable, ${c.functions.view} view`)
+        out.push(`code: ${title(c.name)} ${c.address} · ${c.verified ? `verified (${c.verified.match} match${c.verified.compiler ? `, ${c.verified.compiler}` : ''}), ${c.sources} source files` : 'source not verified'} · functions: ${c.functions.write} write, ${c.functions.payable} payable, ${c.functions.view} view`)
         if (c.analysis) out.push(`source analysis: ${c.analysis}`)
-        else if (c.verified) out.push(`admin-only (guarded) functions: ${c.privilegedCount}${c.privileged.length ? ` — ${list(c.privileged.map((p) => `${p.fn} [${p.guard}] ${p.at}`), 12, '; ')}` : ''}`)
+        else if (c.verified) out.push(`admin-only (guarded) functions: ${c.privilegedCount}${c.privileged.length ? ` — ${list(c.privileged.map((p) => `${nm(p.fn, 120)} [${safe(p.guard, 80)}] ${safe(p.at, 120)}`), 12, '; ', c.privilegedCount)}` : ''}`)
       }
     }
-    if (d.primitives.length) out.push(`primitives: ${list(d.primitives.map((p) => `${p.name} (${p.via}${p.at.length ? ` ${p.at[0]}` : ''})`), 12)}`)
-    if (d.provenance.checked > 0) out.push(`known-repository files: ${d.provenance.matchCount} of ${d.provenance.checked} checked${d.provenance.matches.length ? ` — ${list(d.provenance.matches.map((m) => `${m.file} ≡ ${m.repo}/${m.path}${m.exact ? '' : ' (same code, whitespace/comments differ)'}`), 5, '; ')}` : ''}`)
+    if (d.primitives.length) out.push(`primitives: ${list(d.primitives.map((p) => `${p.name} (${p.via}${p.at.length ? ` ${p.at[0]}` : ''})`), 12, ', ', d.primitiveCount)}`)
+    if (d.provenance.checked > 0) out.push(`known-repository files: ${d.provenance.matchCount} of ${d.provenance.checked} checked${d.provenance.matches.length ? ` — ${list(d.provenance.matches.map((m) => `${m.file} ≡ ${m.repo}/${m.path}${m.exact ? '' : ' (same code, whitespace/comments differ)'}`), 5, '; ', d.provenance.matchCount)}` : ''}`)
     out.push(`SEPIA-1 training data: ${d.dataset.verdict} — ${d.dataset.reason}`)
-    if (d.notes.length) out.push(`notes: ${d.notes.join(' · ')}`)
+    if (d.notes.length) out.push(`notes: ${d.notes.map((n) => safe(n, 200)).join(' · ')}`)
     const l = links(ctx.site, lensPath(rep.chain, rep.address), `/api/lens/${rep.chain}/${rep.address}`, ...d.cites.map((c) => c.url))
     out.push(`Sources: ${l.slice(0, 8).join(' · ')}`)
-    return { text: bound(out.join('\n'), TEXT_MAX), data: { ...d, cached: r.answer.cached, links: l, asOf: now } }
+    return { text: bound(lines(out), TEXT_MAX), data: { ...d, cached: r.answer.cached, links: l, asOf: now } }
   },
 })
 
@@ -446,8 +464,8 @@ const radarTool = defineTool({
     }
     if (!items.length) out.push('No event matches these filters yet.')
     items.forEach((r, i) => {
-      out.push(`${i + 1}. ${iso(r.ts)} (${r.ago}) · ${r.chain} · ${r.kind} · ${r.name ?? r.address}${r.known ? ' · known protocol' : ''}`)
-      out.push(`   ${r.headline}`)
+      out.push(`${i + 1}. ${iso(r.ts)} (${r.ago}) · ${r.chain} · ${r.kind} · ${r.name ? nm(r.name) : r.address}${r.known ? ' · known protocol' : ''}`)
+      out.push(`   ${safe(r.headline, 240)}`)
       out.push(`   id ${r.id}${r.name ? ` · address ${r.address}` : ''}${r.actor ? ` · ${r.actorRole ?? 'actor'} ${r.actor}` : ''}${r.state !== 'read' ? ` · ${r.state}` : ''}${r.sourceDiff ? ' · source diff available' : ''}`)
       out.push(`   ${r.url}`)
     })
@@ -457,7 +475,7 @@ const radarTool = defineTool({
     const l = links(ctx.site, '/radar', `/api/radar?${qs}`)
     out.push(`Sources: ${l.join(' · ')}`)
     return {
-      text: bound(out.join('\n'), TEXT_MAX),
+      text: bound(lines(out), TEXT_MAX),
       data: { items, last24h: st?.last24h ?? null, stored: st?.stored ?? null, links: l, asOf: now },
     }
   },
@@ -481,11 +499,11 @@ const radarEventTool = defineTool({
     if (!e) throw new ToolError(`no radar event with id ${id} (ids come from lusca_radar)`)
     const now = ctx.now()
     const row = radarRow(e, ctx.site, now)
-    const out = [`Radar event ${e.id} · ${e.chain} · ${e.kind} · ${e.name ?? '(no name)'} ${e.address}`, e.headline]
+    const out = [`Radar event ${e.id} · ${e.chain} · ${e.kind} · ${title(e.name)} ${e.address}`, safe(e.headline, 240)]
     out.push(`landed ${iso(e.ts)} (${ago(e.ts, now)}) · ${e.count > 1 ? 'first caught' : 'caught'} ${iso(e.seenAt)} via ${viaText(e.via)}${e.backfill && !/backfill/.test(e.via) ? ' (backfill)' : ''}${e.slot ? ` · slot ${int(e.slot)}` : ''}${e.block ? ` · block ${int(e.block)}` : ''}${e.count > 1 ? ` · ${e.count} transactions folded` : ''}`)
     if (e.tx) out.push(`transaction: ${e.tx}`)
     if (e.actor) out.push(`${e.actorRole ?? 'actor'}: ${e.actor}`)
-    if (e.known) out.push(`known protocol: ${e.knownWhy ?? 'yes'}`)
+    if (e.known) out.push(`known protocol: ${safe(e.knownWhy ?? 'yes', 160)}`)
     const side = (label: string, s: RadarSide | null) => {
       if (!s) return out.push(`${label}: not read`)
       out.push(
@@ -497,15 +515,16 @@ const radarEventTool = defineTool({
     const d = e.diff
     if (d) {
       out.push(`diff: code ${d.code} · authority ${d.authority} · verified ${d.verified}`)
-      if (d.added?.items.length) out.push(`  ${d.surface ?? 'items'} added: ${list(d.added.items, 20)}${d.added.more ? ` (+${d.added.more})` : ''}`)
-      if (d.removed?.items.length) out.push(`  ${d.surface ?? 'items'} removed: ${list(d.removed.items, 20)}${d.removed.more ? ` (+${d.removed.more})` : ''}`)
-      if (d.guardsAdded?.length) out.push(`  admin checks added: ${list(d.guardsAdded.map((g) => `${g.fn} [${g.guard}] ${g.at}`), 10, '; ')}`)
-      if (d.guardsRemoved?.length) out.push(`  admin checks removed: ${list(d.guardsRemoved.map((g) => `${g.fn} [${g.guard}] ${g.at}`), 10, '; ')}`)
-      if (d.guardsChanged?.length) out.push(`  admin checks changed: ${list(d.guardsChanged.map((g) => `${g.fn}: ${g.before.guard} → ${g.after.guard} (${g.after.at})`), 10, '; ')}`)
+      if (d.added?.items.length) out.push(`  ${d.surface ?? 'items'} added: ${list(d.added.items.map((x) => nm(x, 120)), 20)}${d.added.more ? ` (+${d.added.more})` : ''}`)
+      if (d.removed?.items.length) out.push(`  ${d.surface ?? 'items'} removed: ${list(d.removed.items.map((x) => nm(x, 120)), 20)}${d.removed.more ? ` (+${d.removed.more})` : ''}`)
+      // radar guards point at the check's own line (the require / modifier), the source diff at the function's line
+      if (d.guardsAdded?.length) out.push(`  admin checks added: ${list(d.guardsAdded.map((g) => `${nm(g.fn, 120)} [${safe(g.guard, 80)}] check at ${srcPath(g.at)}`), 10, '; ')}`)
+      if (d.guardsRemoved?.length) out.push(`  admin checks removed: ${list(d.guardsRemoved.map((g) => `${nm(g.fn, 120)} [${safe(g.guard, 80)}] check at ${srcPath(g.at)}`), 10, '; ')}`)
+      if (d.guardsChanged?.length) out.push(`  admin checks changed: ${list(d.guardsChanged.map((g) => `${nm(g.fn, 120)}: ${safe(g.before.guard, 80)} → ${safe(g.after.guard, 80)} (check at ${srcPath(g.after.at)})`), 10, '; ')}`)
       if (d.primitivesAdded?.length) out.push(`  primitives added: ${d.primitivesAdded.join(', ')}`)
       if (d.primitivesRemoved?.length) out.push(`  primitives removed: ${d.primitivesRemoved.join(', ')}`)
     }
-    if (e.notes.length) out.push(`notes: ${e.notes.slice(0, 6).join(' · ')}`)
+    if (e.notes.length) out.push(`notes: ${e.notes.slice(0, 6).map((n) => safe(n, 200)).join(' · ')}`)
     const t = traceSummary(e.trace)
     out.push(traceLine(t))
     let src: Record<string, unknown> | null = null
@@ -516,11 +535,11 @@ const radarEventTool = defineTool({
         out.push(`source diff: ${cd.state}${cd.reason ? ` — ${cd.reason}` : ''}`)
         src = { state: cd.state, reason: cd.reason }
       } else {
-        const fns = cd.functions.slice(0, 20).map((f) => ({ sig: f.sig, change: f.change, at: f.at, access: f.access, accessBefore: f.accessBefore ?? undefined }))
-        const files = cd.files.slice(0, 12).map((f) => ({ path: f.path, status: f.status, add: f.add, del: f.del }))
+        const fns = cd.functions.slice(0, 20).map((f) => ({ sig: f.sig, change: f.change, at: srcPath(f.at), access: f.access, accessBefore: f.accessBefore ?? undefined }))
+        const files = cd.files.slice(0, 12).map((f) => ({ path: srcPath(f.path), status: f.status, add: f.add, del: f.del }))
         out.push(`source diff (Sourcify, ${cd.oldImpl} → ${cd.newImpl}): ${int(cd.totals.files)} files changed (+${int(cd.totals.add)} −${int(cd.totals.del)}), ${int(cd.unchangedFiles)} unchanged${cd.oldCompiler || cd.newCompiler ? ` · compiler ${cd.oldCompiler ?? DASH} → ${cd.newCompiler ?? DASH}` : ''}`)
-        if (files.length) out.push(`  files: ${list(files.map((f) => `${f.path} (${f.status}, +${f.add} −${f.del})`), 8, '; ')}`)
-        if (fns.length) out.push(`  functions: ${list(fns.map((f) => `${f.change} ${f.sig}${f.access ? ` [${f.access}]` : ''}${f.accessBefore !== undefined && f.accessBefore !== f.access ? ` (check before: ${f.accessBefore ?? 'none'})` : ''} ${f.at}`), 14, '; ')}`)
+        if (files.length) out.push(`  files: ${list(files.map((f) => `${f.path} (${f.status}, +${f.add} −${f.del})`), 8, '; ', cd.files.length)}`)
+        if (fns.length) out.push(`  functions: ${list(fns.map((f) => `${f.change} ${nm(f.sig, 120)}${f.access ? ` [${safe(f.access, 80)}]` : ''}${f.accessBefore !== undefined && f.accessBefore !== f.access ? ` (check before: ${f.accessBefore ? safe(f.accessBefore, 80) : 'none'})` : ''} function at ${f.at}`), 14, '; ', cd.functions.length)}`)
         if (cd.truncated) out.push(`  ${cd.truncated}`)
         src = { state: 'ready', oldImpl: cd.oldImpl, newImpl: cd.newImpl, totals: cd.totals, unchangedFiles: cd.unchangedFiles, files, functions: fns, truncated: cd.truncated }
       }
@@ -528,7 +547,7 @@ const radarEventTool = defineTool({
     const l = links(ctx.site, row.url, `/api/radar/${e.id}`, row.sourceDiff ? `/api/radar/${e.id}/diff` : '', row.lens)
     out.push(`Sources: ${l.join(' · ')}`)
     return {
-      text: bound(out.join('\n'), TEXT_MAX),
+      text: bound(lines(out), TEXT_MAX),
       data: { ...row, seenAt: e.seenAt, via: viaText(e.via), count: e.count, knownWhy: e.knownWhy, before: sideData(e.before), after: sideData(e.after), diff: e.diff, notes: e.notes.slice(0, 8), calls: t, sourceDiffSummary: src, links: l, asOf: now },
     }
   },
@@ -543,42 +562,143 @@ export const CLASS_TEXT: Record<ControlClass, string> = {
   safe: 'Safe — a threshold of the Safe owners must sign',
   timelock: 'timelock — changes wait for the timelock minimum delay',
   contract: 'another contract (no Safe or timelock interface)',
-  unknown: 'upgradeable, controller not identified from the standard slots and calls',
+  unknown: 'not identified — the code can or may change, and the controller was not identified from the standard slots and calls',
   pending: 'not resolved yet (EVM proxies are resolved in the background under a daily budget)',
+}
+
+/** An entry with a class line more precise than CLASS_TEXT (custom proxies, admins read but not classified). */
+type Resolved = ControlEntry & { classText?: string; delegatecall?: { note: string; upgradeFunctions: string[] } }
+
+/**
+ * Write functions that swap or extend the code a contract runs (custom proxies, diamonds): upgradeTo…,
+ * _setPendingImplementation, setImplementation, setLogic, setTarget, setCode, diamondCut. View functions such
+ * as implementation() or facets() and names like migrate() are not evidence of an upgrade path on their own.
+ */
+export const UPGRADE_FN = /^_?(upgrade\w*|set(pending)?implementation\w*|setlogic\w*|settarget\w*|setcode\w*|diamondcut)\s*\(/i
+
+/** The note a read leaves when the code has DELEGATECALL but no standard proxy slot holds an implementation. */
+export function delegatecallNote(notes: readonly string[]): string | null {
+  return notes.find((n) => /uses DELEGATECALL/i.test(n)) ?? null
+}
+
+const DC_FIXED_TEXT =
+  'immutable bytecode — the code at this address cannot change. It makes DELEGATECALLs whose targets LUSCA did not resolve: a linked library or the contract itself keep its behaviour fixed; a target read from storage could change it.'
+const DC_CUSTOM_TEXT =
+  'not identified — no standard proxy slot, but the code makes DELEGATECALLs and its interface has functions that set the code it runs (a custom proxy or a diamond); the controller was not identified'
+
+/**
+ * A non-proxy EVM contract whose code uses DELEGATECALL. Facts only: with functions that set the code it runs
+ * (upgradeTo…, _setPendingImplementation, diamondCut …) it is a custom proxy whose controller is not
+ * identified; without them the bytecode is fixed and the DELEGATECALL targets are left as not resolved.
+ */
+function delegatecallEntry(e: Omit<ControlEntry, 'cls' | 'hops' | 'basis'> & Partial<ControlEntry>, note: string, upgradeFns: readonly string[], from: string): Resolved {
+  const fns = upgradeFns.slice(0, 4)
+  if (fns.length) {
+    return {
+      ...e,
+      cls: 'unknown',
+      hops: [{ kind: 'contract', address: e.address, label: 'contract · DELEGATECALL, no standard proxy slot' }],
+      basis: `${from}: ${safe(note, 120)}; functions that set the code it runs: ${fns.join('; ')}`,
+      classText: DC_CUSTOM_TEXT,
+      delegatecall: { note, upgradeFunctions: fns },
+    }
+  }
+  return {
+    ...e,
+    cls: 'immutable',
+    hops: e.hops?.length ? e.hops : [{ kind: 'contract', address: e.address, label: 'contract' }],
+    basis: `${from}: not a proxy (no standard proxy slot holds an implementation); ${safe(note, 120)}; no function that sets the code it runs`,
+    classText: DC_FIXED_TEXT,
+    delegatecall: { note, upgradeFunctions: [] },
+  }
 }
 
 /** The account at the end of the custody chain (null when the code cannot change or nothing was resolved). */
 export function finalController(e: ControlEntry): { address: string; label: string; kind: string } | null {
   for (let i = e.hops.length - 1; i > 0; i--) {
     const h = e.hops[i]
-    if (h.address && h.kind !== 'none') return { address: h.address, label: h.label, kind: h.kind }
+    if (h.address) return { address: h.address, label: h.label, kind: h.kind }
   }
   return null
 }
 
 function hopsText(e: ControlEntry): string {
-  return e.hops
-    .map((h, i) => `${i ? `→ [${h.via ?? 'then'}] ` : ''}${h.label}${h.address ? ` ${h.address}` : ''}${h.threshold ? ` (${h.threshold} of ${h.owners ?? '?'})` : ''}${h.delay ? ` (delay ${Math.round(h.delay / 3600)} h)` : ''}`)
-    .join(' ')
+  return e.hops.map((h, i) => `${i ? `→ [${h.via ?? 'then'}] ` : ''}${safe(h.label, 120)}${h.address ? ` ${h.address}` : ''}${hopExtra(h)}`).join(' ')
+}
+
+/** Which storage slot an EVM proxy's admin was read from, by the proxy kind Lens reported. */
+function adminSlotName(px: { standard: string; label: string }): string {
+  if (/ZeppelinOS/i.test(px.label)) return 'ZeppelinOS admin slot'
+  if (px.standard === 'eip1967' || px.standard === 'beacon') return 'EIP-1967 admin slot'
+  return `admin slot (${safe(px.label, 60)})`
+}
+
+/**
+ * The proxy admin of an address the control map does not hold: the custody chain beyond it as the control map
+ * resolved it for a kept item with the same admin (no calls); else one Lens read of the admin (code or no
+ * code); else not classified.
+ */
+async function adminChain(chain: ChainId, admin: string, slot: string, ctx: ToolContext): Promise<{ hops: ControlEntry['hops']; cls: ControlClass; basis: string; classText?: string }> {
+  const pg = await ctx.source.controlList({ controller: admin, limit: 5 }).catch(() => null)
+  for (const k of pg?.items ?? []) {
+    if (k.chain !== chain) continue
+    const i = k.hops.findIndex((h, j) => j > 0 && sameAddr(h.address, admin))
+    if (i < 0 || k.cls === 'pending') continue
+    const rest = k.hops.slice(i).map((h, j) => (j === 0 ? { ...h, via: slot } : h))
+    return { hops: rest, cls: k.cls, basis: `${slot} (Lens read) → ${admin}; beyond the admin: as the control map resolved it for kept ${title(k.name)} ${k.address} (${iso(k.at)})` }
+  }
+  const r = await ctx.source.lens(chain, admin, ctx.ip).catch(() => null)
+  if (r?.ok) {
+    const a = r.answer.report
+    if (a.kind === 'empty') {
+      return { hops: [{ kind: 'eoa', address: admin, label: 'single key (no code at this address)', via: slot }], cls: 'key', basis: `${slot} (Lens read) → ${admin}, which holds no code (Lens read of the admin): an externally owned account, i.e. a single key` }
+    }
+    if (a.kind === 'account') {
+      return { hops: [{ kind: 'eoa', address: admin, label: 'single key (EIP-7702 delegated account)', via: slot }], cls: 'key', basis: `${slot} (Lens read) → ${admin}, an EIP-7702 delegated account: its own key signs (Lens read of the admin)` }
+    }
+    const safeProxy = a.evm?.proxy && /safe/i.test(a.evm.proxy.label)
+    if (safeProxy) {
+      return { hops: [{ kind: 'safe', address: admin, label: 'Safe (threshold not read here)', via: slot }], cls: 'safe', basis: `${slot} (Lens read) → ${admin}, a Safe proxy (Lens read of the admin); its threshold is read for kept items only` }
+    }
+    return {
+      hops: [{ kind: 'contract', address: admin, label: `contract${a.name ? ` ${nm(a.name)}` : ''} (who controls it was not read)`, via: slot }],
+      cls: 'unknown',
+      basis: `${slot} (Lens read) → ${admin}, a contract${a.name ? ` (${nm(a.name)})` : ''} (Lens read of the admin)`,
+      classText: 'upgradeable — the proxy admin is a contract; who controls that contract was not read (owner() / Safe / timelock chains are followed for kept items only)',
+    }
+  }
+  return {
+    hops: [{ kind: 'none', address: admin, label: 'proxy admin (account type not read)', via: slot }],
+    cls: 'unknown',
+    basis: `${slot} (Lens read) → ${admin}; whether it is a key, a Safe or a contract was not read${r && !r.ok ? ` (${safe(r.error, 80)})` : ''}`,
+    classText: 'upgradeable — the proxy admin was read; whether it is a key, a Safe or a contract was not read',
+  }
 }
 
 /**
  * Custody chain of an address the control map does not hold (not kept), from a Lens read: Solana upgrade
- * authority classified on / off the ed25519 curve; EVM proxy admin as read (not classified further: the
- * control map's Safe / timelock calls run for kept items only).
+ * authority classified on / off the ed25519 curve; EVM proxy admin from its slot, classified from the control
+ * map or one more Lens read; an EIP-7702 account is changed by its own key; a contract without a proxy is
+ * immutable when Lens read no DELEGATECALL, and with DELEGATECALL see delegatecallEntry.
  */
-async function controlFromLens(chain: ChainId, address: string, ctx: ToolContext): Promise<ControlEntry> {
+async function controlFromLens(chain: ChainId, address: string, ctx: ToolContext): Promise<Resolved> {
   const r = await from(ctx.source.lens(chain, address, ctx.ip))
   if (!r.ok) throw new ToolError(`${address} on ${chain} is not in the control map (kept items only), and the Lens read needed for it was refused: ${r.error}`, r.retryAfterS)
   const rep = r.answer.report
   const base = { chain, address: rep.address, name: rep.name, at: rep.readAt, calls: rep.rpcCalls }
+  const controlledBy = 'To see which kept programs / contracts this address can change, call lusca_controlled_by.'
+  if (rep.kind === 'empty') throw new ToolError(`${address} on ${chain} holds no code (${chain === 'solana' ? 'no account at this address' : 'an externally owned account, or a contract that was removed'}; Lens read), so there is no code to change. ${controlledBy}`)
+  if (chain === 'solana' && rep.kind !== 'program') {
+    const owner = rep.notes.map((n) => /data account owned by (\S+)/.exec(n)?.[1]).find(Boolean)
+    throw new ToolError(`${address} is not a program (${rep.kind === 'token-mint' ? 'a token mint' : owner ? `a data account owned by ${owner}` : 'a data account'}; Lens read), so it has no code to change. ${controlledBy}`)
+  }
   if (rep.solana) {
     const s = rep.solana
     const first = { kind: 'program' as const, address: rep.address, label: `program · ${s.loader ?? 'loader not read'}` }
     if (s.upgradeable === false) return { ...base, cls: 'immutable', hops: [first], basis: `the program is not upgradeable (${s.loader ?? 'loader'}; Lens read)` }
-    if (!s.upgradeAuthority) return { ...base, cls: 'unknown', hops: [first], basis: 'the upgrade authority could not be read' }
+    if (!s.upgradeAuthority) return { ...base, cls: 'unknown', hops: [first], basis: 'the upgrade authority could not be read', classText: 'not known — the upgrade authority could not be read' }
     const on = isOnCurve(s.upgradeAuthority)
-    if (on === null) return { ...base, cls: 'unknown', hops: [first, { kind: 'none', address: s.upgradeAuthority, label: 'upgrade authority', via: 'upgrade authority' }], basis: 'the upgrade authority is not a valid ed25519 encoding' }
+    if (on === null) return { ...base, cls: 'unknown', hops: [first, { kind: 'none', address: s.upgradeAuthority, label: 'upgrade authority', via: 'upgrade authority' }], basis: 'the upgrade authority is not a valid ed25519 encoding', classText: 'upgradeable — the upgrade authority is not a valid ed25519 encoding' }
     return {
       ...base,
       cls: on ? 'key' : 'pda',
@@ -587,38 +707,84 @@ async function controlFromLens(chain: ChainId, address: string, ctx: ToolContext
     }
   }
   const evm = rep.evm
-  if (!evm?.proxy) return { ...base, cls: 'immutable', hops: [{ kind: 'contract', address: rep.address, label: 'contract · no proxy' }], basis: 'no proxy found by the Lens read: the bytecode at this address is the code' }
+  if (rep.kind === 'account') {
+    const delegate = evm?.proxy?.implementation ?? null
+    return {
+      ...base,
+      cls: 'key',
+      hops: [
+        { kind: 'proxy', address: rep.address, label: `EIP-7702 delegated account${delegate ? ` → ${delegate}` : ''}` },
+        { kind: 'key', address: rep.address, label: "the account's own key", via: 'EIP-7702 authorization' },
+      ],
+      basis: "EIP-7702 delegated account: the account's own key can change its delegation (Lens read)",
+      classText: "single key — an EIP-7702 delegated account: the account's own key sets which code it runs",
+    }
+  }
+  if (!evm?.proxy) {
+    if (rep.summary.upgradeable === false) return { ...base, cls: 'immutable', hops: [{ kind: 'contract', address: rep.address, label: 'contract · no proxy' }], basis: 'no DELEGATECALL in the code and no proxy (Lens read): the bytecode at this address is the code' }
+    const note = delegatecallNote(rep.notes)
+    if (note) {
+      const fns = [...(evm?.self.functions.write ?? []), ...(evm?.self.functions.payable ?? [])].filter((f) => UPGRADE_FN.test(f)).map((f) => nm(f, 80))
+      return delegatecallEntry(base, note, [...new Set(fns)], 'Lens read')
+    }
+    return {
+      ...base,
+      cls: 'unknown',
+      hops: [{ kind: 'contract', address: rep.address, label: 'contract' }],
+      basis: `Lens could not tell whether the code can change (${safe(rep.notes.find((n) => /proxy check/i.test(n)) ?? 'upgradeable: not known', 120)})`,
+      classText: 'not known — Lens could not complete the proxy check',
+    }
+  }
   const px = evm.proxy
   const hops: ControlEntry['hops'] = [{ kind: px.standard === 'beacon' ? 'beacon' : px.standard === 'eip1167' ? 'clone' : 'proxy', address: rep.address, label: px.label }]
   if (px.standard === 'eip1167') return { ...base, cls: 'immutable', hops, basis: 'EIP-1167 clone: the implementation address is fixed in the bytecode' }
   if (px.admin) {
-    hops.push({ kind: 'contract', address: px.admin, label: 'proxy admin', via: 'admin slot' })
-    return { ...base, cls: 'unknown', hops, basis: 'EIP-1967 admin slot (Lens read)' }
+    const a = await adminChain(chain, px.admin, adminSlotName(px), ctx)
+    return { ...base, cls: a.cls, hops: [...hops, ...a.hops], basis: a.basis, ...(a.classText ? { classText: a.classText } : {}) }
   }
-  const up = (evm.implementation?.privileged ?? []).filter((p) => /upgrade/i.test(p.fn)).slice(0, 2)
+  const up = (evm.implementation?.privileged ?? []).filter((p) => UPGRADE_FN.test(p.fn)).slice(0, 2)
   return {
     ...base,
     cls: 'unknown',
     hops,
-    basis: up.length ? `no admin in the proxy slot; the implementation guards ${up.map((p) => `${p.fn} with ${p.guard} (${p.file}:${p.line})`).join('; ')}` : 'no admin in the proxy slot (UUPS-style: the upgrade check lives in the implementation code)',
+    basis: up.length ? `no admin in the proxy slot; the implementation guards ${up.map((p) => `${nm(p.fn, 80)} with ${safe(p.guard, 60)} (${srcPath(`${p.file}:${p.line}`, 80)})`).join('; ')}` : 'no admin in the proxy slot (UUPS-style: the upgrade check lives in the implementation code)',
+    classText: 'upgradeable — no admin in the proxy slot; the controller is not identified',
   }
+}
+
+/**
+ * A kept EVM contract the control map holds as immutable (not a proxy) whose stored read notes DELEGATECALL:
+ * answered with the same facts as delegatecallEntry (bytecode fixed and DELEGATECALL targets not resolved; or,
+ * with functions that set the code it runs, a custom proxy whose controller is not identified).
+ */
+async function reviewStored(e: ControlEntry, ctx: ToolContext): Promise<Resolved> {
+  if (e.chain === 'solana' || e.cls !== 'immutable' || e.hops[0]?.kind === 'clone') return e
+  const got = await ctx.source.chainItem(e.chain, e.address).catch(() => null)
+  const rd = got?.read
+  if (!rd || rd.upgradeable === false) return e
+  const note = delegatecallNote(rd.notes)
+  if (!note) return e
+  const fns = (rd.abi?.functions ?? []).filter((f) => UPGRADE_FN.test(f)).map((f) => nm(f, 80))
+  const r = delegatecallEntry(e, note, [...new Set(fns)], `stored read of ${iso(rd.readAt)}`)
+  return r.cls === 'immutable' ? { ...r, basis: `${e.basis} · ${r.basis}` } : r
 }
 
 const controlTool = defineTool({
   name: 'lusca_control',
   title: 'Who can change the code',
   description:
-    "Who can change the code of a Solana program or EVM contract: the custody chain from the code to the controlling account (Solana upgrade authority and whether it is a keypair or a program-derived address; EVM proxy admin followed to a key, Safe with its threshold, timelock with its delay, or another contract) and every other kept program / contract the same controller can change. Kept items answer from the control map; any other address is read with Lens first. Facts about who holds the upgrade right; nothing about intent.",
+    "Who can change the code of a Solana program or EVM contract: the custody chain from the code to the controlling account (Solana upgrade authority and whether it is a keypair or a program-derived address; EVM proxy admin followed to a key, Safe with its threshold, timelock with its delay, or another contract) and every other kept program / contract the same controller can change. Kept items answer from the control map; any other address is read with Lens first. A contract without a standard proxy slot whose code uses DELEGATECALL is reported with that fact: its bytecode is fixed and the DELEGATECALL targets are not resolved, or — when its interface has functions that set the code it runs (upgradeTo…, diamondCut …) — a custom proxy whose controller is not identified. Facts about who holds the upgrade right; nothing about intent.",
   inputSchema: target(),
   annotations: { openWorldHint: true },
   cacheS: 10,
   timeoutMs: 62_000,
+  pool: 'lens',
   async run(args, ctx) {
     const { chain, address } = targetOf(args)
     const now = ctx.now()
     const stored = await from(ctx.source.controlGet(chain, address))
     const viaLens = stored ? null : await controlFromLens(chain, address, ctx)
-    const e = stored ?? viaLens!
+    const e: Resolved = stored ? await reviewStored(stored, ctx) : viaLens!
     const ctl = finalController(e)
     let others: { chain: ChainId; address: string; name: string | null; cls: ControlClass; url: string }[] = []
     let total = 0
@@ -626,21 +792,24 @@ const controlTool = defineTool({
       const pg = await from(ctx.source.controlList({ controller: ctl.address, limit: 50 })).catch(() => null)
       if (pg) {
         const rest = pg.items.filter((x) => !(x.chain === e.chain && sameAddr(x.address, e.address)))
-        total = Math.max(rest.length, pg.total - (pg.items.length - rest.length))
+        // a kept target is on its own controller's list, also when it is past the first page
+        const selfListed = rest.length < pg.items.length || (!!stored && pg.total > pg.items.length)
+        total = Math.max(rest.length, pg.total - (selfListed ? 1 : 0))
         others = rest.slice(0, 25).map((x) => ({ chain: x.chain, address: x.address, name: x.name, cls: x.cls, url: ctx.site + lensPath(x.chain, x.address) }))
       }
     }
+    const classText = e.classText ?? CLASS_TEXT[e.cls]
     const out = [
-      `Control · ${e.chain} · ${e.name ?? '(no name)'} ${e.address}${viaLens ? ' · not kept by LUSCA: read with Lens just now' : ''}`,
-      `class: ${viaLens && e.cls === 'unknown' ? 'proxy admin read, not classified (key / Safe / timelock are classified for kept items only)' : CLASS_TEXT[e.cls]}`,
-      `basis: ${e.basis}`,
+      `Control · ${e.chain} · ${title(e.name)} ${e.address}${viaLens ? ' · not in the control map (it holds kept items): read with Lens just now' : ''}`,
+      `class: ${classText}`,
+      `basis: ${safe(e.basis, 400)}`,
       `custody chain: ${hopsText(e) || 'not resolved yet'}`,
     ]
-    if (ctl) out.push(`controller: ${ctl.address} (${ctl.label})`)
+    if (ctl) out.push(`controller: ${ctl.address} (${safe(ctl.label, 120)})`)
     if (ctl && e.cls !== 'immutable') {
       if (others.length) {
         out.push(`the same controller can change ${int(total)} other kept program${total === 1 ? '' : 's'} / contract${total === 1 ? '' : 's'}:`)
-        for (const o of others.slice(0, 20)) out.push(`  • ${o.chain} · ${o.name ?? '(no name)'} ${o.address}`)
+        for (const o of others.slice(0, 20)) out.push(`  • ${o.chain} · ${title(o.name)} ${o.address}`)
         if (total > 20) out.push(`  … +${int(total - 20)} more`)
       } else out.push('the same controller changes no other kept program / contract')
     }
@@ -649,8 +818,8 @@ const controlTool = defineTool({
     const l = links(ctx.site, viaLens ? lensPath(e.chain, e.address) : '/control', viaLens ? `/api/lens/${e.chain}/${e.address}` : `/api/control/${e.chain}/${e.address}`, ctl ? `/api/control/items?controller=${ctl.address}` : '', lensPath(e.chain, e.address))
     out.push(`Sources: ${l.join(' · ')}`)
     return {
-      text: bound(out.join('\n'), TEXT_MAX),
-      data: { source: viaLens ? 'lens' : 'control-map', chain: e.chain, address: e.address, name: e.name, class: e.cls, classText: CLASS_TEXT[e.cls], basis: e.basis, hops: e.hops, controller: ctl, sameController: { total, items: others }, resolvedAt: e.at || null, links: l, asOf: now },
+      text: bound(lines(out), TEXT_MAX),
+      data: { source: viaLens ? 'lens' : 'control-map', chain: e.chain, address: e.address, name: e.name, class: e.cls, classText, basis: e.basis, hops: e.hops, controller: ctl, delegatecall: e.delegatecall ?? null, sameController: { total, items: others }, resolvedAt: e.at || null, links: l, asOf: now },
     }
   },
 })
@@ -682,12 +851,12 @@ const controlSummaryTool = defineTool({
     }
     if (top.length) {
       out.push('controllers that can change the most kept code:')
-      for (const c of top) out.push(`  • ${int(c.count)} · ${c.chain} · ${c.label} ${c.address}${c.names.length ? ` — ${list(c.names, 4)}` : ''}`)
+      for (const c of top) out.push(`  • ${int(c.count)} · ${c.chain} · ${c.label} ${c.address}${c.names.length ? ` — ${list(c.names.map((x) => nm(x)), 4)}` : ''}`)
     }
     const l = links(ctx.site, '/control', '/api/control/summary')
     out.push(`Sources: ${l.join(' · ')}`)
     return {
-      text: bound(out.join('\n'), TEXT_MAX),
+      text: bound(lines(out), TEXT_MAX),
       data: { chain: chain ?? null, total: tot, resolved: chain ? resolvedHere : s.resolved, pending: chain ? (by.pending ?? 0) : s.pending, classes, byChain: s.byChain, topControllers: top.map((c) => ({ ...c, names: c.names.slice(0, 6), url: ctx.site + `/api/control/items?controller=${c.address}` })), links: l, asOf: now },
     }
   },
@@ -708,20 +877,23 @@ const atlasTool = defineTool({
     const it = await from(ctx.source.atlasItem(chain, address))
     if (!it) throw new ToolError(`${address} on ${chain} is not on the code atlas yet: the atlas maps kept programs and contracts (rebuilt in the background).`)
     const now = ctx.now()
-    const rel = it.relatives.slice(0, limit).map((r) => ({ ...r, similarityPct: Math.round(r.similarity), url: ctx.site + lensPath(r.chain, r.address) }))
-    const out = [`Code atlas · ${it.chain} · ${it.name ?? '(no name)'} ${it.address}`, `cluster: ${it.clusterLabel ?? 'none'} · ${int(it.functions)} functions/instructions · ${int(it.events)} events · ${it.verifiedBy ? `verified (${it.verifiedBy})` : 'not verified'}`]
-    if (it.sample.length) out.push(`names: ${list(it.sample, 16)}`)
-    if (!rel.length) out.push('No relative shares enough names with it yet.')
-    else out.push(`closest relatives (${rel.length}):`)
+    // a neighbour that shares no instruction / function / event name is close only by shape (loader, size band, file names): left out
+    const named = it.relatives.filter((r) => r.shared > 0)
+    const rel = named.slice(0, limit).map((r) => ({ ...r, similarityPct: Math.round(r.similarity), url: ctx.site + lensPath(r.chain, r.address) }))
+    const sol = it.chain === 'solana'
+    const out = [`Code atlas · ${it.chain} · ${title(it.name)} ${it.address}`, `cluster: ${it.clusterLabel ? safe(it.clusterLabel, 120) : 'none'} · ${int(it.functions)} ${sol ? 'IDL instructions' : 'ABI functions'}${sol ? '' : ` · ${int(it.events)} ABI events`} · ${it.verifiedBy ? `verified (${it.verifiedBy})` : 'not verified'}`]
+    if (it.sample.length) out.push(`names: ${list(it.sample.map((x) => nm(x)), 16)}`)
+    if (!rel.length) out.push('No relative shares an instruction / function / event name with it yet.')
+    else out.push(`closest relatives (${rel.length}) — similarity: MinHash estimate over names and shape features (loader, upgradeability, size band, source file names); shared names: instruction / function / event names both have:`)
     rel.forEach((r, i) => {
-      out.push(`${i + 1}. ${r.similarityPct}% similar · ${r.shared} shared names · ${r.chain} · ${r.name ?? '(no name)'} ${r.address}`)
-      if (r.onlyHere.length || r.onlyThere.length) out.push(`   only here: ${list(r.onlyHere, 6)} · only there: ${list(r.onlyThere, 6)}`)
+      out.push(`${i + 1}. ${r.similarityPct}% similar · ${r.shared} shared names · ${r.chain} · ${title(r.name)} ${r.address}`)
+      if (r.onlyHere.length || r.onlyThere.length) out.push(`   only here: ${list(r.onlyHere.map((x) => nm(x)), 6)} · only there: ${list(r.onlyThere.map((x) => nm(x)), 6)}`)
     })
     const l = links(ctx.site, '/atlas', `/api/atlas/item/${it.chain}/${it.address}`, lensPath(it.chain, it.address))
     out.push(`Sources: ${l.join(' · ')}`)
     return {
-      text: bound(out.join('\n'), TEXT_MAX),
-      data: { chain: it.chain, address: it.address, name: it.name, cluster: it.clusterLabel, functions: it.functions, events: it.events, verifiedBy: it.verifiedBy, sample: it.sample.slice(0, 24), relatives: rel, links: l, asOf: now },
+      text: bound(lines(out), TEXT_MAX),
+      data: { chain: it.chain, address: it.address, name: it.name, cluster: it.clusterLabel, functions: it.functions, events: sol ? null : it.events, shapeOnlyLeftOut: it.relatives.length - named.length, verifiedBy: it.verifiedBy, sample: it.sample.slice(0, 24), relatives: rel, links: l, asOf: now },
     }
   },
 })
@@ -755,20 +927,20 @@ const controlledByTool = defineTool({
     })()
     const items = pg.items.slice(0, limit).map((e) => ({ chain: e.chain, address: e.address, name: e.name, class: e.cls, via: e.hops.find((h, i) => i > 0 && sameAddr(h.address, address))?.via ?? null, url: ctx.site + lensPath(e.chain, e.address) }))
     const h = role?.hop
-    const what = h ? `${h.label}${h.threshold ? ` (${h.threshold} of ${h.owners ?? '?'})` : ''}${h.delay ? ` (delay ${Math.round(h.delay / 3600)} h)` : ''}` : null
+    const what = h ? `${safe(h.label, 120)}${hopExtra(h)}` : null
     const out = [`Controlled by ${address}${what ? ` · ${what}` : ''}${role ? ` · ${role.chain}` : ''}`]
     if (!pg.total) out.push("LUSCA's control map holds no kept program or contract this address can change (it maps the programs and contracts LUSCA keeps).")
     else {
       const vias = [...new Set(items.map((it) => it.via ?? ''))]
       const one = vias.length === 1 && vias[0] ? vias[0] : null
       out.push(`can change ${int(pg.total)} kept program${pg.total === 1 ? '' : 's'} / contract${pg.total === 1 ? '' : 's'}${one ? ` (as ${one})` : ''}:`)
-      for (const it of items) out.push(`  • ${it.chain} · ${it.name ?? '(no name)'} ${it.address}${!one && it.via ? ` · via ${it.via}` : ''}`)
+      for (const it of items) out.push(`  • ${it.chain} · ${title(it.name)} ${it.address}${!one && it.via ? ` · via ${it.via}` : ''}`)
       if (pg.total > items.length) out.push(`  … +${int(pg.total - items.length)} more`)
     }
     const l = links(ctx.site, '/control', `/api/control/items?controller=${address}`)
     out.push(`Sources: ${l.join(' · ')}`)
     return {
-      text: bound(out.join('\n'), TEXT_MAX),
+      text: bound(lines(out), TEXT_MAX),
       data: { controller: address, role: h ? { kind: h.kind, label: h.label, threshold: h.threshold ?? null, owners: h.owners ?? null, delay: h.delay ?? null } : null, total: pg.total, items, links: l, asOf: now },
     }
   },
@@ -789,28 +961,28 @@ const keptItemTool = defineTool({
     const r = await from(ctx.source.chainItem(chain, address))
     if (!r) throw new ToolError(`${address} on ${chain} is not kept by LUSCA (not in the chain index). lusca_lens reads any address and says whether it would qualify.`)
     const { item: it, read: rd } = r
-    const files = rd.sources.slice(0, 40).map((f) => ({ path: f.path, lang: f.lang, bytes: f.bytes }))
+    const files = rd.sources.slice(0, 40).map((f) => ({ path: srcPath(f.path), lang: f.lang, bytes: f.bytes }))
     const fns = rd.abi?.functions ?? []
     const ix = rd.idl?.instructions.map((i) => i.name) ?? []
     const out = [
-      `Kept · ${it.chain} · ${it.name ?? rd.name ?? '(no name)'} ${it.address}`,
+      `Kept · ${it.chain} · ${title(it.name ?? rd.name)} ${it.address}`,
       `${it.kind} · found via ${it.via} · first seen ${iso(it.firstSeen)} · read ${iso(it.readAt)} (${int(rd.rpcCalls)} RPC call${rd.rpcCalls === 1 ? "" : "s"})`,
     ]
-    if (rd.verified) out.push(`verified: ${rd.verified.by}${rd.verified.match ? ` ${rd.verified.match} match` : ''}${rd.verified.compiler ? ` · ${rd.verified.compiler}` : ''}${rd.verified.repo ? ` · ${rd.verified.repo}${rd.verified.commit ? `@${rd.verified.commit.slice(0, 10)}` : ''}` : ''}`)
+    if (rd.verified) out.push(`verified: ${rd.verified.by}${rd.verified.match ? ` ${rd.verified.match} match` : ''}${rd.verified.compiler ? ` · ${rd.verified.compiler}` : ''}${rd.verified.repo ? ` · ${safe(rd.verified.repo, 120)}${rd.verified.commit ? `@${safe(rd.verified.commit.slice(0, 10))}` : ''}` : ''}`)
     else out.push('verified: no verified source / build')
     if (rd.upgradeable !== null || rd.upgradeAuthority) out.push(`upgradeable: ${yesNo(rd.upgradeable)}${rd.upgradeAuthority ? ` · upgrade authority ${rd.upgradeAuthority}` : ''}`)
     if (rd.proxy) out.push(`proxy: ${rd.proxy.standard} → implementation ${rd.proxy.implementation}`)
     if (rd.programBytes || rd.bytecodeBytes) out.push(`code: ${bytes(rd.programBytes ?? rd.bytecodeBytes)}${rd.codeHash ? ` · hash ${rd.codeHash}` : ''}${rd.lastDeploySlot ? ` · last deploy slot ${int(rd.lastDeploySlot)}` : ''}`)
     if (files.length) out.push(`source files (${rd.sources.length}, ${bytes(it.sourceBytes)}): ${list(files.map((f) => `${f.path} (${bytes(f.bytes)})`), 14, '; ')}`)
-    if (ix.length) out.push(`IDL instructions (${ix.length}): ${list(ix, 30)}`)
-    if (fns.length) out.push(`ABI functions (${fns.length}): ${list(fns, 30)}`)
-    if (rd.abi?.events.length) out.push(`events (${rd.abi.events.length}): ${list(rd.abi.events, 12)}`)
-    if (rd.securityTxt) out.push(`security.txt: ${list(Object.entries(rd.securityTxt).map(([k, v]) => `${k}=${String(v).slice(0, 120)}`), 5, ' · ')}`)
-    if (rd.notes.length) out.push(`notes: ${rd.notes.slice(0, 6).join(' · ')}`)
+    if (ix.length) out.push(`IDL instructions (${ix.length}): ${list(ix.map((x) => nm(x)), 30)}`)
+    if (fns.length) out.push(`ABI functions (${fns.length}): ${list(fns.map((x) => nm(x, 120)), 30)}`)
+    if (rd.abi?.events.length) out.push(`events (${rd.abi.events.length}): ${list(rd.abi.events.map((x) => nm(x, 120)), 12)}`)
+    if (rd.securityTxt) out.push(`security.txt (published by the deployer): ${list(Object.entries(rd.securityTxt).map(([k, v]) => `${nm(k, 32)}=${JSON.stringify(safe(v, 120))}`), 5, ' · ')}`)
+    if (rd.notes.length) out.push(`notes: ${rd.notes.slice(0, 6).map((n) => safe(n, 200)).join(' · ')}`)
     const l = links(ctx.site, `/chain/${it.chain}/${it.address}`, `/api/chain/item/${it.chain}/${it.address}`, lensPath(it.chain, it.address))
     out.push(`Sources: ${l.join(' · ')}`)
     return {
-      text: bound(out.join('\n'), TEXT_MAX),
+      text: bound(lines(out), TEXT_MAX),
       data: {
         chain: it.chain, address: it.address, name: it.name ?? rd.name, kind: it.kind, foundVia: it.via, firstSeen: it.firstSeen, readAt: it.readAt,
         verified: rd.verified, upgradeable: rd.upgradeable, upgradeAuthority: rd.upgradeAuthority, proxy: rd.proxy, codeHash: rd.codeHash,

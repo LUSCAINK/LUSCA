@@ -27,10 +27,11 @@ export function validate(schema: JsonSchema, value: unknown, at = 'arguments'): 
     case 'object': {
       if (typeOf(value) !== 'object') return `${at} must be an object`
       const obj = value as Record<string, unknown>
-      for (const k of schema.required ?? []) if (!(k in obj) || obj[k] === undefined) return `${at === 'arguments' ? '' : `${at}.`}${k} is required`
+      for (const k of schema.required ?? []) if (!Object.hasOwn(obj, k) || obj[k] === undefined) return `${at === 'arguments' ? '' : `${at}.`}${k} is required`
       const props = schema.properties ?? {}
       for (const [k, v] of Object.entries(obj)) {
-        const ps = props[k]
+        // own properties only: 'constructor', '__proto__', 'toString' are argument names like any other
+        const ps = Object.hasOwn(props, k) ? props[k] : undefined
         if (!ps) {
           if (schema.additionalProperties === false) return `unknown argument ${at === 'arguments' ? '' : `${at}.`}${k} (allowed: ${Object.keys(props).join(', ') || 'none'})`
           continue

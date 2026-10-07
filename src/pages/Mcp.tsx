@@ -11,6 +11,9 @@ import './mcp.css'
 /** Position of /mcp in the primary navigation (set when the nav is integrated in src/components/shell/Shell.tsx). */
 const MCP_NAV_N = '13'
 const PROTOCOL = '2025-06-18'
+const ALSO = ['2025-03-26', '2024-11-05']
+/** Links in answers are clickable only for LUSCA and the explorers / registries LUSCA cites (names in answers are published by deployers). */
+const LINK_HOSTS = /^(?:lusca\.ink|localhost|127\.0\.0\.1|explorer\.solana\.com|(?:www\.)?etherscan\.io|(?:www\.)?basescan\.org|(?:www\.)?arbiscan\.io|(?:repo\.)?sourcify\.dev|verify\.osec\.io)(?::\d+)?$/i
 const PUMP = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'
 
 interface PropSchema {
@@ -37,7 +40,7 @@ interface PromptInfo {
 }
 interface InitResult {
   protocolVersion: string
-  serverInfo: { name: string; title?: string; version: string }
+  serverInfo: { name: string; title?: string; version: string; websiteUrl?: string }
 }
 interface CallResult {
   content?: { type: string; text?: string }[]
@@ -47,6 +50,8 @@ interface CallResult {
 interface Exchange {
   request: Record<string, unknown>
   status: number
+  /** Retry-After of a 429, in seconds. */
+  retryAfter: number | null
   ms: number
   body: unknown
   at: number
@@ -71,7 +76,8 @@ async function rpc(method: string, params: Record<string, unknown> | undefined, 
   } catch {
     body = text
   }
-  return { request, status: r.status, ms: Math.round(performance.now() - t), body, at: Date.now() }
+  const ra = Number(r.headers.get('retry-after'))
+  return { request, status: r.status, retryAfter: Number.isFinite(ra) && ra > 0 ? ra : null, ms: Math.round(performance.now() - t), body, at: Date.now() }
 }
 
 type Args = Record<string, string | boolean>
@@ -79,7 +85,7 @@ type Args = Record<string, string | boolean>
 const PRESETS: { label: string; tool: string; args: Args }[] = [
   { label: 'Who can upgrade pump?', tool: 'lusca_control', args: { chain: 'solana', address: PUMP } },
   { label: 'What can one authority upgrade?', tool: 'lusca_controlled_by', args: { address: '6awyHMshBGVjJ3ozdSJdyyDE1CTAXUwrpNMaRGMsb4sf', limit: '20' } },
-  { label: 'What was upgraded last?', tool: 'lusca_radar', args: { kind: 'upgrade', limit: '5' } },
+  { label: 'What was upgraded last?', tool: 'lusca_radar', args: { kind: 'upgrade', known: true, limit: '5' } },
   { label: 'Which keys control the most code?', tool: 'lusca_control_summary', args: { chain: 'solana' } },
   { label: 'What code is closest to pump?', tool: 'lusca_atlas_relatives', args: { chain: 'solana', address: PUMP, limit: '6' } },
   { label: 'What did the agents just read?', tool: 'lusca_scan_recent', args: { limit: '5' } },
@@ -136,13 +142,22 @@ function Copy({ text, label = 'copy' }: { text: string; label?: string }) {
   )
 }
 
-/** Plain text with its https links clickable. */
+const linkable = (u: string) => {
+  try {
+    const x = new URL(u)
+    return x.host === window.location.host || LINK_HOSTS.test(x.host)
+  } catch {
+    return false
+  }
+}
+
+/** Plain text with the links to LUSCA and the explorers / registries it cites clickable (any other URL stays text). */
 function Linkified({ text }: { text: string }) {
-  const parts = text.split(/(https?:\/\/[^\s·,)]+)/g)
+  const parts = text.split(/(https?:\/\/[^\s·,)"]+)/g)
   return (
     <>
       {parts.map((p, i) =>
-        /^https?:\/\//.test(p) ? (
+        /^https?:\/\//.test(p) && linkable(p) ? (
           <a key={i} href={p} target="_blank" rel="noreferrer">
             {p.replace(/^https?:\/\//, '')}
           </a>
@@ -236,11 +251,18 @@ export default function Mcp() {
   useEffect(() => {
     document.title = 'MCP — LUSCA'
   }, [])
-  const endpoint = `${window.location.origin}/mcp`
   const [init, setInit] = useState<InitResult | null>(null)
+  // the public endpoint the server names itself (serverInfo.websiteUrl): setup lines copy the canonical URL,
+  // also from a preview / local host; the console below always talks to this page's own /mcp
+  const named = init?.serverInfo.websiteUrl
+  const endpoint = typeof named === 'string' && /^https:\/\/[a-z0-9.-]+(:\d{1,5})?\/mcp$/i.test(named) ? named : `${window.location.origin}/mcp`
   const [tools, setTools] = useState<ToolInfo[] | null>(null)
   const [prompts, setPrompts] = useState<PromptInfo[] | null>(null)
   const [load, setLoad] = useState<'loading' | 'ok' | 'error'>('loading')
+  /** Why the tool list did not load: the HTTP status and the server's own message. */
+  const [loadErr, setLoadErr] = useState<{ status: number; message: string; retryAfter: number | null } | null>(null)
+  const [limits, setLimits] = useState<{ requestsPerMin: number; toolCallsPerMin: number } | null>(null)
+  const [attempt, setAttempt] = useState(0)
   const [sel, setSel] = useState<string>(PRESETS[0].tool)
   const [args, setArgs] = useState<Args>(PRESETS[0].args)
   const [ex, setEx] = useState<Exchange | null>(null)
@@ -273,7 +295,7 @@ export default function Mcp() {
         setView('text')
       }
     } catch {
-      if (!c.signal.aborted) setEx({ request: { jsonrpc: '2.0', method: 'tools/call', params: { name, arguments: b.args } }, status: 0, ms: 0, body: { error: 'the server did not answer' }, at: Date.now() })
+      if (!c.signal.aborted) setEx({ request: { jsonrpc: '2.0', method: 'tools/call', params: { name, arguments: b.args } }, status: 0, retryAfter: null, ms: 0, body: { error: 'the server did not answer' }, at: Date.now() })
     } finally {
       if (!c.signal.aborted) setBusy(false)
     }
@@ -281,15 +303,25 @@ export default function Mcp() {
 
   useEffect(() => {
     const c = new AbortController()
+    const fail = (x: Exchange) => {
+      const m = (x.body as { error?: { message?: string } } | null)?.error?.message
+      return Object.assign(new Error('load'), { info: { status: x.status, message: typeof m === 'string' ? m : typeof x.body === 'string' ? x.body.slice(0, 120) : 'no JSON-RPC answer', retryAfter: x.retryAfter } })
+    }
+    setLoad('loading')
+    setLoadErr(null)
     ;(async () => {
       try {
         const i = await rpc('initialize', { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: 'lusca.ink/mcp', version: '1' } }, c.signal)
         const ir = (i.body as { result?: InitResult })?.result
-        if (ir) setInit(ir)
+        if (!ir) throw fail(i)
+        setInit(ir)
         const l = await rpc('tools/list', {}, c.signal)
-        const list = (l.body as { result?: { tools?: ToolInfo[] } })?.result?.tools
-        if (!list) throw new Error('no tools')
+        const lr = (l.body as { result?: { tools?: ToolInfo[]; _meta?: Record<string, unknown> } })?.result
+        const list = lr?.tools
+        if (!list) throw fail(l)
         setTools(list)
+        const lim = lr?._meta?.['ink.lusca/limits'] as { requestsPerMin?: unknown; toolCallsPerMin?: unknown } | undefined
+        if (lim && typeof lim.requestsPerMin === 'number' && typeof lim.toolCallsPerMin === 'number') setLimits({ requestsPerMin: lim.requestsPerMin, toolCallsPerMin: lim.toolCallsPerMin })
         setLoad('ok')
         rpc('prompts/list', {}, c.signal)
           .then((pr) => setPrompts((pr.body as { result?: { prompts?: PromptInfo[] } })?.result?.prompts ?? []))
@@ -298,16 +330,20 @@ export default function Mcp() {
           ran.current = true
           void run(PRESETS[0].tool, PRESETS[0].args, list)
         }
-      } catch {
-        if (!c.signal.aborted) setLoad('error')
+      } catch (e) {
+        if (c.signal.aborted) return
+        const info = (e as { info?: { status: number; message: string; retryAfter: number | null } }).info
+        setLoadErr(info ?? { status: 0, message: 'the server did not answer', retryAfter: null })
+        setLoad('error')
       }
     })()
     return () => {
       c.abort()
       ac.current?.abort()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per attempt
+  }, [attempt])
+  const errLine = loadErr ? (loadErr.status ? `/mcp answered ${loadErr.status}: ${loadErr.message}${loadErr.retryAfter ? ` — retry in ${loadErr.retryAfter} s` : ''}` : `/mcp did not answer (${loadErr.message})`) : ''
 
   const pick = (name: string, a?: Args) => {
     setSel(name)
@@ -330,7 +366,7 @@ export default function Mcp() {
           <Kicker n={MCP_NAV_N} name="MCP" className="mc-kick">
             <span className="mc-live mono">
               <span className={load === 'ok' ? 'led on' : 'led'} aria-hidden="true" />
-              {load === 'error' ? 'endpoint unreachable' : load === 'ok' ? `endpoint live · ${tools?.length ?? 0} tools` : 'connecting'}
+              {load === 'error' ? (loadErr?.status === 429 ? 'rate limited · 429' : loadErr?.status ? `endpoint answered ${loadErr.status}` : 'endpoint unreachable') : load === 'ok' ? `endpoint live · ${tools?.length ?? 0} tools` : 'connecting'}
             </span>
           </Kicker>
           <h1 className="mc-title display">
@@ -364,7 +400,15 @@ export default function Mcp() {
           <dl className="mc-spec mono">
             <div>
               <dt>protocol</dt>
-              <dd>{init ? `MCP ${init.protocolVersion}` : `MCP ${PROTOCOL}`} · also 2025-03-26</dd>
+              <dd>
+                <span className="nw">{init ? `MCP ${init.protocolVersion}` : `MCP ${PROTOCOL}`}</span> · also{' '}
+                {ALSO.map((v, i) => (
+                  <span key={v} className="nw">
+                    {v}
+                    {i < ALSO.length - 1 ? ', ' : ''}
+                  </span>
+                ))}
+              </dd>
             </div>
             <div>
               <dt>transport</dt>
@@ -410,7 +454,16 @@ export default function Mcp() {
             <span className="dim">{tools ? `${tools.length} read-only` : ''}</span>
           </div>
           {!tools ? (
-            <p className="mc-empty mono">{load === 'error' ? 'Can’t reach /mcp — retrying on reload' : 'Loading tools…'}</p>
+            load === 'error' ? (
+              <div className="mc-empty mono">
+                <span>{errLine}</span>
+                <button type="button" className="mc-retry mono" onClick={() => setAttempt((n) => n + 1)}>
+                  try again
+                </button>
+              </div>
+            ) : (
+              <p className="mc-empty mono">Loading tools…</p>
+            )
           ) : (
             <ol className="mc-tlist">
               {tools.map((t) => {
@@ -435,6 +488,7 @@ export default function Mcp() {
         </div>
 
         <div className="mc-con">
+          <div className="mc-con-in">
           <div className="mc-sec-h mono">
             <span>
               <span className="hot">■</span> call a tool · real JSON-RPC to /mcp
@@ -536,7 +590,7 @@ export default function Mcp() {
               </div>
               {busy && <div className="mc-scan" aria-hidden="true" />}
               {!ex ? (
-                <p className="mc-empty mono">{load === 'error' ? 'No answer from /mcp.' : 'Calling…'}</p>
+                <p className="mc-empty mono">{load === 'error' ? errLine : 'Calling…'}</p>
               ) : view === 'text' ? (
                 <pre key={ex.at} className={`mc-text mono ${busy ? 'stale' : ''}`}>
                   {rpcErr ? (
@@ -559,13 +613,15 @@ export default function Mcp() {
               )}
             </div>
           </div>
+          </div>
         </div>
       </section>
 
       <footer className="mc-foot mono">
         <span>
           Read-only, no key, no account. Tools answer from the same stored reads as the LUSCA API; a Lens read of an address LUSCA has not read recently spends LUSCA Lens’s shared
-          daily budget. Per address: 90 requests and 40 tool calls a minute. Answers state what was read and where; they make no judgment about any project, team or contract.
+          daily budget.{limits ? ` Per address: ${limits.requestsPerMin} requests and ${limits.toolCallsPerMin} tool calls a minute.` : ''} Names, IDL entries and security.txt fields in answers are published by
+          each code’s deployer. Answers state what was read and where; they make no judgment about any project, team or contract.
         </span>
       </footer>
     </div>

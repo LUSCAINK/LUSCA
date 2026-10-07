@@ -345,19 +345,51 @@
   min-width: 0;
 }
 .mc-tools,
-.mc-con {
+.mc-con-in {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
+}
+.mc-tools,
+.mc-con {
   padding: 20px var(--gutter);
   min-width: 0;
 }
+/* the console stays in view while the tool list scrolls past it (wide screens) */
+@media (min-width: 1181px) {
+  .mc-con-in {
+    position: sticky;
+    top: calc(var(--bar-h, 52px) + 16px);
+  }
+}
+.nw {
+  white-space: nowrap;
+}
 .mc-empty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
   padding: 18px 0;
   font-size: var(--t-xs);
   letter-spacing: var(--track-label);
   text-transform: uppercase;
   color: var(--fg-2);
+}
+.mc-retry {
+  padding: 6px 10px;
+  border: 1px solid var(--line-3);
+  background: var(--bg-1);
+  color: var(--fg-1);
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.mc-retry:hover {
+  color: var(--fg);
+  border-color: var(--hot);
 }
 .mc-tlist {
   display: flex;
@@ -711,12 +743,30 @@
   .mc-x {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* one column: the console first, the tool reference after it */
+  .mc-con {
+    order: -1;
+  }
   .mc-io {
     grid-template-columns: minmax(0, 1fr);
   }
   .mc-tlist {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+/* the flow strip wraps here: two rows of two, a wire only between the two steps of a row */
+@media (max-width: 900px) {
+  .mc-flow {
+    display: grid;
+    grid-template-columns: max-content max-content;
+    justify-content: start;
+  }
+  .mc-flow li:nth-child(odd) {
+    margin-left: 0;
+  }
+  .mc-flow li:nth-child(odd)::before {
+    display: none;
   }
 }
 @media (max-width: 640px) {
