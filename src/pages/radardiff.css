@@ -1,0 +1,587 @@
+/* ════════════════════════════════════════════════════════════════════════
+   RADAR DIFF — /radar/:id: the source change behind one upgrade. Same
+   hairline grid as /radar; bone for added lines, struck grey for removed,
+   orange for access checks.
+   ════════════════════════════════════════════════════════════════════════ */
+
+.rdf {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--line-2);
+  min-height: calc(100dvh - var(--bar-h) - var(--status-h));
+  min-width: 0;
+}
+.rdf > * {
+  background: var(--bg);
+  min-width: 0;
+}
+.rdf .k {
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.rdf .dim {
+  color: var(--fg-2);
+}
+.rdf a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid var(--line-3);
+}
+.rdf a:hover {
+  color: var(--fg);
+  border-bottom-color: var(--fg-2);
+}
+.rdf a.hot,
+.rdf .hot {
+  color: var(--hot);
+}
+.rdf-msg {
+  padding: 48px var(--gutter);
+  font-size: var(--t-sm);
+  color: var(--fg-1);
+}
+.rdf-msg button {
+  color: var(--hot);
+  border-bottom: 1px solid var(--hot-a40);
+}
+
+/* ─── hero ───────────────────────────────────────── */
+.rdf-hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 26px var(--gutter) 24px;
+  background-image: var(--dots);
+  background-size: 14px 14px;
+}
+.rdf-tick {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-color: var(--fg-2);
+  border-style: solid;
+  border-width: 0;
+  pointer-events: none;
+}
+.rdf-tick.tl { top: 8px; left: 8px; border-top-width: 1px; border-left-width: 1px; }
+.rdf-tick.tr { top: 8px; right: 8px; border-top-width: 1px; border-right-width: 1px; }
+.rdf-tick.bl { bottom: 8px; left: 8px; border-bottom-width: 1px; border-left-width: 1px; }
+.rdf-tick.br { bottom: 8px; right: 8px; border-bottom-width: 1px; border-right-width: 1px; }
+.rdf-kick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.rdf-back {
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-1);
+}
+.rdf .rdf-back {
+  border-bottom: 0;
+}
+.rdf-title-row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+}
+.rdf-title {
+  font-size: clamp(44px, 6.4vw, 112px);
+  line-height: 0.9;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.rdf-title.addr {
+  font-size: clamp(28px, 3.4vw, 56px);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  text-transform: none;
+}
+.rdf-badge {
+  margin-bottom: 0.6em;
+  padding: 4px 8px;
+  border: 1px solid var(--hot-a40);
+  background: var(--hot-a10);
+  color: var(--hot);
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+.rdf ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rdf-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  background: var(--line-2);
+  border: 1px solid var(--line-2);
+}
+.rdf-facts > div {
+  flex: 1 1 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  background: var(--bg);
+  min-width: 0;
+}
+.rdf-facts > div.wide {
+  flex: 2 1 300px;
+}
+.rdf-facts dt {
+  font-size: var(--t-3xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.rdf-facts dd {
+  font-size: var(--t-sm);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.rdf-facts .arrow {
+  margin: 0 8px;
+  color: var(--hot);
+}
+
+/* ─── strip ──────────────────────────────────────── */
+.rdf-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line-2);
+}
+.rdf-strip > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px var(--gutter);
+  background: var(--bg);
+  min-width: 0;
+}
+.rdf-strip b {
+  font-family: var(--f-display);
+  font-size: clamp(26px, 2.6vw, 44px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: var(--track-tight);
+  color: var(--fg);
+}
+.rdf-strip span {
+  font-size: var(--t-3xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.rdf-strip .del b {
+  color: var(--fg-1);
+}
+.rdf-strip .hot b {
+  color: var(--hot);
+}
+.rdf-strip .dim b {
+  color: var(--fg-2);
+}
+
+/* ─── no diff ────────────────────────────────────── */
+.rdf-none,
+.rdf-msg {
+  flex: 1;
+}
+.rdf-none {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 32px var(--gutter) 40px;
+}
+.rdf-reason {
+  max-width: 70ch;
+  font-size: var(--t-lg);
+  line-height: 1.5;
+  color: var(--fg);
+}
+.rdf-none .mono {
+  font-size: var(--t-sm);
+}
+
+/* ─── body: index + diff ─────────────────────────── */
+.rdf-body {
+  display: grid;
+  grid-template-columns: minmax(0, 400px) minmax(0, 1fr);
+  gap: 1px;
+  background: var(--line-2);
+  flex: 1;
+}
+.rdf-body > * {
+  background: var(--bg);
+  min-width: 0;
+}
+.rdf-side-in {
+  position: sticky;
+  top: var(--bar-h);
+  max-height: calc(100dvh - var(--bar-h) - var(--status-h));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 16px var(--gutter) 24px;
+  scrollbar-width: thin;
+}
+.rdf-fns h2,
+.rdf-files h2 {
+  margin-bottom: 10px;
+}
+.rdf-fns .grp + .grp {
+  margin-top: 12px;
+}
+.rdf-fns h3 {
+  margin-bottom: 4px;
+  font-size: var(--t-3xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.rdf-fns .grp.added h3 {
+  color: var(--fg);
+}
+.rdf-fns button,
+.rdf-files button {
+  display: grid;
+  width: 100%;
+  text-align: left;
+  font-family: var(--f-mono);
+  color: var(--fg-1);
+  border-top: 1px solid var(--line);
+}
+.rdf-fns button {
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  grid-template-areas: 'g sig at' 'g acc acc';
+  column-gap: 8px;
+  row-gap: 3px;
+  padding: 7px 4px;
+  font-size: var(--t-xs);
+}
+.rdf-fns button:hover:not(:disabled),
+.rdf-files button:hover {
+  background: var(--bg-2);
+  color: var(--fg);
+}
+.rdf-fns button:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.rdf-fns .g {
+  grid-area: g;
+  color: var(--fg-2);
+}
+.rdf-fns .added .g {
+  color: var(--fg);
+}
+.rdf-fns .sig {
+  grid-area: sig;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.rdf-fns .removed .sig {
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-3);
+  color: var(--fg-2);
+}
+.rdf-fns .sig em {
+  font-style: normal;
+  color: var(--fg-2);
+}
+.rdf-fns .at {
+  grid-area: at;
+  color: var(--fg-2);
+  font-size: var(--t-2xs);
+}
+.rdf-fns .acc {
+  grid-area: acc;
+  justify-self: start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border: 1px solid var(--hot-a40);
+  background: var(--hot-a10);
+  color: var(--hot);
+  font-size: var(--t-2xs);
+}
+.rdf-fns .acc s {
+  color: var(--fg-2);
+}
+.rdf-fns button.ac .g {
+  color: var(--hot);
+}
+.rdf-files button {
+  grid-template-columns: 16px minmax(0, 1fr) auto auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 6px 4px;
+  font-size: var(--t-xs);
+}
+.rdf .st {
+  font-size: var(--t-3xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.rdf .st.added {
+  color: var(--fg);
+}
+.rdf .st.removed {
+  color: var(--fg-2);
+}
+.rdf-files .p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rdf .c i {
+  font-style: normal;
+  font-size: var(--t-2xs);
+}
+.rdf .c .a {
+  color: var(--fg);
+}
+.rdf .c .r {
+  color: var(--fg-2);
+}
+.rdf-files .bar {
+  display: inline-flex;
+  gap: 2px;
+}
+.rdf-files .bar i {
+  width: 6px;
+  height: 6px;
+}
+.rdf-files .bar .a {
+  background: var(--fg);
+}
+.rdf-files .bar .r {
+  background: var(--line-4);
+}
+
+/* ─── files ──────────────────────────────────────── */
+.rdf-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px var(--gutter) 32px;
+}
+.rdf-trunc {
+  padding: 10px 12px;
+  border: 1px solid var(--hot-a40);
+  color: var(--hot);
+  font-size: var(--t-xs);
+}
+.rdf-file {
+  border: 1px solid var(--line-2);
+  scroll-margin-top: calc(var(--bar-h) + 12px);
+  min-width: 0;
+}
+.rdf-file-h {
+  position: sticky;
+  top: var(--bar-h);
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 18px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line-2);
+  font-size: var(--t-xs);
+}
+.rdf-file-h .tg {
+  color: var(--fg-2);
+}
+.rdf-file-h .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.rdf-file-h .old {
+  color: var(--fg-2);
+}
+.rdf-code {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.rdf-code table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--f-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.rdf-code td {
+  padding: 0;
+  vertical-align: top;
+}
+.rdf-code .ln {
+  width: 1%;
+  min-width: 44px;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--fg-3);
+  user-select: none;
+  white-space: nowrap;
+  border-right: 1px solid var(--line);
+}
+.rdf-code .mk {
+  width: 18px;
+  text-align: center;
+  color: var(--fg-3);
+  user-select: none;
+}
+.rdf-code .code {
+  white-space: pre;
+  padding-right: 16px;
+  color: var(--fg-1);
+}
+.rdf-code tr.cm .code {
+  color: var(--fg-2);
+}
+.rdf-code tr.add {
+  background: rgba(236, 235, 230, 0.075);
+}
+.rdf-code tr.add .code,
+.rdf-code tr.add .mk {
+  color: var(--fg);
+}
+.rdf-code tr.add .ln {
+  color: var(--fg-2);
+}
+.rdf-code tr.del {
+  background: rgba(236, 235, 230, 0.025);
+}
+.rdf-code tr.del .s {
+  color: var(--fg-2);
+  text-decoration: line-through;
+  text-decoration-color: rgba(163, 161, 153, 0.55);
+}
+.rdf-code tr.ac {
+  box-shadow: inset 2px 0 0 var(--hot);
+}
+.rdf-code tr.ac.add {
+  background: linear-gradient(90deg, rgba(255, 77, 0, 0.16), rgba(255, 77, 0, 0.05) 60%);
+}
+.rdf-code tr.ac.add .s {
+  color: #fff;
+}
+.rdf-code tr.ac.del {
+  background: rgba(255, 77, 0, 0.06);
+}
+.rdf-code tr.ac .mk {
+  color: var(--hot);
+}
+.rdf-code tr.ac.ctx .s {
+  color: var(--hot-2);
+}
+.acflag {
+  display: inline-block;
+  margin-left: 14px;
+  padding: 0 6px;
+  border: 1px solid var(--hot-a40);
+  color: var(--hot);
+  font-size: var(--t-3xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  line-height: 1.6;
+  vertical-align: 1px;
+}
+.rdf-code tr.hk td {
+  padding: 5px 8px;
+  background: var(--bg-1);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-2);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+.rdf-code tr.hk .hk-l {
+  text-align: center;
+  color: var(--fg-3);
+}
+.rdf-code tr.hk b {
+  font-weight: 500;
+  color: var(--fg-1);
+}
+.rdf-code tr.hk {
+  scroll-margin-top: calc(var(--bar-h) + 52px);
+}
+.rdf-code tr.hk.flash td,
+.rdf-file.flash > .rdf-file-h {
+  animation: rdf-flash 1.6s var(--ease);
+}
+@keyframes rdf-flash {
+  0% {
+    background: var(--hot-a40);
+    color: var(--fg);
+  }
+  100% {
+    background: var(--bg-1);
+  }
+}
+.rdf-omit {
+  padding: 10px 12px;
+  border-top: 1px solid var(--line-2);
+  color: var(--hot);
+  font-size: var(--t-xs);
+}
+.rdf-src {
+  font-size: var(--t-2xs);
+  letter-spacing: 0.04em;
+}
+
+/* ─── narrow ─────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .rdf-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rdf-side-in {
+    position: static;
+    max-height: none;
+  }
+  .rdf-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  .rdf-facts > div.wide {
+    flex-basis: 100%;
+  }
+  .rdf-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rdf-code table {
+    font-size: 11.5px;
+  }
+  .rdf-code .ln {
+    min-width: 30px;
+    padding: 0 4px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rdf-code tr.hk.flash td,
+  .rdf-file.flash > .rdf-file-h {
+    animation: none;
+  }
+}

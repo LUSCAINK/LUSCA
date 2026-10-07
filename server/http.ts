@@ -104,6 +104,8 @@ export interface Modules {
   lens?: { route(p: string, ip: string): Promise<{ status: number; json: string; headers?: Record<string, string> }> } | null
   /** UPGRADE RADAR (server/radar): stored events only. Without it /api/radar* answers 503. */
   radar?: HubRadar | null
+  /** RADAR DIFF (server/radar/code-diff.ts): source diff of one verified EVM upgrade, computed once and cached. */
+  radarDiff?: { get(id: string): Promise<{ json: string; ready: boolean } | null> } | null
 }
 
 /** Read side of the upgrade radar: every answer comes from stored events, no RPC. */
@@ -1691,6 +1693,13 @@ export function createHub(opts: HubOptions): Hub {
         const key = `radar:${chainQ}:${kindQ}:${otherQ}:${knownQ}:${sortQ}:${q.limit}:${cursor}`
         return sendJsonText(req, res, 200, cachedJson(key, () => radar.list(q), RADAR_CACHE_MS), shortCache)
       }
+      const dm = /^\/api\/radar\/([a-z0-9-]{1,40})\/diff$/.exec(p)
+      if (dm && RADAR_ID_RE.test(dm[1])) {
+        if (!m.radarDiff) throw new HttpError(503, 'radar diffs are not available on this server')
+        const r = await m.radarDiff.get(dm[1])
+        if (!r) throw new HttpError(404, 'no radar event with this id')
+        return sendJsonText(req, res, 200, r.json, { 'Cache-Control': r.ready ? 'public, max-age=300' : 'public, max-age=10' })
+      }
       const id = p.slice('/api/radar/'.length)
       if (!RADAR_ID_RE.test(id)) throw new HttpError(404, 'not found')
       const json = cachedJson(`radar:item:${id}`, () => radar.get(id), RADAR_CACHE_MS)
@@ -1721,7 +1730,7 @@ export function createHub(opts: HubOptions): Hub {
   }
 
   /** Client routes as declared in src/App.tsx (first segment → allowed extra segments). */
-  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, scan: 0, radar: 0, agents: 1, docs: 1, chain: 2, lens: 2 }
+  const CLIENT_ROUTES: Record<string, number> = { live: 0, node: 0, sepia: 0, earn: 0, privacy: 0, terms: 0, scan: 0, radar: 1, agents: 1, docs: 1, chain: 2, lens: 2 }
   function isClientRoute(segs: string[]): boolean {
     if (segs.length === 0) return true
     const first = segs[0].toLowerCase() // react-router matches case-insensitively

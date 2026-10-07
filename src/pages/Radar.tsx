@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { ChainId } from '@shared/chain'
 import type { RadarEvent, RadarKind, RadarSide, RadarStatus } from '@shared/radar'
+import { diffable } from '@shared/radarDiff'
 import { Kicker } from '@/components/docs/pagekit'
 import { bus } from '@/lib/bus'
 import { CHAINS, CHAIN_LABEL, CHAIN_SHORT, explorerName, explorerUrl, shortAddress } from '@/lib/chain'
@@ -514,6 +515,11 @@ function Card({ e, now, fresh }: { e: RadarEvent; now: number; fresh: boolean })
             <a href={addrUrl} target="_blank" rel="noopener noreferrer">
               {explorerName(ev.chain)} ↗
             </a>
+          )}
+          {diffable(ev) && (
+            <Link to={`/radar/${ev.id}`} className="hot">
+              diff →
+            </Link>
           )}
           <Link to={`/lens/${ev.chain}/${ev.address}`} className="hot">
             Lens →

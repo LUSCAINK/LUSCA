@@ -11,6 +11,7 @@ const Chain = lazy(() => import('@/pages/Chain'))
 const Lens = lazy(() => import('@/pages/Lens'))
 const Scan = lazy(() => import('@/pages/Scan'))
 const Radar = lazy(() => import('@/pages/Radar'))
+const RadarDiff = lazy(() => import('@/pages/RadarDiff'))
 const Sepia = lazy(() => import('@/pages/Sepia'))
 const Earn = lazy(() => import('@/pages/Earn'))
 const Docs = lazy(() => import('@/pages/Docs'))
@@ -44,6 +45,7 @@ export default function App() {
             <Route path="lens/:chain/:address" element={<Suspense fallback={<Loading />}><Lens /></Suspense>} />
             <Route path="scan" element={<Suspense fallback={<Loading />}><Scan /></Suspense>} />
             <Route path="radar" element={<Suspense fallback={<Loading />}><Radar /></Suspense>} />
+            <Route path="radar/:id" element={<Suspense fallback={<Loading />}><RadarDiff /></Suspense>} />
             <Route path="node" element={<Suspense fallback={<Loading />}><Node /></Suspense>} />
             <Route path="sepia" element={<Suspense fallback={<Loading />}><Sepia /></Suspense>} />
             <Route path="earn" element={<Suspense fallback={<Loading />}><Earn /></Suspense>} />

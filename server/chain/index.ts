@@ -33,6 +33,7 @@ import { createProvenanceIndex } from '../lens/provenance.ts'
 import { AnalysisLimit, Work, findPrimitives, findPrivileged } from '../lens/evm-analysis.ts'
 import { scanElf, solanaPrimitives } from '../lens/elf-syscalls.ts'
 import { createRadar, type Radar } from '../radar/index.ts'
+import { createRadarDiff, type RadarDiffService } from '../radar/code-diff.ts'
 import type { RadarEvent } from '../../shared/radar.ts'
 
 type Log = (lvl: 'info' | 'warn' | 'error', msg: string) => void
@@ -48,6 +49,8 @@ export interface ChainAgentsApi {
   lens: Lens | null
   /** UPGRADE RADAR (server/radar): code changes caught live; null when LUSCA_RADAR=0. */
   radar: Radar | null
+  /** RADAR DIFF (server/radar/code-diff.ts): source diffs of verified EVM upgrades; null without the radar. */
+  radarDiff: RadarDiffService | null
 }
 
 function intEnv(name: string, def: number, min: number, max: number): number {
@@ -218,6 +221,10 @@ export function createChainAgents(opts: {
       radar = null
     }
   }
+  // RADAR DIFF: LUSCA_RADAR_DIFF_CALLS (daily Sourcify calls, default 120)
+  const radarDiff: RadarDiffService | null = radar
+    ? createRadarDiff({ rpc, radar, dataDir: opts.dataDir, log, limit: intEnv('LUSCA_RADAR_DIFF_CALLS', 120, 0, 100_000), backfill: !/^(0|false|no|off)$/i.test(process.env.LUSCA_RADAR_BACKFILL?.trim() ?? '') })
+    : null
 
   // the feed survives restarts (newest 200 events)
   const feedFile = path.join(opts.dataDir, 'chain', 'feed.json')
@@ -244,6 +251,7 @@ export function createChainAgents(opts: {
       if (started || stopped) return
       started = true
       if (lens) provenance.start() // code-index hashes for Lens provenance (background, incremental)
+      radarDiff?.start()
       radar?.start() // listens whether or not the chain agents run (LUSCA_RADAR=0 turns it off)
       if (!enabled) {
         log('info', 'chain agents off (LUSCA_CHAIN_AGENTS=0); stored chain data is still served')
@@ -268,6 +276,7 @@ export function createChainAgents(opts: {
       if (feedTimer) clearInterval(feedTimer)
       await provenance.stop()
       await lens?.stop()
+      await radarDiff?.stop()
       await radar?.stop()
       const agentsDone = agents.stop() // wakes sleeping agents; in-flight reads end with the RPC close below
       await rpc.close()
@@ -283,5 +292,6 @@ export function createChainAgents(opts: {
     item: (chain, address) => agents.item(chain, address),
     lens,
     radar,
+    radarDiff,
   }
 }
