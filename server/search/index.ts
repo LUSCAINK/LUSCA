@@ -80,7 +80,7 @@ const QUEUE_WAIT_MS = 4000
 interface NormQuery { q: string; re: boolean; case: boolean; chain: ChainId | null; custom: boolean; path: string | null; lang: SearchLang | null; offset: number }
 interface Job { id: number; q: NormQuery | { file: number } | { source: number; q: NormQuery | null }; resolve: (r: WorkerOut) => void; queuedAt: number; timer: NodeJS.Timeout | null }
 type WorkerOut = { ok: true; result: Record<string, unknown> } | { ok: false; code: 'timeout' | 'busy' | 'invalid'; message: string }
-interface QW { w: Worker; job: Job | null; dead: boolean }
+interface QW { w: Worker; job: Job | null; dead: boolean; killed?: boolean }
 
 type BuilderStats = Omit<SearchStats, 'ready' | 'rss' | 'gen' | 'state'> & { state: SearchStats['state'] }
 
@@ -142,6 +142,8 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
   let builderMeta: unknown = null
   let builderExit: NodeJS.Timeout | null = null
   let retiring: Worker | null = null
+  let builderCrashes = 0
+  let respawns: number[] = []
   const builderIdleMs = o.builderIdleMs ?? 30_000
   const replay: unknown[] = []
   let gen = 0
@@ -197,6 +199,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
       } else if (m.type === 'log') log(m.lvl as 'info', String(m.msg))
       else if (m.type === 'idle') {
         busyBuilding = false
+        builderCrashes = 0
         const ws = idleWaiters
         idleWaiters = []
         for (const f of ws) f()
@@ -223,10 +226,13 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     w.on('error', (e) => log('error', `code search builder: ${e.stack ?? e.message}`))
     w.on('exit', (code) => {
       if (stopped || retiring === w) return
-      log('warn', `code search builder exited (${code}) — search keeps the index it has; the next change starts a new one`)
+      builderCrashes++
       if (builder === w) builder = null
       busyBuilding = false
-      lastSig = ''
+      if (builderCrashes <= 3) {
+        log('warn', `code search builder exited (${code}) — search keeps the index it has; the next change starts a new one`)
+        lastSig = ''
+      } else log('error', `code search builder exited ${builderCrashes} times — index updates stop until the server restarts; search keeps the index it has`)
     })
     const base = { dataDir: o.dataDir, maxBytes, saveDelayMs: o.saveDelayMs ?? 120_000 }
     if (restore) w.postMessage({ type: 'restore', ...base, deltas: replay, meta: builderMeta })
@@ -258,10 +264,20 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
       }
       const i = pool.indexOf(qw)
       if (i >= 0) pool.splice(i, 1)
-      if (!stopped) {
+      if (stopped) return
+      // a worker that cannot start (or dies at once, again and again) is restarted with a growing delay
+      const now = Date.now()
+      respawns = respawns.filter((t) => now - t < 10_000)
+      if (!qw.killed) respawns.push(now)
+      const delay = respawns.length > 4 ? Math.min(30_000, 1000 * 2 ** (respawns.length - 4)) : 0
+      if (delay) log('warn', `code search query worker restarts too often — next start in ${Math.round(delay / 1000)} s`)
+      const go = () => {
+        if (stopped) return
         pool.push(spawnQuery())
         pump()
       }
+      if (delay) setTimeout(go, delay).unref?.()
+      else go()
     })
     return qw
   }
@@ -281,6 +297,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
         free.job = null
         job.resolve({ ok: false, code: 'timeout', message: `the search passed its ${(hardMs / 1000).toFixed(1)} s time budget and was stopped — make the pattern more specific` })
         free.dead = true
+        free.killed = true
         void free.w.terminate() // the exit handler starts a fresh worker on the same shared index
       }, hardMs)
       free.w.postMessage({ type: 'query', id: job.id, q: job.q })
@@ -322,7 +339,10 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
       clearTimeout(builderExit)
       builderExit = null
     }
-    if (!builder) spawnBuilder(true)
+    if (!builder) {
+      if (builderCrashes > 3) return
+      spawnBuilder(true)
+    }
     builder!.postMessage({ type: 'sync', items: entries })
   }
 

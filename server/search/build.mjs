@@ -603,13 +603,15 @@ async function save() {
   const tmp = `${file}.tmp`
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true })
+    // the header and the bytes describe the same files even if a sync appends more while this writes
+    const list = files.slice()
     const header = {
       v: SNAP_VERSION,
       savedAt: Date.now(),
       shardSizes,
       items: items.map((it) => [it.key, it.chain, it.address, it.name, it.kind, it.readAt]),
       paths,
-      files: files.map((f) => [f.h, f.len, f.clen, f.sbits, f.lang, f.lines, f.ci ? 1 : 0, f.idl ? 1 : 0, f.refs]),
+      files: list.map((f) => [f.h, f.len, f.clen, f.sbits, f.lang, f.lines, f.ci ? 1 : 0, f.idl ? 1 : 0, f.refs.slice()]),
     }
     const gz = zlib.createGzip({ level: 1 })
     const out = fs.createWriteStream(tmp)
@@ -621,7 +623,7 @@ async function save() {
     gz.pipe(out)
     const write = (/** @type {Buffer} */ b) => (gz.write(b) ? Promise.resolve() : new Promise((r) => gz.once('drain', () => r(undefined))))
     await write(Buffer.from(`${JSON.stringify(header)}\n`, 'utf8'))
-    for (const f of files) {
+    for (const f of list) {
       await write(Buffer.from(new Uint8Array(textSegs[f.seg], f.off, f.clen)))
       await write(Buffer.from(new Uint8Array(sigSegs[f.sseg], f.soff, f.sbits >>> 3)))
     }
