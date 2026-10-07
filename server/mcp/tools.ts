@@ -730,7 +730,7 @@ const atlasTool = defineTool({
 
 const controlledByTool = defineTool({
   name: 'lusca_controlled_by',
-  title: 'What can this key change?',
+  title: 'What can this address change?',
   description:
     "Reverse lookup of the control map: every kept Solana program and EVM contract that one address (an upgrade authority, proxy admin, ProxyAdmin, Safe or timelock anywhere in the custody chain) can change, with what that address is (single key, program-derived address, Safe threshold, timelock delay). Covers the programs and contracts LUSCA keeps.",
   inputSchema: {
@@ -759,8 +759,10 @@ const controlledByTool = defineTool({
     const out = [`Controlled by ${address}${what ? ` · ${what}` : ''}${role ? ` · ${role.chain}` : ''}`]
     if (!pg.total) out.push("LUSCA's control map holds no kept program or contract this address can change (it maps the programs and contracts LUSCA keeps).")
     else {
-      out.push(`can change ${int(pg.total)} kept program${pg.total === 1 ? '' : 's'} / contract${pg.total === 1 ? '' : 's'}:`)
-      for (const it of items) out.push(`  • ${it.chain} · ${it.name ?? '(no name)'} ${it.address}${it.via ? ` · via ${it.via}` : ''}`)
+      const vias = [...new Set(items.map((it) => it.via ?? ''))]
+      const one = vias.length === 1 && vias[0] ? vias[0] : null
+      out.push(`can change ${int(pg.total)} kept program${pg.total === 1 ? '' : 's'} / contract${pg.total === 1 ? '' : 's'}${one ? ` (as ${one})` : ''}:`)
+      for (const it of items) out.push(`  • ${it.chain} · ${it.name ?? '(no name)'} ${it.address}${!one && it.via ? ` · via ${it.via}` : ''}`)
       if (pg.total > items.length) out.push(`  … +${int(pg.total - items.length)} more`)
     }
     const l = links(ctx.site, '/control', `/api/control/items?controller=${address}`)

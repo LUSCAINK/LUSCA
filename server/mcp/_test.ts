@@ -539,7 +539,7 @@ try {
     assert.equal(c.isError, false)
     assert.match(c.content[0].text, /Controlled by 7gZu\w+ · program-derived address · solana/)
     assert.match(c.content[0].text, /can change 3 kept programs/)
-    assert.match(c.content[0].text, /pump_fees .* · via upgrade authority/)
+    assert.ok(c.content[0].text.includes('can change 3 kept programs / contracts (as upgrade authority):'))
     assert.equal(c.structuredContent.total, 3)
     assert.equal(c.structuredContent.role.kind, 'pda')
     const none = (await call(url, 'lusca_controlled_by', { address: '0x' + '6'.repeat(40) })).json.result

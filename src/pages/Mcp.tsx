@@ -78,7 +78,7 @@ type Args = Record<string, string | boolean>
 
 const PRESETS: { label: string; tool: string; args: Args }[] = [
   { label: 'Who can upgrade pump?', tool: 'lusca_control', args: { chain: 'solana', address: PUMP } },
-  { label: 'What can this key upgrade?', tool: 'lusca_controlled_by', args: { address: '6awyHMshBGVjJ3ozdSJdyyDE1CTAXUwrpNMaRGMsb4sf', limit: '20' } },
+  { label: 'What can one authority upgrade?', tool: 'lusca_controlled_by', args: { address: '6awyHMshBGVjJ3ozdSJdyyDE1CTAXUwrpNMaRGMsb4sf', limit: '20' } },
   { label: 'What was upgraded last?', tool: 'lusca_radar', args: { kind: 'upgrade', limit: '5' } },
   { label: 'Which keys control the most code?', tool: 'lusca_control_summary', args: { chain: 'solana' } },
   { label: 'What code is closest to pump?', tool: 'lusca_atlas_relatives', args: { chain: 'solana', address: PUMP, limit: '6' } },
