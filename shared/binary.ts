@@ -117,6 +117,8 @@ export interface BinCheck {
   hit: number
   /** Recovered names the IDL does not list but whose discriminator is in the code (the IDL lags the deployed code). */
   newerThanIdl: number
+  /** Those names (capped at 60). */
+  newerNames?: string[]
   idlAccounts: number
   accountsHit: number
 }
@@ -182,6 +184,8 @@ export interface BinarySummary {
     newerThanIdl: number
     accountRecall: number | null
   } | null
+  /** Programs whose deployed code has the most confirmed instructions their published IDL does not list. */
+  idlBehind: { address: string; name: string | null; newer: number; idlInstructions: number }[]
   /** The reader: its daily RPC slice and queue. */
   reader: { used: number; limit: number; queued: number; state: 'reading' | 'idle' | 'waiting-budget' | 'off'; lastAt: number | null }
   /** A program worth showing first: most confirmed instructions among programs without an IDL. */

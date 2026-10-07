@@ -137,6 +137,10 @@ export function checkAgainstIdl(r: Pick<BinaryInterface, 'instructions' | 'accou
     recovered: r.instructions.length,
     hit,
     newerThanIdl: r.instructions.filter((i) => !want.has(i.name) && i.evidence === 'log+disc').length,
+    newerNames: r.instructions
+      .filter((i) => !want.has(i.name) && i.evidence === 'log+disc')
+      .slice(0, 60)
+      .map((i) => i.name),
     idlAccounts: wantAcc.size,
     accountsHit: r.accounts.filter((a) => wantAcc.has(a.name.toLowerCase())).length,
   }
@@ -647,6 +651,11 @@ export function createBinary(d: BinaryDeps): BinaryService {
             accountRecall: ratio(chk.accountsHit, chk.idlAccounts),
           }
         : null,
+      idlBehind: [...results.values()]
+        .filter((r) => r.check && r.check.newerThanIdl > 0)
+        .sort((a, b) => b.check!.newerThanIdl - a.check!.newerThanIdl || a.address.localeCompare(b.address))
+        .slice(0, 6)
+        .map((r) => ({ address: r.address, name: programs.get(r.address)?.name ?? r.name, newer: r.check!.newerThanIdl, idlInstructions: r.check!.idlInstructions })),
       reader: { used: usage?.used ?? 0, limit: usage?.limit ?? L.solCalls, queued: pending.length, state: stopped || !started ? 'off' : state, lastAt },
       // the top program by confirmed instructions; a named one among the top five when there is one
       featured: (all.slice(0, 5).find((x) => x.name) ?? all[0])?.address ?? null,

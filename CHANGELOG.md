@@ -9,6 +9,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Read the binary (`/binary`).** The interface of Solana programs that never published an IDL,
+  recovered from their executables with the evidence for every name: the program's own
+  `Instruction: <Name>` log strings, confirmed by the Anchor discriminator
+  (`sha256("global:<name>")[0..8]`) found as an `lddw` constant in the code or 8 bytes of data;
+  account types, events and other programs' instructions (CPI) from the discriminators of every
+  published IDL LUSCA keeps; error messages of those IDLs found verbatim (messages present in most
+  executables are left out as framework strings); crate name + version from crate directories in
+  panic-location paths (the paths themselves are dropped); framework, syscalls, security.txt.
+  Executables come from the reads the chain agents, the radar and Lens already make (no extra RPC),
+  plus a background reader under its own daily slice of the Solana budget
+  (`LUSCA_BINARY_SOL_CALLS`, default 250; ≤ 30 % per hour; never below the 10 % floor kept for the
+  agents). Results are kept per code hash (`<data>/binary/results.jsonl`, never the executable) and
+  read again only when the code changes. Programs that do publish an IDL are recovered blind (their
+  own IDL left out of the dictionary) and scored against it: recall, precision, and the
+  instructions the deployed code has that its IDL does not list. `GET /api/binary/summary`,
+  `/api/binary/items?framework=&cursor=`, `/api/binary/:address`; a "Recovered from the binary"
+  block on `/lens/solana/:address` for programs without an IDL. `LUSCA_BINARY=0` turns it off.
 - **Scan (`/scan`).** Watch the chain agents read programs and contracts as they happen, with
   nothing to type: each read opens in a window on its Lens address, the calls it made play back in
   their real order and relative timing (method, what was asked, the provider that answered,

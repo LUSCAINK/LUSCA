@@ -79,6 +79,23 @@ export interface Regions {
   parsed: boolean
 }
 
+/**
+ * The code hash rule trims the trailing zero padding, which usually eats the zero tail of the last section
+ * header (the table sits at the end of the file): put those zeros back (at most one header table) so the
+ * section headers can be read. Returns the input when nothing is missing.
+ */
+export function restoreSectionTail(b: Buffer): Buffer {
+  if (b.length < 64 || b[0] !== 0x7f || b[1] !== 0x45 || b[2] !== 0x4c || b[3] !== 0x46 || b[4] !== 2 || b[5] !== 1) return b
+  const shoff = Number(b.readBigUInt64LE(0x28))
+  const need = shoff + b.readUInt16LE(0x3c) * b.readUInt16LE(0x3a)
+  if (shoff > 0 && shoff < b.length && need > b.length && need - b.length <= 512 * 64) {
+    const padded = Buffer.alloc(need)
+    b.copy(padded)
+    return padded
+  }
+  return b
+}
+
 /** Code / data regions from the section headers; the whole file both ways when they cannot be read. */
 export function elfRegions(elf: Uint8Array): Regions {
   const b = Buffer.isBuffer(elf) ? elf : Buffer.from(elf.buffer, elf.byteOffset, elf.byteLength)
@@ -433,7 +450,7 @@ const usable = (e: DictEntry, exclude?: string) => !exclude || e.idls + e.logs -
 
 /** Recover the interface of one executable against the dictionary. */
 export async function recoverInterface(elf: Uint8Array, dict: Dictionary, o: RecoverOptions = {}): Promise<Recovered> {
-  const b = Buffer.isBuffer(elf) ? elf : Buffer.from(elf.buffer, elf.byteOffset, elf.byteLength)
+  const b = restoreSectionTail(Buffer.isBuffer(elf) ? elf : Buffer.from(elf.buffer, elf.byteOffset, elf.byteLength))
   const notes: string[] = []
   const regions = elfRegions(b)
   if (!regions.parsed) notes.push('section headers not read: the whole file was scanned as code and data')

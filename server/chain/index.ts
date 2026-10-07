@@ -196,6 +196,7 @@ export function createChainAgents(opts: {
         provenance,
         dataDir: opts.dataDir,
         log,
+        ...(binaryRef ? { onSolanaElf: (read: ChainRead, elf: Uint8Array) => binaryRef.offer(read, elf, 'lens') } : {}),
         limits: {
           budget: {
             ...DEFAULT_LENS_LIMITS.budget,

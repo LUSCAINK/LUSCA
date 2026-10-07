@@ -24,6 +24,7 @@ import {
   probeOf,
   programCrateOf,
   recoverInterface,
+  restoreSectionTail,
   stripErrorSuffix,
   toSnakeCase,
   trimGlue,
@@ -132,6 +133,18 @@ await test('discriminator search: lddw pair in code, 8 bytes in data, nothing fo
   assert.equal(found.get('g:deposit'), 'code')
   assert.equal(found.get('g:withdraw'), 'data')
   assert.equal(found.has('g:swap'), false)
+})
+
+await test('section headers whose zero tail was trimmed (code hash rule) are read', async () => {
+  const elf = makeElf(lddw(g('deposit')), Buffer.from('rodata!!'))
+  let end = elf.length
+  while (end > 0 && elf[end - 1] === 0) end--
+  const trimmed = elf.subarray(0, end)
+  assert.ok(trimmed.length < elf.length)
+  assert.equal(elfRegions(trimmed).parsed, false)
+  assert.equal(elfRegions(restoreSectionTail(trimmed)).parsed, true)
+  const r = await recoverInterface(trimmed, new Dictionary())
+  assert.deepEqual(r.notes, [])
 })
 
 await test('not an ELF: the whole file is scanned both ways', async () => {
@@ -298,7 +311,7 @@ await test('blind check: names scored against the IDL; confirmed names it lacks 
     },
     { instructions: [{ name: 'deposit' }, { name: 'claimReward' }, { name: 'withdraw' }], accounts: ['Pool', 'Vault'] },
   )
-  assert.deepEqual(c, { idlInstructions: 3, recovered: 4, hit: 2, newerThanIdl: 1, idlAccounts: 2, accountsHit: 1 })
+  assert.deepEqual(c, { idlInstructions: 3, recovered: 4, hit: 2, newerThanIdl: 1, newerNames: ['new_thing'], idlAccounts: 2, accountsHit: 1 })
 })
 
 // ─── the service ─────────────────────────────────────────────────────────────
@@ -456,7 +469,7 @@ await test('service: programs with an IDL are checked blind against it', async (
   b.offer(readOf(PROG_B, 'h3', idl), sampleElf(), 'agent')
   await b.idle()
   const r = b.get(PROG_B)!
-  assert.deepEqual(r.check, { idlInstructions: 3, recovered: 3, hit: 2, newerThanIdl: 0, idlAccounts: 1, accountsHit: 1 })
+  assert.deepEqual(r.check, { idlInstructions: 3, recovered: 3, hit: 2, newerThanIdl: 0, newerNames: [], idlAccounts: 1, accountsHit: 1 })
   const s = b.summary()
   assert.equal(s.check!.programs, 1)
   assert.equal(s.check!.recall, 0.667)

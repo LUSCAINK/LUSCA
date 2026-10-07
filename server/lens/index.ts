@@ -20,7 +20,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import type { ChainEvent, ChainId, Verdict } from '../../shared/chain.ts'
+import type { ChainEvent, ChainId, ChainRead, Verdict } from '../../shared/chain.ts'
 import type { LensAnswer, LensDataset, LensDetect, LensRecent, LensReport, LensStatus } from '../../shared/lens.ts'
 import { isSolanaAddress } from '../../shared/base58.ts'
 import { BudgetError, RpcError, redact, type BudgetKey, type RpcCtx } from '../chain/rpc.ts'
@@ -109,6 +109,8 @@ export interface LensDeps {
   log: Log
   readSolana?: typeof defaultReadSolana
   readEvm?: typeof defaultReadEvm
+  /** Handed each program executable a Lens read fetched (READ THE BINARY: no extra RPC). */
+  onSolanaElf?: (read: ChainRead, elf: Uint8Array) => void
   limits?: Partial<LensLimits>
   now?: () => number
 }
@@ -582,8 +584,21 @@ export function createLens(d: LensDeps): Lens {
     const ctx = ctxFor(cnt, (url, j) => {
       if (/osec\.io\/status\//.test(url)) osec = parseOsecStatus(j)
     })
-    const res = await readSolana(address, ctx, { onElf: (b) => (elf = scanElf(b)) })
+    const held: { b: Uint8Array | null } = { b: null }
+    const res = await readSolana(address, ctx, {
+      onElf: (b) => {
+        elf = scanElf(b)
+        if (d.onSolanaElf) held.b = b
+      },
+    })
     const r = res.read
+    if (held.b && d.onSolanaElf) {
+      try {
+        d.onSolanaElf(r, held.b)
+      } catch {
+        /* never fails the Lens read */
+      }
+    }
     const notes: string[] = []
     if (r.kind === 'token-mint') notes.push('a token mint is not a program: Lens reads programs and contracts')
     const pda = r.loader === LOADER_LABEL[UPGRADEABLE_LOADER] ? programAddresses(address).programData : null

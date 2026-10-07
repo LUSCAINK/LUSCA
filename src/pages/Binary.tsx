@@ -149,7 +149,9 @@ export default function Binary() {
                     ? 'reading an executable'
                     : sum.reader.state === 'waiting-budget'
                       ? 'waiting for budget'
-                      : `dictionary · ${fmtInt(sum.dictionary.idls)} published IDLs`
+                      : sum.dictionary.ready
+                        ? `dictionary · ${fmtInt(sum.dictionary.idls)} published IDLs`
+                        : 'loading the IDL dictionary'
                   : 'loading'}
             </span>
           </Kicker>
@@ -228,6 +230,20 @@ export default function Binary() {
             ))}
             {sum && !sum.frameworks.length && <li className="bn-empty mono">no executable read yet</li>}
           </ul>
+          <dl className="bn-legend mono">
+            <dt>
+              <span className="bn-ev e-logdisc">LOG + DISC</span>
+            </dt>
+            <dd>the program logs &quot;Instruction: Name&quot; and sha256(&quot;global:name&quot;)[0..8] is a constant in its code or data</dd>
+            <dt>
+              <span className="bn-ev e-log">LOG</span>
+            </dt>
+            <dd>the log string alone (native dispatch, or a dispatcher that compares byte by byte)</dd>
+            <dt>
+              <span className="bn-ev e-disc">DISC</span>
+            </dt>
+            <dd>a discriminator of a name from published IDLs: account types, events, other programs&apos; instructions</dd>
+          </dl>
         </div>
         <div className="bn-cr">
           <div className="bn-sec-h mono">
@@ -284,7 +300,25 @@ export default function Binary() {
                 published IDL is older than the code). Account types come only from other programs&apos; IDLs, so a program&apos;s own new types are not found.
               </p>
             </dl>
-          ) : (
+          ) : null}
+          {sum && sum.idlBehind.length > 0 && (chk?.programs ?? 0) >= CHECK_MIN ? (
+            <div className="bn-behind">
+              <div className="bn-behind-h mono">deployed code ahead of its published IDL</div>
+              <ol>
+                {sum.idlBehind.map((p) => (
+                  <li key={p.address}>
+                    <button onClick={() => pick(p.address)} title={`${p.newer} instructions confirmed in the executable (log string + discriminator) that the published IDL (${p.idlInstructions} instructions) does not list`}>
+                      <span className="bn-behind-n">{p.name ?? shortAddress(p.address, 6, 6)}</span>
+                      <span className="mono">
+                        <b className="num">+{fmtInt(p.newer)}</b> not in its IDL of {fmtInt(p.idlInstructions)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
+          {!(chk && chk.programs >= CHECK_MIN) && (
             <p className="bn-empty mono">
               {chk ? `measuring · ${fmtInt(chk.programs)} of ${CHECK_MIN} programs checked so far` : 'not measured yet: programs that publish an IDL are read blind in the background'}
             </p>
@@ -360,8 +394,24 @@ function Reveal({ r }: { r: BinaryInterface }) {
   const total = shown.length + 1
   const [step, setStep] = useState(0)
   const [run, setRun] = useState(0)
+  const [seen, setSeen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  // the decoding plays when the panel comes into view (and again on replay or for another program)
+  useEffect(() => {
+    const el = box.current
+    if (!el || seen) return
+    if (typeof IntersectionObserver === 'undefined') return setSeen(true)
+    // mostly in view: nearly all of the panel, or (taller than the screen) most of the screen
+    const io = new IntersectionObserver(
+      (es) => es.some((e) => e.intersectionRatio >= 0.9 || e.intersectionRect.height >= window.innerHeight * 0.6) && setSeen(true),
+      { threshold: [0, 0.25, 0.5, 0.75, 0.9, 1] },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [seen])
   useEffect(() => {
     setStep(0)
+    if (!seen) return
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (reduce) {
       setStep(total + 1)
@@ -374,7 +424,7 @@ function Reveal({ r }: { r: BinaryInterface }) {
       if (i > total) window.clearInterval(t)
     }, 230)
     return () => window.clearInterval(t)
-  }, [r.codeHash, r.address, run, total])
+  }, [r.codeHash, r.address, run, total, seen])
 
   const confirmed = r.instructions.filter((x) => x.evidence === 'log+disc').length
   const lines = useMemo(
@@ -387,7 +437,7 @@ function Reveal({ r }: { r: BinaryInterface }) {
   )
 
   return (
-    <div className="bn-reveal">
+    <div className="bn-reveal" ref={box}>
       <div className="bn-pane bn-bytes" aria-label="Evidence in the executable">
         <div className="bn-pane-h mono">
           <span>executable · {fmtBytes(r.programBytes)}</span>
@@ -453,6 +503,7 @@ function Reveal({ r }: { r: BinaryInterface }) {
 /** The whole recovered interface, every list with its evidence. */
 function Interface({ r }: { r: BinaryInterface }) {
   const sec = r.securityTxt
+  const newer = new Set(r.check?.newerNames ?? [])
   return (
     <section className="bn-if" aria-label="Recovered interface, complete">
       <div className="bn-col">
@@ -463,7 +514,10 @@ function Interface({ r }: { r: BinaryInterface }) {
           {r.instructions.map((ix) => (
             <li key={ix.name} title={`${EVIDENCE[ix.evidence].title}${ix.disc ? ` · discriminator ${ix.disc} in ${ix.site === 'code' ? 'the code (lddw)' : 'the data'}` : ''}`}>
               <span className="mono">{ix.name}</span>
-              <span className={`bn-ev e-${ix.evidence.replace('+', '')} mono`}>{EVIDENCE[ix.evidence].tag}</span>
+              <span className="bn-tagset">
+                {newer.has(ix.name) && <span className="bn-ev e-new mono" title="Confirmed in the deployed code; the program's published IDL does not list it">NOT IN IDL</span>}
+                <span className={`bn-ev e-${ix.evidence.replace('+', '')} mono`}>{EVIDENCE[ix.evidence].tag}</span>
+              </span>
             </li>
           ))}
           {!r.instructions.length && <li className="bn-none mono">no "Instruction:" log strings in this executable</li>}

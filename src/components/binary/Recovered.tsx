@@ -10,16 +10,26 @@ export default function Recovered({ address }: { address: string }) {
   const [state, setState] = useState<'loading' | 'ok' | 'none' | 'error'>('loading')
   useEffect(() => {
     const ac = new AbortController()
+    let retry: number | undefined
     setState('loading')
-    fetch(`/api/binary/${encodeURIComponent(address)}`, { signal: ac.signal })
-      .then(async (res) => {
-        if (res.status === 404) return setState('none')
-        if (!res.ok) throw new Error(String(res.status))
-        setR((await res.json()) as BinaryInterface)
-        setState('ok')
-      })
-      .catch(() => !ac.signal.aborted && setState('error'))
-    return () => ac.abort()
+    // the Lens read that drew this page handed its executable to the binary reader: ask again once, shortly
+    const pull = (again: boolean) =>
+      fetch(`/api/binary/${encodeURIComponent(address)}`, { signal: ac.signal })
+        .then(async (res) => {
+          if (res.status === 404) {
+            if (again) retry = window.setTimeout(() => void pull(false), 2500)
+            return setState('none')
+          }
+          if (!res.ok) throw new Error(String(res.status))
+          setR((await res.json()) as BinaryInterface)
+          setState('ok')
+        })
+        .catch(() => !ac.signal.aborted && setState('error'))
+    void pull(true)
+    return () => {
+      ac.abort()
+      window.clearTimeout(retry)
+    }
   }, [address])
 
   if (state === 'loading') return null

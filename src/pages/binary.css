@@ -436,9 +436,8 @@
   min-width: 0;
 }
 .bn-tags li > .mono:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .bn-errs li {
   display: flex;
@@ -893,4 +892,83 @@
   .bn-row-n {
     grid-row: auto;
   }
+}
+
+/* ─── deployed code ahead of its IDL ─────────────── */
+.bn-behind {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bn-behind-h {
+  font-size: var(--t-3xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.bn-behind ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line-2);
+}
+.bn-behind button {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 0;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-2);
+  font-size: var(--t-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.bn-behind button:hover .bn-behind-n {
+  color: var(--hot);
+}
+.bn-behind-n {
+  font-family: var(--f-sans);
+  font-size: var(--t-md);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bn-behind b {
+  color: var(--hot);
+  font-weight: 500;
+}
+.bn-tagset {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
+.bn-ev.e-new {
+  border-color: var(--hot);
+  color: var(--hot);
+}
+
+.bn-legend {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: baseline;
+  margin: 8px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-2);
+  font-size: var(--t-2xs);
+  color: var(--fg-2);
+  line-height: 1.5;
+}
+.bn-legend dt {
+  margin: 0;
+}
+.bn-legend dd {
+  margin: 0;
 }
