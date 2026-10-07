@@ -66,6 +66,8 @@ export default defineConfig({
     proxy: {
       '/api': { target: API, changeOrigin: true },
       '/ws': { target: API.replace(/^http/, 'ws'), ws: true },
+      // MCP endpoint: POSTs go to the server; a browser opening /mcp gets this app's page
+      '/mcp': { target: API, changeOrigin: true, bypass: (req) => (req.method === 'GET' && (req.headers.accept ?? '').includes('text/html') ? req.url : undefined) },
     },
   },
   build: {
