@@ -44,6 +44,8 @@ export interface ControlEntry {
   at: number
   /** RPC calls spent on this entry (0 for Solana: from stored reads). */
   calls: number
+  /** List answers only: how many kept items the final controller can change, when more than one. */
+  controls?: number
 }
 
 export interface ControlController {
@@ -73,5 +75,5 @@ export interface ControlPage {
   total: number
   next: string | null
 }
-// REST: GET /api/control/summary -> ControlSummary ; GET /api/control/items?chain=&class=&cursor=&limit= -> ControlPage ;
+// REST: GET /api/control/summary -> ControlSummary ; GET /api/control/items?chain=&class=&controller=&cursor=&limit= -> ControlPage ;
 //       GET /api/control/:chain/:address -> ControlEntry | 404   (stored results only; no RPC per request)

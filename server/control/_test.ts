@@ -188,6 +188,8 @@ await test('module: sweep classifies Solana with no RPC, resolves EVM proxies un
   assert.equal(c.get('ethereum', PROXY.toUpperCase().replace('0X', '0x'))?.cls, 'key')
   const page = c.list({ cls: 'key' })
   assert.equal(page.total, 2)
+  assert.equal(c.list({ controller: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM' }).total, 1)
+  assert.equal(c.list({ controller: EOA.toUpperCase().replace('0X', '0x') }).items[0]?.address, PROXY)
   await c.stop()
   const again = createControl({ rpc: rpc as never, store: store as never, dataDir: dir, log: () => {}, evmCalls: 50 })
   assert.equal(again.summary().total, 4)

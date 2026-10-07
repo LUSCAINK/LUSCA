@@ -30,7 +30,7 @@ export interface Control {
   start(): void
   stop(): Promise<void>
   summary(): ControlSummary
-  list(q: { chain?: ChainId; cls?: ControlClass; limit?: number; cursor?: string }): ControlPage
+  list(q: { chain?: ChainId; cls?: ControlClass; controller?: string; limit?: number; cursor?: string }): ControlPage
   get(chain: ChainId, address: string): ControlEntry | null
   /** One sweep + resolve pass now (tests). */
   tick(): Promise<void>
@@ -261,12 +261,30 @@ export function createControl(o: ControlOptions): Control {
     summary,
     list(q) {
       let all = [...entries.values()]
+      // how many kept items each final controller can change
+      const counts = new Map<string, number>()
+      const ctlKey = (e: ControlEntry) => {
+        const last = e.hops[e.hops.length - 1]
+        return e.hops.length > 1 && last?.address && e.cls !== 'immutable' ? key(e.chain, last.address) : null
+      }
+      for (const e of all) {
+        const k = ctlKey(e)
+        if (k) counts.set(k, (counts.get(k) ?? 0) + 1)
+      }
       if (q.chain) all = all.filter((e) => e.chain === q.chain)
       if (q.cls) all = all.filter((e) => e.cls === q.cls)
+      if (q.controller) {
+        const want = q.controller.startsWith('0x') ? q.controller.toLowerCase() : q.controller
+        all = all.filter((e) => e.hops.some((h, i) => i > 0 && h.address && (h.address.startsWith('0x') ? h.address.toLowerCase() : h.address) === want))
+      }
       all.sort((a, b) => ORDER[a.cls] - ORDER[b.cls] || b.hops.length - a.hops.length || (a.name ?? '~').localeCompare(b.name ?? '~') || a.address.localeCompare(b.address))
       const off = q.cursor ? Math.max(0, parseInt(q.cursor, 10) || 0) : 0
       const n = Math.min(100, Math.max(1, q.limit ?? 50))
-      const items = all.slice(off, off + n)
+      const items = all.slice(off, off + n).map((e) => {
+        const k = ctlKey(e)
+        const c = k ? counts.get(k) ?? 0 : 0
+        return c > 1 ? { ...e, controls: c } : e
+      })
       return { items, total: all.length, next: off + n < all.length ? String(off + n) : null }
     },
     get: (chain, address) => entries.get(key(chain, address)) ?? null,

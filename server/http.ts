@@ -112,7 +112,7 @@ export interface Modules {
 /** Read side of the control map: every answer comes from stored entries, no RPC. */
 export interface HubControl {
   summary(): ControlSummary
-  list(q: { chain?: ChainId; cls?: ControlClass; limit?: number; cursor?: string }): ControlPage
+  list(q: { chain?: ChainId; cls?: ControlClass; controller?: string; limit?: number; cursor?: string }): ControlPage
   get(chain: ChainId, address: string): ControlEntry | null
 }
 
@@ -1730,8 +1730,10 @@ export function createHub(opts: HubOptions): Hub {
         const rawLimit = url.searchParams.get('limit')
         const n = rawLimit === null || rawLimit === '' ? 50 : Number(rawLimit)
         if (!Number.isInteger(n) || n < 1) throw new HttpError(400, 'limit must be an integer from 1 to 100')
-        const q = { chain: (chainQ || undefined) as ChainId | undefined, cls: (clsQ || undefined) as ControlClass | undefined, limit: Math.min(100, n), cursor: cursor || undefined }
-        return sendJsonText(req, res, 200, cachedJson(`control:items:${chainQ}:${clsQ}:${q.limit}:${cursor}`, () => control.list(q), 10_000), shortCache)
+        const ctlQ = url.searchParams.get('controller') || ''
+        if (ctlQ && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$|^0x[0-9a-fA-F]{40}$/.test(ctlQ)) throw new HttpError(400, 'controller must be a Solana or EVM address')
+        const q = { chain: (chainQ || undefined) as ChainId | undefined, cls: (clsQ || undefined) as ControlClass | undefined, controller: ctlQ || undefined, limit: Math.min(100, n), cursor: cursor || undefined }
+        return sendJsonText(req, res, 200, cachedJson(`control:items:${chainQ}:${clsQ}:${ctlQ}:${q.limit}:${cursor}`, () => control.list(q), 10_000), shortCache)
       }
       const segs = p.slice('/api/control/'.length).split('/')
       if (segs.length !== 2 || !CHAIN_IDS.has(segs[0] as ChainId) || !/^[0-9A-Za-z]{32,44}$|^0x[0-9a-fA-F]{40}$/.test(segs[1])) throw new HttpError(404, 'not found')

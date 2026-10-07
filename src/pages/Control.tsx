@@ -49,6 +49,7 @@ export default function Control() {
   const [sumErr, setSumErr] = useState(false)
   const [chain, setChain] = useState<ChainId | ''>('')
   const [cls, setCls] = useState<ControlClass | ''>('')
+  const [ctl, setCtl] = useState<{ chain: ChainId; address: string; label: string } | null>(null)
   const [items, setItems] = useState<ControlEntry[]>([])
   const [total, setTotal] = useState(0)
   const [next, setNext] = useState<string | null>(null)
@@ -78,6 +79,7 @@ export default function Control() {
     const p = new URLSearchParams({ limit: '40' })
     if (chain) p.set('chain', chain)
     if (cls) p.set('class', cls)
+    if (ctl) p.set('controller', ctl.address)
     if (cursor) p.set('cursor', cursor)
     return `/api/control/items?${p}`
   }
@@ -94,8 +96,8 @@ export default function Control() {
       })
       .catch(() => !ac.signal.aborted && setLoad('error'))
     return () => ac.abort()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- query() reads chain / cls
-  }, [chain, cls])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- query() reads chain / cls / ctl
+  }, [chain, cls, ctl])
 
   const more = () => {
     if (!next) return
@@ -228,13 +230,28 @@ export default function Control() {
           <ol className="ct-ctl-list">
             {sum.topControllers.slice(0, 8).map((c) => (
               <li key={`${c.chain}:${c.address}`}>
-                <span className="ct-ctl-n num">{fmtInt(c.count)}</span>
-                <span className="ct-ctl-b">
-                  <span className={`ct-pill c-${c.cls} mono`}>{c.label}</span>
-                  <span className="ct-ctl-a mono">
-                    {CHAIN_SHORT[c.chain]} · {shortAddress(c.address, 6, 6)}
+                <button
+                  className={ctl?.address === c.address ? 'on' : ''}
+                  aria-pressed={ctl?.address === c.address}
+                  title={`Show the ${c.count} kept programs and contracts ${c.address} can change`}
+                  onClick={() => {
+                    const off = ctl?.address === c.address
+                    setCtl(off ? null : { chain: c.chain, address: c.address, label: c.label })
+                    if (!off) {
+                      setChain('')
+                      setCls('')
+                      window.setTimeout(() => document.querySelector('.ct-filters')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
+                    }
+                  }}
+                >
+                  <span className="ct-ctl-n num">{fmtInt(c.count)}</span>
+                  <span className="ct-ctl-b">
+                    <span className={`ct-pill c-${c.cls} mono`}>{c.label}</span>
+                    <span className="ct-ctl-a mono">
+                      {CHAIN_SHORT[c.chain]} · {shortAddress(c.address, 6, 6)}
+                    </span>
                   </span>
-                </span>
+                </button>
               </li>
             ))}
           </ol>
@@ -262,13 +279,18 @@ export default function Control() {
             </button>
           ))}
         </div>
+        {ctl && (
+          <button className="ct-ctl-chip mono" onClick={() => setCtl(null)} title="Clear the controller filter">
+            can be changed by {ctl.label} {shortAddress(ctl.address, 4, 4)} <b aria-hidden="true">×</b>
+          </button>
+        )}
         <span className="ct-count mono">{load === 'ok' ? `${fmtInt(total)} shown` : ''}</span>
       </nav>
 
       <section className="ct-list-w" aria-label="Programs and contracts with their custody chain">
         {items.length === 0 ? (
           <p className="ct-empty mono">
-            {load === 'error' ? 'Can’t reach the LUSCA server — retrying…' : load === 'loading' ? 'Loading…' : chain || cls ? 'nothing matches these filters yet' : 'no kept programs or contracts yet'}
+            {load === 'error' ? 'Can’t reach the LUSCA server — retrying…' : load === 'loading' ? 'Loading…' : chain || cls || ctl ? 'nothing matches these filters yet' : 'no kept programs or contracts yet'}
           </p>
         ) : (
           <ol className="ct-list">
@@ -336,6 +358,7 @@ function Row({ e }: { e: ControlEntry }) {
       </div>
       <div className="ct-row-r">
         <span className={`ct-pill c-${e.cls} mono`}>{LABEL[e.cls]}</span>
+        {e.controls && e.controls > 1 ? <span className="ct-shared mono">same controller for {fmtInt(e.controls)} kept items</span> : null}
         <span className="ct-basis mono">{e.basis}</span>
       </div>
     </li>

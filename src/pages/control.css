@@ -332,12 +332,53 @@
 .ct-ctl-list li {
   border-right: 1px solid var(--line-2);
   border-bottom: 1px solid var(--line-2);
+  background: var(--bg);
+  min-width: 0;
+}
+.ct-ctl-list li button {
   display: flex;
   align-items: center;
   gap: 14px;
+  width: 100%;
+  height: 100%;
   padding: 14px;
-  background: var(--bg);
-  min-width: 0;
+  background: none;
+  border: 0;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px transparent;
+  transition: background var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
+}
+.ct-ctl-list li button:hover {
+  background: var(--bg-1);
+}
+.ct-ctl-list li button.on {
+  box-shadow: inset 0 0 0 1px var(--hot);
+  background: var(--hot-a10);
+}
+.ct-ctl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--hot);
+  background: var(--hot-a10);
+  color: var(--fg);
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.ct-ctl-chip b {
+  color: var(--hot);
+  font-weight: 500;
+}
+.ct-shared {
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-1);
 }
 .ct-ctl-n {
   font-family: var(--f-display);
