@@ -55,6 +55,8 @@ export interface ControlController {
   cls: ControlClass
   /** How many kept programs / contracts this one address can change. */
   count: number
+  /** Names of a few of them (named items first). */
+  names: string[]
 }
 
 export interface ControlSummary {

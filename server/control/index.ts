@@ -229,8 +229,9 @@ export function createControl(o: ControlOptions): Control {
       const last = e.hops[e.hops.length - 1]
       if (e.hops.length > 1 && last?.address && e.cls !== 'immutable' && e.cls !== 'unknown') {
         const k = key(e.chain, last.address)
-        const c = ctl.get(k) ?? { chain: e.chain, address: last.address, label: last.label, cls: e.cls, count: 0 }
+        const c = ctl.get(k) ?? { chain: e.chain, address: last.address, label: last.label, cls: e.cls, count: 0, names: [] }
         c.count++
+        if (e.name && c.names.length < 4 && !c.names.includes(e.name)) c.names.push(e.name)
         ctl.set(k, c)
       }
     }

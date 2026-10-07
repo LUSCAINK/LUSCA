@@ -250,6 +250,12 @@ export default function Control() {
                     <span className="ct-ctl-a mono">
                       {CHAIN_SHORT[c.chain]} · {shortAddress(c.address, 6, 6)}
                     </span>
+                    {c.names.length > 0 && (
+                      <span className="ct-ctl-names">
+                        {c.names.slice(0, 3).join(' · ')}
+                        {c.count > Math.min(3, c.names.length) ? ` · +${fmtInt(c.count - Math.min(3, c.names.length))}` : ''}
+                      </span>
+                    )}
                   </span>
                 </button>
               </li>
