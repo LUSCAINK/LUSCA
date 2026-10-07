@@ -30,6 +30,7 @@ import {
 } from '@/lib/lens'
 import './lens.css'
 import { LensAdvisories } from '@/components/advisory/AdvisoryCard'
+import Recovered from '@/components/binary/Recovered'
 import { lensPostUrl } from '@/lib/xpost'
 
 const EVM_CHAINS: ChainId[] = ['ethereum', 'base', 'arbitrum']
@@ -385,7 +386,10 @@ function SolanaSections({ r }: { r: LensReport }) {
         meta={s.idl ? <span className="mono">{`${s.idl.instructions.length} ix · ${s.idl.format ?? ''}`}</span> : <span className="dim">no on-chain IDL</span>}
       >
         {!s.idl ? (
-          <p className="dim ln-p">No Anchor IDL account and no program-metadata IDL on-chain: the instructions cannot be read without the source.</p>
+          <>
+            <p className="dim ln-p">No Anchor IDL account and no program-metadata IDL on-chain.</p>
+            <Recovered address={r.address} />
+          </>
         ) : (
           <>
             <Row k="source">{s.idl.source}</Row>

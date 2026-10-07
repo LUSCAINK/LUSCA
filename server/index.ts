@@ -533,7 +533,7 @@ async function main() {
     proofs = undefined
   }
   const proofsModule = proofs ? { api: proofs, preview: (payoutConfigRef ? payoutPreviewSource(coordinator, payoutConfigRef) : null) } : undefined
-  const modules = { crawler, trainer, coordinator, auth, payouts, code: codeIndex, chain: chainAgents, model: modelExport, proofs: proofsModule, lens: chainAgents?.lens, radar: chainAgents?.radar, radarDiff: chainAgents?.radarDiff, control: chainAgents?.control, atlas: chainAgents?.atlas, search: chainAgents?.search, advisory: chainAgents?.advisory }
+  const modules = { crawler, trainer, coordinator, auth, payouts, code: codeIndex, chain: chainAgents, model: modelExport, proofs: proofsModule, lens: chainAgents?.lens, radar: chainAgents?.radar, radarDiff: chainAgents?.radarDiff, control: chainAgents?.control, atlas: chainAgents?.atlas, search: chainAgents?.search, advisory: chainAgents?.advisory, binary: chainAgents?.binary }
   hub.bind(modules)
 
   let port: number

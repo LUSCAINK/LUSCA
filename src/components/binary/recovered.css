@@ -1,0 +1,58 @@
+/* "Recovered from the binary" block on /lens (READ THE BINARY) */
+.rb {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--line-2);
+  border-left: 2px solid var(--hot);
+  background: var(--bg-1);
+}
+.rb-h {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-1);
+}
+.rb-h a {
+  color: var(--fg-2);
+  text-decoration: none;
+}
+.rb-h a:hover {
+  color: var(--hot);
+}
+.rb-s,
+.rb-p {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  line-height: 1.5;
+}
+.rb-ix {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rb-ix li {
+  padding: 3px 7px;
+  border: 1px solid var(--line-3);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.rb-ix li.c {
+  border-color: var(--hot-a40);
+  color: var(--fg);
+}
+.rb-ix li.more {
+  border-style: dashed;
+  color: var(--fg-2);
+}
