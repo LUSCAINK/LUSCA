@@ -11,6 +11,7 @@ import type { AtlasItem, AtlasMap } from '@shared/atlas'
 import { CHAIN_LABEL } from '@/lib/chain'
 import { fmtInt } from '@/lib/format'
 import './atlas.css'
+import { NAV_N } from '@/lib/nav'
 
 const ACCENT = '#ff4d00'
 const CHAIN_RGB: Record<string, [number, number, number]> = {
@@ -478,7 +479,7 @@ export default function Atlas() {
         <span className="at-tick at-tick--tl" /><span className="at-tick at-tick--tr" /><span className="at-tick at-tick--bl" /><span className="at-tick at-tick--br" />
 
         <header className="at-head">
-          <div className="at-kick"><span className="at-dot" />CODE ATLAS · LIVE</div>
+          <div className="at-kick"><span className="at-dot" /><span className="at-kick-n">[{NAV_N.atlas}]</span> CODE ATLAS · LIVE</div>
           <h1 className="at-title">Atlas</h1>
           <p className="at-lede">Every program and contract the agents kept, placed by the functions, events and instructions it shares with the others. Close together means a similar code surface.</p>
         </header>

@@ -14,6 +14,7 @@ import { fmtCompact, fmtInt } from '@/lib/format'
 import { Kicker, NextStep, OnThisPage, Terms } from '@/components/docs/pagekit'
 import '@/components/obs/parts.css'
 import './sepia.css'
+import { NAV_N } from '@/lib/nav'
 
 // SEPIA-1 tokenizer playground (milestone M1): its own chunk; the tokenizer loads near the viewport.
 const TokenizerLab = lazy(() => import('@/components/sepia/tokenizer/Tokenizer'))
@@ -52,7 +53,7 @@ export default function Sepia() {
       <header className="sp-hero">
         <HeroCurve />
         <div className="sp-hero-bar mono">
-          <Kicker n="09" name="Model" />
+          <Kicker n={NAV_N.sepia} name="Model" />
           <span className="sp-mode" role="status">
             <span className={`led ${mode.led}`} />
             <b>{mode.tag}</b>

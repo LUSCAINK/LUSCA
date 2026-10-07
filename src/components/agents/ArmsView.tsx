@@ -13,6 +13,7 @@ import { AgentTable } from './AgentTable'
 import { DEFAULT_DIR, SORT_LABEL, sortAgents, type SortKey, type SortSpec } from './sort'
 import { SpawnPanel } from './SpawnPanel'
 import { WORKING, byCode } from './util'
+import { NAV_N } from '@/lib/nav'
 
 type Origin = 'all' | 'genesis' | 'spawned'
 
@@ -138,7 +139,7 @@ export function ArmsView() {
     <div className="ag">
       <header className="ag-head">
         <div className="ag-title grid-bg">
-          <Kicker n="04" name="Agents" className="ag-idx">
+          <Kicker n={NAV_N.agents} name="Agents" className="ag-idx">
             <ConnBadge className="ag-conn" />
           </Kicker>
           <h1 className="display">The Arms</h1>

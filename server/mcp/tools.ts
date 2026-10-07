@@ -558,7 +558,7 @@ const radarEventTool = defineTool({
 export const CLASS_TEXT: Record<ControlClass, string> = {
   immutable: 'immutable — the code cannot change',
   key: 'single key — one keypair / externally owned account can change the code',
-  pda: 'program-derived address — only the program behind that address can sign (e.g. a multisig or DAO program)',
+  pda: 'program-derived address — an address only a program can sign for, such as a multisig vault or a governance program',
   safe: 'Safe — a threshold of the Safe owners must sign',
   timelock: 'timelock — changes wait for the timelock minimum delay',
   contract: 'another contract (no Safe or timelock interface)',

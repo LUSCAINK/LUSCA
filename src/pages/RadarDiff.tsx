@@ -11,8 +11,9 @@ import { CHAIN_LABEL, explorerName, explorerUrl, shortAddress } from '@/lib/chai
 import { DASH, fmtInt } from '@/lib/format'
 import { VERIFIED_WORD, fetchRadarEvent, txUrl } from '@/lib/radar'
 import './radardiff.css'
+import { NAV_N } from '@/lib/nav'
 
-const RADAR_NAV_N = '08'
+const RADAR_NAV_N = NAV_N.radar
 const p2 = (n: number) => String(n).padStart(2, '0')
 function utc(ts: number): string {
   const d = new Date(ts)

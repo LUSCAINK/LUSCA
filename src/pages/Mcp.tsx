@@ -7,9 +7,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Kicker } from '@/components/docs/pagekit'
 import './mcp.css'
+import { NAV_N } from '@/lib/nav'
 
 /** Position of /mcp in the primary navigation (set when the nav is integrated in src/components/shell/Shell.tsx). */
-const MCP_NAV_N = '13'
+const MCP_NAV_N = NAV_N.mcp
 const PROTOCOL = '2025-06-18'
 const ALSO = ['2025-03-26', '2024-11-05']
 /** Links in answers are clickable only for LUSCA and the explorers / registries LUSCA cites (names in answers are published by deployers). */

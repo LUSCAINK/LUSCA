@@ -22,6 +22,7 @@ import { useSampled } from '@/lib/hooks'
 import { CONN_TEXT } from '@/lib/store'
 import { fmtCompact, fmtInt } from '@/lib/format'
 import './docs.css'
+import { NAV_N } from '@/lib/nav'
 
 const BODIES: Record<string, ComponentType> = {
   overview: Overview,
@@ -99,7 +100,7 @@ function Hero() {
   return (
     <header className="docs-hero">
       <div className="dhero-top">
-        <Kicker n="10" name="Docs" />
+        <Kicker n={NAV_N.docs} name="Docs" />
         <span className="dhero-rev mono">rev 2026-10-05</span>
       </div>
       <h1 className="display dhero-h">The manual</h1>

@@ -8,6 +8,7 @@ import { create } from 'zustand'
 import type { ChainEvent, ChainId, ChainIndexItem, ChainRead, ChainStats, FoundVia, ReadKind, Verdict } from '@shared/chain'
 import { fmtAgo } from './format'
 import { useLive } from './store'
+import { NAV_N } from '@/lib/nav'
 
 // ─── vocabulary ─────────────────────────────────────────────────────────────
 
@@ -103,7 +104,7 @@ export const UNAVAILABLE_PREFIX = 'unavailable.'
 export const PACED_WINDOW_MS = 15 * 60_000
 
 /** Position of /chain in the primary navigation (src/components/shell/Shell.tsx NAV). */
-export const CHAIN_NAV_N = '05'
+export const CHAIN_NAV_N = NAV_N.chain
 
 // ─── time ───────────────────────────────────────────────────────────────────
 

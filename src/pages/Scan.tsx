@@ -31,9 +31,10 @@ import { send } from '@/lib/live'
 import { DASH, fmtInt } from '@/lib/format'
 import { CAUGHT_WORD, KIND_BADGE, VERIFIED_WORD, isOtherEvent } from '@/lib/radar'
 import './scan.css'
+import { NAV_N } from '@/lib/nav'
 
 /** Position of /scan in the primary navigation (src/components/shell/Shell.tsx NAV). */
-const SCAN_NAV_N = '07'
+const SCAN_NAV_N = NAV_N.scan
 
 // ─── plan: one read → rows, calls, sources and their times ─────────────────
 

@@ -19,9 +19,10 @@ import { useConn, useMedia, useNow } from '@/lib/hooks'
 import { radarPostUrl } from '@/lib/xpost'
 import { BUDGET_LABEL, KIND_FILTER, VERIFIED_WORD, badgeOf, fetchRadar, fetchRadarEvent, isOtherEvent, matches, txUrl, type RadarQuery } from '@/lib/radar'
 import './radar.css'
+import { NAV_N } from '@/lib/nav'
 
 /** Position of /radar in the primary navigation (src/components/shell/Shell.tsx NAV). */
-const RADAR_NAV_N = '08'
+const RADAR_NAV_N = NAV_N.radar
 const PAGE = 40
 const MAX_ITEMS = 400
 const FRESH_MS = 2600

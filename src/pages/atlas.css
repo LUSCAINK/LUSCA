@@ -55,6 +55,10 @@
   letter-spacing: var(--track-label);
   color: #c9c7c0;
 }
+.at-kick-n {
+  color: var(--hot);
+  margin-right: -2px;
+}
 .at-dot {
   width: 6px;
   height: 6px;

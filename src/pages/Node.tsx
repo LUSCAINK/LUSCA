@@ -20,6 +20,7 @@ import { UNREACHABLE_TEXT, serverState, usePhase } from '@/components/node/flow'
 import { scrollToId } from '@/components/node/util'
 import '@/components/obs/parts.css'
 import './node.css'
+import { NAV_N } from '@/lib/nav'
 
 const SECTIONS: RailSection[] = [
   { id: 'start', label: 'Start' },
@@ -88,7 +89,7 @@ export default function Node() {
             <div className="nd-hero-copy">
               <div className="nd-kick mono">
                 <span>
-                  <span className="hot">[02]</span> start earning
+                  <span className="hot">[{NAV_N.node}]</span> start earning
                 </span>
                 <span className="nd-conn">
                   <span className={`led ${conn === 'live' ? 'on pulse' : 'white pulse'}`} aria-hidden="true" />

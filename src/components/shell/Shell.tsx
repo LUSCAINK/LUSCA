@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Link, Outlet, useLocation } from 'react-router-dom'
 import { Logo } from './Logo'
 import { Boot } from './Boot'
@@ -9,22 +9,60 @@ import { useConn } from '@/lib/hooks'
 import { useWallet, shortAddr, NO_WALLET_MSG } from '@/lib/wallet'
 import { useSonar } from '@/lib/sonar'
 import { fmtCompact, fmtClock, fmtGflops, fmtInt } from '@/lib/format'
+import { NAV_N } from '@/lib/nav'
 import './shell.css'
 
-export const NAV = [
-  { to: '/live', label: 'Live', n: '01' },
-  { to: '/node', label: 'Start earning', n: '02' },
-  { to: '/earn', label: 'Rewards', n: '03' },
-  { to: '/agents', label: 'Agents', n: '04' },
-  { to: '/chain', label: 'Chain', n: '05' },
-  { to: '/lens', label: 'Lens', n: '06' },
-  { to: '/scan', label: 'Scan', n: '07' },
-  { to: '/radar', label: 'Radar', n: '08' },
-  { to: '/sepia', label: 'Model', n: '09' },
-  { to: '/docs', label: 'Docs', n: '10' },
-  { to: '/control', label: 'Control', n: '11' },
-  { to: '/atlas', label: 'Atlas', n: '12' },
+export interface NavEntry {
+  to: string
+  label: string
+  /** Index shown in the nav and as the page's kicker ([07] Search); src/lib/nav.ts holds the numbers. */
+  n: string
+  /** One line under the label in the More menu. */
+  note?: string
+}
+
+/** Always in the top bar: the corpus and the code pages people open most. */
+export const NAV_PRIMARY: NavEntry[] = [
+  { to: '/live', label: 'Live', n: NAV_N.live },
+  { to: '/scan', label: 'Scan', n: NAV_N.scan },
+  { to: '/chain', label: 'Chain', n: NAV_N.chain },
+  { to: '/lens', label: 'Lens', n: NAV_N.lens },
+  { to: '/radar', label: 'Radar', n: NAV_N.radar },
+  { to: '/control', label: 'Control', n: NAV_N.control },
+  { to: '/search', label: 'Search', n: NAV_N.search },
+  { to: '/mcp', label: 'MCP', n: NAV_N.mcp },
 ]
+
+/** The More menu: a grouped panel on desktop, sections of the drawer on phones. */
+export const NAV_MORE: { title: string; items: NavEntry[] }[] = [
+  {
+    title: 'Code',
+    items: [
+      { to: '/atlas', label: 'Atlas', n: NAV_N.atlas, note: 'Kept code mapped by the names it shares' },
+      { to: '/advisories', label: 'Advisories', n: NAV_N.advisories, note: 'OpenZeppelin advisories and solc bugs in kept code' },
+      { to: '/binary', label: 'Binary', n: NAV_N.binary, note: 'Interfaces read from Solana program executables' },
+    ],
+  },
+  {
+    title: 'Network',
+    items: [
+      { to: '/agents', label: 'Agents', n: NAV_N.agents, note: 'Every agent and what it is reading' },
+      { to: '/sepia', label: 'Model', n: NAV_N.sepia, note: 'SEPIA, trained in public on the corpus' },
+      { to: '/node', label: 'Start earning', n: NAV_N.node, note: 'Lend your GPU from the browser' },
+      { to: '/earn', label: 'Rewards', n: NAV_N.earn, note: 'Credits, payouts and the ledger' },
+    ],
+  },
+  {
+    title: 'Reference',
+    items: [{ to: '/docs', label: 'Docs', n: NAV_N.docs, note: 'How LUSCA works, the API and the data' }],
+  },
+]
+
+/** Every page of the nav, in index order. */
+export const NAV: NavEntry[] = [...NAV_PRIMARY, ...NAV_MORE.flatMap((g) => g.items)]
+const MORE_ITEMS = NAV_MORE.flatMap((g) => g.items)
+const MORE_RANGE = `${MORE_ITEMS[0].n}–${MORE_ITEMS[MORE_ITEMS.length - 1].n}`
+const onPage = (path: string, to: string) => path === to || path.startsWith(to + '/')
 
 /** Legal pages: status bar (desktop/tablet) and the menu drawer (mobile). */
 export const LEGAL = [
@@ -158,6 +196,85 @@ function NavWallet() {
   )
 }
 
+/**
+ * More: a grouped panel under the bar on desktop (click or keyboard; Esc, a click outside or a page change
+ * close it). In the phone drawer the same groups are plain sections, always open.
+ */
+function NavMore({ path }: { path: string }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const active = MORE_ITEMS.find((i) => onPage(path, i.to)) ?? null
+  useEffect(() => setOpen(false), [path])
+  useEffect(() => {
+    if (!open) return
+    const down = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false)
+        ref.current?.querySelector<HTMLButtonElement>('.nav-more')?.focus()
+      }
+    }
+    document.addEventListener('pointerdown', down)
+    document.addEventListener('keydown', key)
+    return () => {
+      document.removeEventListener('pointerdown', down)
+      document.removeEventListener('keydown', key)
+    }
+  }, [open])
+  return (
+    <div className={`nav-more-w ${open ? 'open' : ''}`} ref={ref}>
+      <button
+        type="button"
+        className={`nav-item nav-more ${active ? 'active' : ''}`}
+        aria-expanded={open}
+        aria-controls="nav-more-panel"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="nav-n">{active ? active.n : MORE_RANGE}</span>
+        {active ? active.label : 'More'}
+        <svg className="nav-caret" width="8" height="5" viewBox="0 0 8 5" aria-hidden="true">
+          <path d="M0.5 0.5 L4 4 L7.5 0.5" fill="none" stroke="currentColor" strokeWidth="1" />
+        </svg>
+      </button>
+      <div className="nav-more-panel" id="nav-more-panel">
+        <div className="nm-grid">
+          {NAV_MORE.map((g) => (
+            <div className="nm-group" key={g.title} role="group" aria-label={g.title}>
+              <div className="nm-title">
+                <span>{g.title}</span>
+                <span className="nm-count">{g.items.length}</span>
+              </div>
+              {g.items.map((i) => (
+                <NavLink key={i.to} to={i.to} className={({ isActive }) => `nav-item nm-item ${isActive ? 'active' : ''}`}>
+                  <span className="nav-n">{i.n}</span>
+                  <span className="nm-text">
+                    <span className="nm-label">{i.label}</span>
+                    {i.note && <span className="nm-note">{i.note}</span>}
+                  </span>
+                </NavLink>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div className="nm-foot">
+          <span>
+            {NAV.length} pages · {NAV_PRIMARY.length} in the bar
+          </span>
+          <span className="nm-legal">
+            {LEGAL.map((l) => (
+              <Link key={l.to} to={l.to}>
+                {l.label}
+              </Link>
+            ))}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function TopBar() {
   const [open, setOpen] = useState(false)
   const loc = useLocation()
@@ -174,12 +291,13 @@ function TopBar() {
       </Link>
 
       <nav className={`nav ${open ? 'open' : ''}`} aria-label="Primary">
-        {NAV.map((n) => (
-          <NavLink key={n.to} to={n.to} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        {NAV_PRIMARY.map((n) => (
+          <NavLink key={n.to} to={n.to} className={({ isActive }) => `nav-item nav-top ${isActive ? 'active' : ''}`}>
             <span className="nav-n">{n.n}</span>
             {n.label}
           </NavLink>
         ))}
+        <NavMore path={loc.pathname.toLowerCase()} />
         <div className="nav-extra">
           <NavWallet />
           <button className="nav-item" onClick={sonar.toggle} aria-pressed={sonar.on}>

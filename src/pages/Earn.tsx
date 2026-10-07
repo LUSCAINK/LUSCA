@@ -11,6 +11,7 @@ import { TreasuryPayouts } from '@/components/treasury/TreasuryPayouts'
 import { ProofOfContribution } from '@/components/proofs/ProofOfContribution'
 import '@/components/obs/parts.css'
 import './earn.css'
+import { NAV_N } from '@/lib/nav'
 
 /* ─── model ──────────────────────────────────────────────── */
 
@@ -239,7 +240,7 @@ export default function Earn() {
   return (
     <div className="earn-page">
       <header className="ep-hero">
-        <Kicker n="03" name="Rewards" className="ep-i" />
+        <Kicker n={NAV_N.earn} name="Rewards" className="ep-i" />
         <div className="ep-hl">
           <h1 className="display ep-h">
             Credits and

@@ -12,9 +12,10 @@ import { Kicker } from '@/components/docs/pagekit'
 import { shortAddress } from '@/lib/chain'
 import { DASH, fmtBytes, fmtInt } from '@/lib/format'
 import './binary.css'
+import { NAV_N } from '@/lib/nav'
 
 /** Position of /binary in the primary navigation (set when the nav is integrated in src/components/shell/Shell.tsx). */
-const BINARY_NAV_N = '13'
+const BINARY_NAV_N = NAV_N.binary
 /** The blind check is shown as the method's accuracy only from this many programs. */
 const CHECK_MIN = 20
 

@@ -11,9 +11,10 @@ import { Kicker } from '@/components/docs/pagekit'
 import { CHAINS, CHAIN_LABEL, CHAIN_SHORT, explorerName, explorerUrl, shortAddress } from '@/lib/chain'
 import { DASH, fmtBytes, fmtInt } from '@/lib/format'
 import './search.css'
+import { NAV_N } from '@/lib/nav'
 
 /** Position of /search in the primary navigation (set when the nav is integrated in src/components/shell/Shell.tsx). */
-const SEARCH_NAV_N = '13'
+const SEARCH_NAV_N = NAV_N.search
 
 const EXAMPLES: { label: string; q: string; re?: boolean; custom?: boolean; title: string }[] = [
   { label: 'selfdestruct(', q: 'selfdestruct(', title: 'Every selfdestruct call' },

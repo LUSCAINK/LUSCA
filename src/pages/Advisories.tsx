@@ -15,9 +15,10 @@ import { AdvisoryCard, Conditions, EvidenceLine, SEV_LABEL, useAdvisoryItem } fr
 import { CHAIN_LABEL, CHAIN_SHORT, shortAddress } from '@/lib/chain'
 import { DASH, fmtInt } from '@/lib/format'
 import './advisories.css'
+import { NAV_N } from '@/lib/nav'
 
 /** Position of /advisories in the primary navigation (set when the nav is integrated in src/components/shell/Shell.tsx). */
-const ADVISORIES_NAV_N = '13'
+const ADVISORIES_NAV_N = NAV_N.advisories
 const EVM: ChainId[] = ['ethereum', 'base', 'arbitrum']
 
 /** A non-2xx answer: the status and the server's own error text (e.g. 503 "the advisory check is not available on this server"). */

@@ -16,6 +16,7 @@ import { PagesSwallowed } from './PagesSwallowed'
 import { StageClock, TasteHistory } from './Rhythm'
 import { TraceTimeline } from './TraceTimeline'
 import { LADDER, STAGE, TASTE_MIN, WORKING, acceptRate, byCode, cleanHost, readableTitle, traceKey } from './util'
+import { NAV_N } from '@/lib/nav'
 
 const CAP_TRACES = 800
 const CAP_PAGES = 200
@@ -110,7 +111,7 @@ function NotFound({ id, agents }: { id: string; agents: AgentInfo[] }) {
     <div className="ag dos-missing">
       <div className="dos-missing-in grid-bg">
         <div className="ag-idx mono">
-          <span className="hot">[04]</span> agent / {id || '?'}
+          <span className="hot">[{NAV_N.agents}]</span> agent / {id || '?'}
         </div>
         <h1 className="display">No such agent</h1>
         <p className="mono dim">
@@ -371,7 +372,7 @@ export function Dossier({ idParam }: { idParam: string }) {
         <div className="dos-main">
           <header className="dos-id">
             <div className="dos-id-k label">
-              <span className="hot">[04]</span> agent · arm {sec.roman} {sec.name} ·{' '}
+              <span className="hot">[{NAV_N.agents}]</span> agent · arm {sec.roman} {sec.name} ·{' '}
               {agent.origin === 'spawned' ? (
                 <span className="hot">spawned by {agent.owner && agent.owner.length > 14 ? shortAddr(agent.owner) : (agent.owner ?? 'anon')}</span>
               ) : (

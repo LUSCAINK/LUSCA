@@ -12,6 +12,7 @@ import { CONN_LABEL, useLive } from '@/lib/store'
 import { DASH } from '@/lib/format'
 import '@/components/obs/parts.css'
 import './observatory.css'
+import { NAV_N } from '@/lib/nav'
 
 export default function Observatory() {
   const [pinned, setPinned] = useState<number | null>(null)
@@ -81,7 +82,7 @@ export default function Observatory() {
       <header className="obs-head">
         <div className="obs-title">
           <div className="obs-kick mono">
-            <span className="hot">[01]</span> live view · {live ? 'live from the server' : conn === 'connecting' ? 'connecting' : 'server unreachable'}
+            <span className="hot">[{NAV_N.live}]</span> live view · {live ? 'live from the server' : conn === 'connecting' ? 'connecting' : 'server unreachable'}
           </div>
           <h1 className="display">Observatory</h1>
           <p className="obs-lede">Every agent fetching the crypto web, as it happens. Click any glowing agent, or a row on the left, to see why it keeps or drops a page.</p>

@@ -412,6 +412,8 @@
 
 /* ─── filters ────────────────────────────────────── */
 .ct-filters {
+  /* a controller card scrolls here: keep the filters and the controller chip below the fixed top bar */
+  scroll-margin-top: calc(var(--bar-h) + 12px);
   display: flex;
   flex-wrap: wrap;
   align-items: center;

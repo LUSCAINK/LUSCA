@@ -13,11 +13,12 @@ import { Kicker } from '@/components/docs/pagekit'
 import { CHAINS, CHAIN_LABEL, CHAIN_SHORT, shortAddress } from '@/lib/chain'
 import { DASH, fmtInt } from '@/lib/format'
 import './control.css'
+import { NAV_N } from '@/lib/nav'
 
 const CLASSES: { k: ControlClass; label: string; title: string }[] = [
   { k: 'immutable', label: 'Immutable', title: 'The code cannot change: no upgrade authority, a non-upgradeable loader, no proxy, or an EIP-1967 clone' },
   { k: 'key', label: 'Single key', title: 'One key can change the code: a Solana authority on the ed25519 curve (a keypair), or an EVM account without code' },
-  { k: 'pda', label: 'Program-derived', title: 'A Solana program-derived address (off the ed25519 curve): only its program can sign, e.g. a multisig or a DAO' },
+  { k: 'pda', label: 'Program-derived', title: 'A Solana program-derived address (off the ed25519 curve): an address only a program can sign for, such as a multisig vault or a governance program' },
   { k: 'safe', label: 'Safe', title: 'An EVM Safe: a threshold of its owners must sign' },
   { k: 'timelock', label: 'Timelock', title: 'An EVM TimelockController: changes wait for its minimum delay' },
   { k: 'contract', label: 'Other contract', title: 'Another EVM contract without a Safe or timelock interface' },
@@ -25,7 +26,7 @@ const CLASSES: { k: ControlClass; label: string; title: string }[] = [
   { k: 'pending', label: 'Not resolved yet', title: 'EVM proxies waiting for the resolver (it runs under a small daily RPC budget)' },
 ]
 /** Position of /control in the primary navigation (set when the nav is integrated in src/components/shell/Shell.tsx). */
-const CONTROL_NAV_N = '11'
+const CONTROL_NAV_N = NAV_N.control
 const LABEL = Object.fromEntries(CLASSES.map((c) => [c.k, c.label])) as Record<ControlClass, string>
 
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
@@ -116,12 +117,13 @@ export default function Control() {
   const solTotal = sum ? Object.values(sum.byChain.solana ?? {}).reduce((a, b) => a + (b ?? 0), 0) : 0
   const solKey = sum?.byChain.solana?.key ?? 0
   const solUp = solTotal - (sum?.byChain.solana?.immutable ?? 0)
+  const evmKey = (['ethereum', 'base', 'arbitrum'] as const).reduce((a, c) => a + (sum?.byChain[c]?.key ?? 0), 0)
 
   const head: [string, string, string][] = [
     ['kept programs & contracts', sum ? fmtInt(sum.total) : DASH, sum ? `resolved ${fmtInt(resolved)} of ${fmtInt(sum.total)}` : ''],
     ['code cannot change', sum ? fmtPct(n('immutable'), resolved) : DASH, sum ? `${fmtInt(n('immutable'))} immutable` : ''],
-    ['one key can change it', sum ? fmtInt(n('key')) : DASH, sum ? `${fmtPct(n('key'), resolved)} of resolved` : ''],
-    ['Solana upgradeable by one keypair', sum ? fmtPct(solKey, solUp) : DASH, sum ? `${fmtInt(solKey)} of ${fmtInt(solUp)} upgradeable programs` : ''],
+    ['one key can change it · all chains', sum ? fmtInt(n('key')) : DASH, sum ? `Solana ${fmtInt(solKey)} + EVM ${fmtInt(evmKey)} · ${fmtPct(n('key'), resolved)} of resolved` : ''],
+    ['Solana only · upgradeable by one keypair', sum ? fmtPct(solKey, solUp) : DASH, sum ? `${fmtInt(solKey)} of ${fmtInt(solUp)} upgradeable Solana programs` : ''],
   ]
 
   return (

@@ -32,6 +32,7 @@ import './lens.css'
 import { LensAdvisories } from '@/components/advisory/AdvisoryCard'
 import Recovered from '@/components/binary/Recovered'
 import { lensPostUrl } from '@/lib/xpost'
+import { NAV_N } from '@/lib/nav'
 
 const EVM_CHAINS: ChainId[] = ['ethereum', 'base', 'arbitrum']
 
@@ -1094,7 +1095,7 @@ export default function Lens() {
       <section className="ln-hero">
         <div className="ln-hero-l">
           <div className="ln-kick mono">
-            <span className="hot">LENS</span> / read a protocol
+            <span className="hot">[{NAV_N.lens}]</span> Lens / read a protocol
           </div>
           <h1 className="display">Lens</h1>
           <p className="ln-lede">

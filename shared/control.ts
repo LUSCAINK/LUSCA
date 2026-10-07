@@ -3,7 +3,7 @@
 //
 //   immutable  the code cannot change (no upgrade authority, non-upgradeable loader, no proxy, EIP-1167 clone)
 //   key        one key: a Solana authority that is an ed25519 point (a keypair), or an EVM account without code
-//   pda        a Solana program-derived address (off the curve: only its program signs, e.g. a multisig or a DAO)
+//   pda        a Solana program-derived address (off the curve: only a program can sign for it, such as a multisig vault or a governance program)
 //   safe       an EVM Safe (getThreshold() / getOwners() answer)
 //   timelock   an EVM TimelockController (getMinDelay() answers)
 //   contract   another EVM contract (no Safe / timelock interface)
