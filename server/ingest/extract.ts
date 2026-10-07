@@ -223,10 +223,48 @@ function metaContent(root: HTMLElement, sel: string): string {
 // quadratic on deep unclosed nesting — ~16 s for 5000 unclosed <div>.)
 // Personal data never enters the dataset, the model or the live feed: emails and phone numbers
 // are replaced before anything is scored, stored or broadcast.
-const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g
 const PHONE_RE = /(?<![\w.\/#-])\+?\(?\d{1,4}\)?[ .-]\d{2,4}[ .-]\d{3,4}(?:[ .-]\d{2,4})?(?![\w.\/-])/g
+const isLocalChar = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 46 || c === 95 || c === 37 || c === 43 || c === 45
+const isDomainChar = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 46 || c === 45
+const isLetter = (c: number) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+
+/**
+ * text.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]'), in linear time. The regex itself is
+ * quadratic on long runs of letters and digits (a page showing 40 KB of hex calldata took 1.3 s, 120 KB about
+ * 12 s, all on the event loop); here each '@' is expanded once. server/ingest/_redact_test.ts checks the two
+ * agree.
+ */
+function redactEmails(text: string): string {
+  let out = ''
+  let last = 0 // end of the previous match: the next one never starts before it
+  for (let at = text.indexOf('@'); at >= 0; at = text.indexOf('@', at + 1)) {
+    if (at < last) continue
+    let s = at // local part: the longest run of local characters right before '@'
+    while (s > last && isLocalChar(text.charCodeAt(s - 1))) s--
+    if (s === at) continue
+    let e = at + 1 // domain: the longest run of domain characters after '@'
+    while (e < text.length && isDomainChar(text.charCodeAt(e))) e++
+    // as the regex backtracks: the last '.' in that run, after at least one character, followed by ≥ 2 letters
+    let end = -1
+    for (let d = e - 1; d > at + 1; d--) {
+      if (text.charCodeAt(d) !== 46) continue
+      let k = d + 1
+      while (k < text.length && isLetter(text.charCodeAt(k))) k++
+      if (k - d - 1 >= 2) {
+        end = k
+        break
+      }
+    }
+    if (end < 0) continue
+    out += `${text.slice(last, s)}[email]`
+    last = end
+    at = end - 1
+  }
+  return last === 0 ? text : out + text.slice(last)
+}
+
 export function redactPII(text: string): string {
-  return text.replace(EMAIL_RE, '[email]').replace(PHONE_RE, '[phone]')
+  return redactEmails(text).replace(PHONE_RE, '[phone]')
 }
 
 export function extract(rawHtml: string, baseUrl: string): Extracted {
