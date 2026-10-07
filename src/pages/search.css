@@ -1092,3 +1092,9 @@ button.sx-ln:hover {
 .sx-view-t .sx-path {
   flex: none;
 }
+
+/* a partial index (still building): totals are lower bounds */
+.sx-partial {
+  color: var(--warn);
+  margin-top: 4px;
+}

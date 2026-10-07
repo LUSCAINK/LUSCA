@@ -16,7 +16,9 @@ const port = /** @type {import('node:worker_threads').MessagePort} */ (parentPor
 /** @type {Int32Array[]} */ const sigSegs = []
 /** @type {{ chain: string; address: string; name: string | null; readAt: number; files: Set<number> }[]} */ const items = []
 /** @type {string[]} */ const paths = []
-/** @type {{ id: number; seg: number; off: number; len: number; clen: number; sseg: number; soff: number; sbits: number; lg: number; lang: string; lines: number; ci: boolean; idl: boolean; lib: boolean; refs: [number, number][] }[]} */
+/** Library path (@openzeppelin, lib/, node_modules/ …) per path id: library status belongs to a (contract, path) reference, not to a file. */
+/** @type {boolean[]} */ const pathLib = []
+/** @type {{ id: number; seg: number; off: number; len: number; clen: number; sseg: number; soff: number; sbits: number; lg: number; lang: string; lines: number; ci: boolean; idl: boolean; refs: [number, number][] }[]} */
 const files = []
 let gen = 0
 
@@ -25,7 +27,10 @@ function apply(/** @type {any} */ d) {
     if (s.kind === 'text') textSegs[s.idx] = s.sab
     else sigSegs[s.idx] = new Int32Array(s.sab)
   }
-  for (const [id, p] of d.paths) paths[id] = p
+  for (const [id, p] of d.paths) {
+    paths[id] = p
+    pathLib[id] = isLibPath(p)
+  }
   for (const it of d.items) {
     const cur = items[it.id]
     if (cur) {
@@ -34,7 +39,7 @@ function apply(/** @type {any} */ d) {
     } else items[it.id] = { chain: it.chain, address: it.address, name: it.name, readAt: it.readAt, files: new Set() }
   }
   // only what a query needs (the content hash stays with the builder)
-  for (const f of d.files) files[f.id] = { id: f.id, seg: f.seg, off: f.off, len: f.len, clen: f.clen, sseg: f.sseg, soff: f.soff, sbits: f.sbits, lg: Math.log2(f.sbits), lang: f.lang, lines: f.lines, ci: f.ci, idl: f.idl, lib: false, refs: [] }
+  for (const f of d.files) files[f.id] = { id: f.id, seg: f.seg, off: f.off, len: f.len, clen: f.clen, sseg: f.sseg, soff: f.soff, sbits: f.sbits, lg: Math.log2(f.sbits), lang: f.lang, lines: f.lines, ci: f.ci, idl: f.idl, refs: [] }
   for (const iid of d.drop) {
     const it = items[iid]
     if (!it) continue
@@ -50,7 +55,6 @@ function apply(/** @type {any} */ d) {
     if (!f || !it) continue
     f.refs.push([iid, pid])
     it.files.add(fid)
-    if (!f.lib && isLibPath(paths[pid] ?? '')) f.lib = true
   }
   for (const fid of d.ci ?? []) if (files[fid]) files[fid].ci = true
   gen++
@@ -61,7 +65,7 @@ function apply(/** @type {any} */ d) {
 
 const NL = String.fromCharCode(10)
 const MAX_COUNT = 20_000 // matching lines counted before the totals become lower bounds
-const SOFT_MS = 1_100 // stop scanning (totals become lower bounds) past this; the main thread kills at its hard budget
+const SOFT_MS = 900 // stop scanning (totals become lower bounds) past this; the main thread kills at its hard budget
 const SHOW_HITS = 4 // matching lines shown per file
 const CTX = 2
 const LINE_MAX = 320
@@ -221,12 +225,31 @@ const primaryOf = (/** @type {[number, number][]} */ refs) => {
   return best
 }
 
-/** The refs of a file left by the chain and path filters. */
-function refsIn(/** @type {any} */ f, /** @type {string | null} */ chain, /** @type {((p: string) => boolean) | null} */ pm) {
+/** The refs of a file left by the chain and path filters and, with custom, the refs under a non-library path. */
+function refsIn(/** @type {any} */ f, /** @type {string | null} */ chain, /** @type {((p: string) => boolean) | null} */ pm, custom = false) {
   let refs = f.refs
   if (chain) refs = refs.filter((/** @type {[number, number]} */ r) => items[r[0]]?.chain === chain)
   if (pm) refs = refs.filter((/** @type {[number, number]} */ r) => pm(paths[r[1]] ?? ''))
+  if (custom) refs = refs.filter((/** @type {[number, number]} */ r) => !pathLib[r[1]])
   return refs
+}
+
+/** Library status of a file from its references: every one under a library path, and how many contracts include it under one. */
+function libOf(/** @type {[number, number][]} */ refs) {
+  const libItems = new Set()
+  let every = refs.length > 0
+  for (const [iid, pid] of refs) {
+    if (pathLib[pid]) libItems.add(iid)
+    else every = false
+  }
+  return { library: every, libraryContracts: libItems.size }
+}
+
+/** Distinct paths a file has across its references. */
+function pathCountOf(/** @type {[number, number][]} */ refs) {
+  const n = new Set()
+  for (const r of refs) n.add(r[1])
+  return n.size
 }
 const distinctItems = (/** @type {[number, number][]} */ refs) => {
   if (refs.length < 2) return refs.length
@@ -261,8 +284,8 @@ function scan(/** @type {any} */ q, /** @type {RegExp} */ rx, /** @type {number[
       ofBytes += f.len
     }
     if (q.lang && f.lang !== q.lang && !(q.lang === 'other' && !['solidity', 'vyper', 'yul'].includes(f.lang))) continue
-    if (q.custom && (f.lib || f.ci)) continue
-    const refs = refsIn(f, q.chain, pm)
+    if (q.custom && f.ci) continue
+    const refs = refsIn(f, q.chain, pm, q.custom)
     if (!refs.length) continue
     if (!sigHas(f, tris)) continue
     if (capped) continue
@@ -334,7 +357,7 @@ function run(q) {
   for (let k = q.offset; k < end; k++) {
     const f = files[m.fids[k]]
     const count = m.counts[k]
-    const refs = refsIn(f, q.chain, pm)
+    const refs = refsIn(f, q.chain, pm, q.custom)
     if (!refs.length) continue
     const text = decode(f)
     const lines = matchText(text, rx, SHOW_HITS, Infinity, pageDeadline).lines
@@ -351,6 +374,7 @@ function run(q) {
       chains[c] = (chains[c] ?? 0) + 1
       if (iid !== piid && also.length < ALSO_IN) also.push({ ...item(iid), path: shownPath(paths[pid]) })
     }
+    const lib = libOf(f.refs)
     const g = groups.get(piid) ?? { item: item(piid), files: [] }
     g.files.push({
       id: f.id,
@@ -361,7 +385,9 @@ function run(q) {
       blocks: blocksOf(text, lines),
       moreMatches: Math.max(0, count - lines.length),
       shared: { contracts: seen.size, chains, total: refs === f.refs ? seen.size : distinctItems(f.refs) },
-      library: f.lib,
+      library: lib.library,
+      libraryContracts: lib.libraryContracts,
+      pathCount: pathCountOf(f.refs),
       codeIndex: f.ci,
       alsoIn: also,
     })
@@ -476,7 +502,8 @@ function sourceOf(/** @type {number} */ id, /** @type {any} */ q) {
       bytes: f.len,
       item: item(piid),
       contracts: new Set(f.refs.map((r) => r[0])).size,
-      library: f.lib,
+      library: libOf(f.refs).library,
+      libraryContracts: libOf(f.refs).libraryContracts,
       codeIndex: f.ci,
       text: text.length > SOURCE_MAX ? text.slice(0, SOURCE_MAX) : text,
       truncated: text.length > SOURCE_MAX,

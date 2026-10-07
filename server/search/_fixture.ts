@@ -6,7 +6,8 @@
 // source files of the EVM ones from Sourcify (3 at a time) and appends them to <dataDir>/chain as kept
 // records (same file format as server/chain/store.ts), next to whatever the local store already holds.
 // Solana items with an IDL get their IDL summary from lusca.ink /api/chain/item (≤ 1 request/s).
-// Nothing here is committed data: the records stay in the local data directory.
+// Nothing here is committed data: the records stay in the local data directory. Refuses to run with
+// NODE_ENV=production or on a directory without an empty <dataDir>/.dev-fixture marker file.
 import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
@@ -17,6 +18,15 @@ process.on("unhandledRejection", (e) => { console.error("unhandled", e); process
 const dataDir = process.argv[2]
 const maxEvm = Number(process.argv[3] ?? 100000)
 if (!dataDir) throw new Error('usage: _fixture.ts <dataDir> [maxEvm]')
+// guard: the records written here are summaries (IDLs without args), never for a production store
+if (process.env.NODE_ENV === 'production') {
+  console.error('refused: NODE_ENV=production — this dev tool only writes to a local copy of the data directory')
+  process.exit(1)
+}
+if (!fs.existsSync(path.join(dataDir, '.dev-fixture'))) {
+  console.error(`refused: ${dataDir} has no .dev-fixture marker — create that empty file in a LOCAL copy of the data directory to allow this tool to write there`)
+  process.exit(1)
+}
 const dir = path.join(dataDir, 'chain')
 const shardDir = path.join(dir, 'shards')
 const SITE = 'https://lusca.ink'

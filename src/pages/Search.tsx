@@ -16,7 +16,7 @@ import './search.css'
 const SEARCH_NAV_N = '13'
 
 const EXAMPLES: { label: string; q: string; re?: boolean; custom?: boolean; title: string }[] = [
-  { label: 'selfdestruct', q: 'selfdestruct', title: 'Every line that names selfdestruct' },
+  { label: 'selfdestruct(', q: 'selfdestruct(', title: 'Every selfdestruct call' },
   { label: 'delegatecall(', q: 'delegatecall(', title: 'Calls that run another contract’s code in this contract’s storage' },
   { label: 'tx.origin', q: 'tx.origin', title: 'Code that reads the transaction’s original sender' },
   { label: 'onlyOwner … _mint(', q: 'onlyOwner[^{;]*\\{[^}]*_mint\\(', re: true, title: 'onlyOwner functions whose body calls _mint (regex)' },
@@ -108,6 +108,17 @@ function Snippet({ blocks, onLine }: { blocks: SearchLine[][]; onLine?: (n: numb
   )
 }
 
+/** The error text of a non-OK JSON answer (rate limit with its wait, missing file …). */
+async function failure(r: Response): Promise<Error> {
+  try {
+    const j = (await r.json()) as { error?: unknown }
+    if (j && typeof j.error === 'string') return new Error(j.error)
+  } catch {
+    /* not JSON */
+  }
+  return new Error(r.status === 429 ? 'too many requests — wait a few seconds' : `server answered ${r.status}`)
+}
+
 function SharedBadge({ f }: { f: SearchFileHit }) {
   const n = f.shared.contracts
   if (n <= 1) return <span className="sx-badge one mono">only in this contract</span>
@@ -130,8 +141,12 @@ function FileHit({ f, open, toggle, onView }: { f: SearchFileHit; open: boolean;
         </button>
         <span className="sx-file-meta mono">
           {f.library ? (
-            <span className="sx-lib" title="Library path (@openzeppelin, lib/, node_modules/ …): Custom only leaves it out">
+            <span className="sx-lib" title="Every kept contract includes this file under a library path (@openzeppelin, lib/, node_modules/ …): Custom only leaves it out">
               library
+            </span>
+          ) : f.libraryContracts > 0 ? (
+            <span className="sx-lib" title={`${fmtInt(f.libraryContracts)} kept contract${f.libraryContracts === 1 ? '' : 's'} include this file under a library path (lib/, node_modules/ …); the others have it as their own code. Custom only keeps it for those.`}>
+              library path in {fmtInt(f.libraryContracts)}
             </span>
           ) : f.codeIndex ? (
             <span className="sx-lib" title="The same file (sha256) is in the protocol code index of GitHub repositories: Custom only leaves it out">
@@ -139,7 +154,7 @@ function FileHit({ f, open, toggle, onView }: { f: SearchFileHit; open: boolean;
             </span>
           ) : null}
           <span className="dim">
-            {fmtInt(f.matches)} line{f.matches === 1 ? '' : 's'} · {fmtInt(f.lines)} in file
+            {fmtInt(f.matches)} line{f.matches === 1 ? '' : 's'} · {fmtInt(f.lines)} in file{f.pathCount > 1 ? ` · ${fmtInt(f.pathCount)} paths` : ''}
           </span>
         </span>
         <SharedBadge f={f} />
@@ -162,19 +177,19 @@ function FileHit({ f, open, toggle, onView }: { f: SearchFileHit; open: boolean;
 
 /** Every kept contract with this exact file: a few come with the result (`preview`), the rest from /api/search/file. */
 function RefsList({ id, preview, others }: { id: number; preview: (SearchItem & { path: string })[]; others: number }) {
-  const [refs, setRefs] = useState<SearchFileRefs | 'loading' | 'error' | null>(null)
+  const [refs, setRefs] = useState<SearchFileRefs | 'loading' | Error | null>(null)
   const partial = others > preview.length
   useEffect(() => {
     if (!partial) return
     const ac = new AbortController()
     setRefs('loading')
     fetch(`/api/search/file?id=${id}`, { signal: ac.signal })
-      .then((r) => (r.ok ? (r.json() as Promise<{ file: SearchFileRefs }>) : Promise.reject(new Error(String(r.status)))))
+      .then(async (r) => (r.ok ? (r.json() as Promise<{ file: SearchFileRefs }>) : Promise.reject(await failure(r))))
       .then((j) => setRefs(j.file))
-      .catch(() => !ac.signal.aborted && setRefs('error'))
+      .catch((e: Error) => !ac.signal.aborted && setRefs(e))
     return () => ac.abort()
   }, [id, partial])
-  const full = refs && typeof refs === 'object' ? refs : null
+  const full = refs && typeof refs === 'object' && !(refs instanceof Error) ? refs : null
   const list = full ? full.list : preview
   return (
     <div className="sx-also-w">
@@ -200,7 +215,7 @@ function RefsList({ id, preview, others }: { id: number; preview: (SearchItem & 
           </li>
         ))}
         {!full && partial && (
-          <li className="dim">{refs === 'error' ? `and ${fmtInt(others - preview.length)} more (could not load them)` : `loading ${preview.length ? 'the other ' : ''}${fmtInt(others - preview.length)}…`}</li>
+          <li className="dim">{refs instanceof Error ? `and ${fmtInt(others - preview.length)} more (could not load them: ${refs.message})` : `loading ${preview.length ? 'the other ' : ''}${fmtInt(others - preview.length)}…`}</li>
         )}
         {full && full.more > 0 && <li className="dim">and {fmtInt(full.more)} more</li>}
       </ul>
@@ -263,15 +278,15 @@ type SourceAnswer = { source: SearchSourceFile; marks: { n: number; hits: [numbe
 
 /** The whole file, its matches marked by the server (same query, same time budget). Esc closes. */
 function SourceViewer({ id, line, query, onClose }: { id: number; line: number | null; query: string; onClose: () => void }) {
-  const [src, setSrc] = useState<SourceAnswer | 'loading' | 'error'>('loading')
+  const [src, setSrc] = useState<SourceAnswer | 'loading' | Error>('loading')
   const bodyRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const ac = new AbortController()
     setSrc('loading')
     fetch(`/api/search/source?id=${id}${query ? `&${query}` : ''}`, { signal: ac.signal })
-      .then((r) => (r.ok ? (r.json() as Promise<SourceAnswer>) : Promise.reject(new Error(String(r.status)))))
+      .then(async (r) => (r.ok ? (r.json() as Promise<SourceAnswer>) : Promise.reject(await failure(r))))
       .then((j) => setSrc(j))
-      .catch(() => !ac.signal.aborted && setSrc('error'))
+      .catch((e: Error) => !ac.signal.aborted && setSrc(e))
     return () => ac.abort()
   }, [id, query])
   useEffect(() => {
@@ -287,7 +302,7 @@ function SourceViewer({ id, line, query, onClose }: { id: number; line: number |
     }
   }, [onClose])
   const view = useMemo(() => {
-    if (typeof src !== 'object') return null
+    if (typeof src !== 'object' || src instanceof Error) return null
     const marks = new Map(src.marks.map((m) => [m.n, m.hits]))
     return { lines: src.source.text.split('\n'), marks, first: src.marks[0]?.n ?? null }
   }, [src])
@@ -296,8 +311,9 @@ function SourceViewer({ id, line, query, onClose }: { id: number; line: number |
     if (!view || !n) return
     bodyRef.current?.querySelector(`[data-n="${n}"]`)?.scrollIntoView({ block: 'center' })
   }, [view, line])
-  const s = typeof src === 'object' ? src.source : null
-  const marked = typeof src === 'object' ? src.matches : 0
+  const ok = typeof src === 'object' && !(src instanceof Error) ? src : null
+  const s = ok ? ok.source : null
+  const marked = ok ? ok.matches : 0
   const ext = s ? explorerUrl(s.item.chain, s.item.address) : null
   return (
     <div className="sx-view" role="dialog" aria-modal="true" aria-label={s ? s.path : 'source file'} onClick={onClose}>
@@ -319,7 +335,7 @@ function SourceViewer({ id, line, query, onClose }: { id: number; line: number |
                 <span className="dim">
                   {fmtInt(s.lines)} lines · {fmtBytes(s.bytes)}
                   {marked ? ` · ${fmtInt(marked)} matching line${marked === 1 ? '' : 's'}` : ''}
-                  {s.library ? ' · library' : s.codeIndex ? ' · in code index' : ''}
+                  {s.library ? ' · library' : s.libraryContracts > 0 ? ` · library path in ${fmtInt(s.libraryContracts)}` : s.codeIndex ? ' · in code index' : ''}
                 </span>
               </span>
             )}
@@ -338,8 +354,8 @@ function SourceViewer({ id, line, query, onClose }: { id: number; line: number |
         <div className="sx-view-b sx-code mono" ref={bodyRef}>
           {src === 'loading' ? (
             <p className="sx-empty">loading the file…</p>
-          ) : src === 'error' || !view ? (
-            <p className="sx-empty">this file could not be loaded — search again</p>
+          ) : src instanceof Error || !view ? (
+            <p className="sx-empty">this file could not be loaded{src instanceof Error ? ` — ${src.message}` : ''}</p>
           ) : (
             <div className="sx-block">
               {view.lines.map((t, i) => {
@@ -414,6 +430,7 @@ export default function Search() {
   const [statsErr, setStatsErr] = useState(false)
   const [res, setRes] = useState<SearchResult | null>(null)
   const [groups, setGroups] = useState<SearchGroup[]>([])
+  const [idl, setIdl] = useState<SearchIdlHit[]>([])
   const [next, setNext] = useState<string | null>(null)
   const [load, setLoad] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
   const [err, setErr] = useState('')
@@ -424,6 +441,8 @@ export default function Search() {
   const onView = useCallback((id: number, line: number | null) => setViewing({ id, line }), [])
   const closeView = useCallback(() => setViewing(null), [])
   const inputRef = useRef<HTMLInputElement>(null)
+  /** The visitor typed in or clicked the search box (until then a '/' does not land in the autofocused box). */
+  const touched = useRef(false)
   const active = useMemo(() => formOf(sp), [sp])
   const activeKey = paramsOf(active).toString()
 
@@ -436,6 +455,12 @@ export default function Search() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
       if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
+      // the box has focus from autofocus only and is empty: the '/' focuses it, it does not become the query
+      if (t === inputRef.current && !touched.current && !inputRef.current?.value) {
+        e.preventDefault()
+        touched.current = true
+        return
+      }
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       e.preventDefault()
       inputRef.current?.focus()
@@ -473,6 +498,7 @@ export default function Search() {
     if (active.q.trim().length < 2) {
       setRes(null)
       setGroups([])
+      setIdl([])
       setNext(null)
       setLoad('idle')
       return
@@ -484,6 +510,7 @@ export default function Search() {
       .then((r) => {
         setRes(r)
         setGroups(r.groups)
+        setIdl(r.idl)
         setNext(r.next)
         setLoad('ok')
         setErr('')
@@ -517,6 +544,11 @@ export default function Search() {
     getResult(`/api/search?${activeKey}&cursor=${encodeURIComponent(next)}`)
       .then((r) => {
         setGroups((cur) => [...cur, ...r.groups])
+        // IDL documents page on the same cursor as the files
+        setIdl((cur) => {
+          const have = new Set(cur.map((h) => h.item.address))
+          return [...cur, ...r.idl.filter((h) => !have.has(h.item.address))]
+        })
         setNext(r.next)
       })
       .catch((e: Error) => setErr(e.message))
@@ -541,6 +573,8 @@ export default function Search() {
   ]
 
   const t = res?.total
+  /** Programs the shown IDL cards cover (a card stands for every program with that exact IDL). */
+  const idlShown = idl.reduce((a, h) => a + h.sharedPrograms, 0)
   const viewQuery = useMemo(() => {
     if (active.q.trim().length < 2) return ''
     const p = new URLSearchParams({ q: active.q })
@@ -555,9 +589,11 @@ export default function Search() {
       ? 'loading'
       : s.state === 'off'
         ? 'off on this server'
-        : s.state === 'ready' || s.ready
+        : s.state === 'ready'
           ? `index ready${s.p50Ms !== null ? ` · median search ${fmtInt(s.p50Ms)} ms` : ''} · ${fmtBytes(s.diskBytes)} on disk`
-          : `building · ${fmtInt(s.contracts)} contracts so far`
+          : s.ready
+            ? `index building · ${fmtInt(s.contracts + s.programs)} items so far · totals are partial`
+            : 'index building'
 
   return (
     <div className="sx">
@@ -602,7 +638,13 @@ export default function Search() {
               ref={inputRef}
               className="mono"
               value={form.q}
-              onChange={(e) => setForm({ ...form, q: e.target.value })}
+              onChange={(e) => {
+                touched.current = true
+                setForm({ ...form, q: e.target.value })
+              }}
+              onMouseDown={() => {
+                touched.current = true
+              }}
               placeholder={form.re ? 'a regular expression, e.g. function\\s+\\w*[Mm]int' : 'selfdestruct, delegatecall(, tx.origin …'}
               aria-label="Search the kept source code"
               spellCheck={false}
@@ -738,20 +780,29 @@ export default function Search() {
                   {res!.cached ? ' · cached' : ''}
                   {t.capped ? ' · counting stopped at its cap: totals are lower bounds' : ''}
                 </p>
+                {res!.building && (
+                  <p className="sx-sum-sub sx-partial mono">
+                    index building — {fmtInt(res!.building.items)}
+                    {res!.building.of ? ` of ${fmtInt(res!.building.of)}` : ''} kept items indexed so far: these totals are partial
+                  </p>
+                )}
               </>
             ) : null}
           </div>
 
-          {res && !res.error && res.idl.length > 0 && (
+          {res && !res.error && idl.length > 0 && (
             <div className="sx-idls">
               <div className="sx-sec-h mono">
                 <span>
                   <span className="hot">■</span> Solana IDLs · instruction, account, type, event and error names
                 </span>
-                <span className="dim">{fmtInt(t?.programs ?? 0)} program{t?.programs === 1 ? '' : 's'}</span>
+                <span className="dim">
+                  {idlShown < (t?.programs ?? 0) ? `${fmtInt(idlShown)} shown of ` : ''}
+                  {fmtInt(t?.programs ?? 0)} program{t?.programs === 1 ? '' : 's'}
+                </span>
               </div>
               <ol className="sx-idl-list">
-                {res.idl.map((h) => (
+                {idl.map((h) => (
                   <IdlCard key={`${h.item.address}`} h={h} />
                 ))}
               </ol>
@@ -773,12 +824,12 @@ export default function Search() {
               </ol>
             </div>
           )}
-          {res && !res.error && !groups.length && !res.idl.length && load === 'ok' && (
+          {res && !res.error && !groups.length && !idl.length && load === 'ok' && (
             <p className="sx-empty mono">no kept code matches this {active.re ? 'pattern' : 'text'}{active.chain || active.custom || active.path || active.lang ? ' with these filters' : ''}</p>
           )}
           {next && (
             <button className="btn sx-more" onClick={more} disabled={moreBusy}>
-              {moreBusy ? 'LOADING' : 'MORE FILES'}
+              {moreBusy ? 'LOADING' : 'MORE RESULTS'}
             </button>
           )}
         </section>
@@ -805,6 +856,7 @@ export default function Search() {
                           .map((c) => `${CHAIN_SHORT[c]} ${fmtInt(f.chains[c] ?? 0)}`)
                           .join(' · ')}{' '}
                         · {fmtInt(f.lines)} lines{f.library ? ' · library' : f.codeIndex ? ' · in code index' : ''}
+                        {f.pathCount > 1 ? ` · this path in ${fmtInt(f.pathContracts)}, +${fmtInt(f.pathCount - 1)} other path${f.pathCount === 2 ? '' : 's'}` : ''}
                         {f.sample ? ` · e.g. ${f.sample.name ?? shortAddress(f.sample.address, 4, 4)}` : ''}
                       </span>
                     </span>
@@ -816,7 +868,17 @@ export default function Search() {
               ))}
             </ol>
           ) : (
-            <p className="sx-empty mono">{statsErr ? 'Can’t reach the LUSCA server — retrying…' : s ? (s.state === 'ready' ? 'no file is shared by two kept contracts yet' : 'the index is being built…') : 'Loading…'}</p>
+            <p className="sx-empty mono">
+              {statsErr
+                ? 'Can’t reach the LUSCA server — retrying…'
+                : s
+                  ? s.state === 'off'
+                    ? 'code search is turned off on this server'
+                    : s.state === 'ready'
+                      ? 'no file is shared by two kept contracts yet'
+                      : 'the index is being built…'
+                  : 'Loading…'}
+            </p>
           )}
         </section>
       )}
@@ -826,7 +888,8 @@ export default function Search() {
       <footer className="sx-foot mono">
         <span>
           Searches the source files and IDLs the chain agents already stored: no RPC calls, nothing from the daily budgets. A regex runs in a worker with a{' '}
-          1.5 s budget; backreferences and nested quantifiers are refused. 20 searches a minute per address; results are cached.
+          1.5 s budget; backreferences and patterns that backtrack exponentially are refused or stopped at 1.5 s, and an address whose patterns keep
+          running out of time gets literal search only for 10 minutes. 20 searches a minute per address; results are cached.
           {s?.partial ? ` · ${s.partial}` : ''}
           {s ? ` · ${fmtBytes(s.diskBytes)} snapshot on disk · server memory ${fmtBytes(s.rss)}` : ''}
         </span>

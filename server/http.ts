@@ -22,6 +22,7 @@ import type { ChainEvent, ChainId, ChainIndexItem, ChainRead, ChainStats } from 
 import { RADAR_KINDS, type RadarEvent, type RadarKind, type RadarPage } from '../shared/radar.ts'
 import { CONTROL_CLASSES, type ControlClass, type ControlEntry, type ControlPage, type ControlSummary } from '../shared/control.ts'
 import { isSolanaAddress } from '../shared/base58.ts'
+import { SEARCH_OFF_STATS } from '../shared/search.ts'
 import type { Auth } from './auth/auth.ts'
 import { handleModelRoute, type WeightsExporter } from './model/export.ts'
 import { handleProofRoute, type PreviewSource } from './proofs/http.ts'
@@ -1774,7 +1775,11 @@ export function createHub(opts: HubOptions): Hub {
     if (p === '/api/search' || p.startsWith('/api/search/')) {
       allow(['GET', 'HEAD'])
       const m = requireModules()
-      if (!m.search) throw new HttpError(503, 'code search is not available on this server')
+      if (!m.search) {
+        // turned off (LUSCA_SEARCH=0): the page says so instead of "server unreachable"
+        if (p === '/api/search/stats') return sendJsonText(req, res, 200, JSON.stringify(SEARCH_OFF_STATS), { 'Cache-Control': 'public, max-age=60' })
+        throw new HttpError(503, 'code search is turned off on this server')
+      }
       limit(readLimit, req, 'read')
       const r = await m.search.route(p, url.searchParams, clientIp(req))
       return sendJsonText(req, res, r.status, r.json, r.headers)

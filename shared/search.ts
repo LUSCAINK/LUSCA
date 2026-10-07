@@ -55,8 +55,12 @@ export interface SearchFileHit {
   moreMatches: number
   /** How many kept contracts include this exact file (content hash), and on which chains. */
   shared: { contracts: number; chains: Partial<Record<ChainId, number>> }
-  /** Library path (@openzeppelin, lib/, node_modules/ …): custom=1 leaves it out. */
+  /** Every kept contract includes this file under a library path (@openzeppelin, lib/, node_modules/ …). */
   library: boolean
+  /** Kept contracts that include this file under a library path; custom=1 leaves those references out (a file stays when one contract has it as its own code). */
+  libraryContracts: number
+  /** Distinct paths this file has across the kept contracts that include it. */
+  pathCount: number
   /** The same file (sha256) is in the protocol code index (GitHub repositories): custom=1 leaves it out. */
   codeIndex: boolean
   /** Other contracts that include this exact file (up to 8; shared.contracts is the total). */
@@ -105,6 +109,8 @@ export interface SearchResult {
   gen: number
   ms: number
   cached: boolean
+  /** Set while the index is still being built: totals cover `items` of `of` kept items (of is null before the first count) and are partial. */
+  building: { items: number; of: number | null } | null
   /** Set when the query could not run: invalid / refused regex, time budget exceeded, index not ready. */
   error: { code: 'invalid' | 'refused' | 'timeout' | 'busy' | 'not-ready'; message: string } | null
 }
@@ -132,12 +138,28 @@ export interface SearchSourceFile {
   item: SearchItem
   contracts: number
   library: boolean
+  libraryContracts: number
   codeIndex: boolean
   text: string
   truncated: boolean
 }
 
-export interface SearchTopFile { id: number; path: string; contracts: number; chains: Partial<Record<ChainId, number>>; lines: number; library: boolean; codeIndex: boolean; sample: SearchItem | null }
+export interface SearchTopFile {
+  id: number
+  /** The path most of these contracts use for the file. */
+  path: string
+  /** Distinct paths the file has, and how many contracts use `path`. */
+  pathCount: number
+  pathContracts: number
+  contracts: number
+  chains: Partial<Record<ChainId, number>>
+  lines: number
+  library: boolean
+  libraryContracts: number
+  codeIndex: boolean
+  /** A (named, when possible) contract that includes the file under `path`. */
+  sample: SearchItem | null
+}
 
 export interface SearchStats {
   ready: boolean
@@ -174,4 +196,27 @@ export interface SearchStats {
   p50Ms: number | null
   /** Searches computed since the server started (cached answers not counted). */
   searches: number
+}
+
+/** /api/search/stats when code search is turned off on this server (LUSCA_SEARCH=0). */
+export const SEARCH_OFF_STATS: SearchStats = {
+  ready: false,
+  state: 'off',
+  contracts: 0,
+  programs: 0,
+  fileRefs: 0,
+  uniqueFiles: 0,
+  lines: 0,
+  bytes: 0,
+  rawBytes: 0,
+  diskBytes: 0,
+  sharedBytes: 0,
+  rss: 0,
+  byChain: {},
+  top: [],
+  partial: null,
+  builtAt: null,
+  gen: 0,
+  p50Ms: null,
+  searches: 0,
 }

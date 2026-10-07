@@ -5,10 +5,13 @@
 //        ─▶ deltas ─▶ 2 query workers (query.mjs): trigram prefilter → literal / regex scan → grouped results
 //
 // Reads only what the chain store already holds: NO RPC, no registry calls, nothing from the daily budgets.
-// Safety: a regex is checked first (no backreferences, no quantified groups that repeat a quantifier or an
-// alternation), then runs in a query worker that is terminated when it passes the hard time budget; at most
-// 2 queries run at once (a short queue, then 'busy'); results are cached per normalized query; each address
-// gets 20 uncached searches a minute.
+// Safety: a regex is checked first (common.mjs refuseRegex: no backreferences, no repeated groups that hold a
+// repeat or an alternation, no long runs of open-ended repeats), then runs in a query worker that is terminated
+// when it passes the hard time budget; at most 2 queries run at once (a short queue, then 'busy'); results are
+// cached per normalized query; each address gets 20 uncached searches a minute (opening files: 60 a minute).
+// Patterns that run out of time count against their address: after 2 in 10 minutes, regex mode pauses for that
+// address for 10 minutes; past 6 a minute over all addresses, new regexes pause for everyone for a minute
+// (literal search keeps working; cached answers are still served).
 //
 // REST: GET /api/search?q=&re=1&case=1&chain=&custom=1&path=&lang=&cursor= -> SearchResult
 //       GET /api/search/file?id= -> { file: SearchFileRefs }   (every kept contract that includes one unique file)
@@ -42,6 +45,12 @@ export interface CodeSearchOptions {
   hardMs?: number
   /** Uncached searches per address per minute (default 20). */
   perIpPerMin?: number
+  /** File opens (/api/search/source, /api/search/file) per address per minute (default 60). */
+  viewsPerIpPerMin?: number
+  /** Regex time-outs an address may cause in 10 minutes before regex mode pauses for it (default 2). */
+  strikesPerIp?: number
+  /** Regex time-outs a minute over all addresses before new regexes pause for everyone for a minute (default 6). */
+  globalTimeoutsPerMin?: number
   /** Snapshot save debounce after changes, ms (default 120 s). */
   saveDelayMs?: number
   /** The builder worker exits after this long with nothing to do and nothing unsaved, ms (default 30 s); the next change starts it again from the deltas the main thread keeps. */
@@ -76,6 +85,10 @@ const CACHE_TTL_MS = 10 * 60_000
 const POOL = 2
 const QUEUE_MAX = 12
 const QUEUE_WAIT_MS = 4000
+const STRIKE_WINDOW_MS = 10 * 60_000
+const STRIKE_PAUSE_MS = 10 * 60_000
+const GLOBAL_WINDOW_MS = 60_000
+const GLOBAL_PAUSE_MS = 60_000
 
 interface NormQuery { q: string; re: boolean; case: boolean; chain: ChainId | null; custom: boolean; path: string | null; lang: SearchLang | null; offset: number }
 interface Job { id: number; q: NormQuery | { file: number } | { source: number; q: NormQuery | null }; resolve: (r: WorkerOut) => void; queuedAt: number; timer: NodeJS.Timeout | null }
@@ -103,8 +116,10 @@ export function normalizeQuery(raw: SearchQuery): { ok: true; q: NormQuery } | {
     rx.lastIndex = 0
     if (rx.test('')) return { ok: false, code: 'refused', message: 'this pattern matches the empty string (it would match every line) — make it require at least one character' }
   }
-  const chain = raw.chain && (CHAINS as string[]).includes(raw.chain) ? raw.chain : null
-  const lang = raw.lang && (SEARCH_LANGS as readonly string[]).includes(raw.lang) ? raw.lang : null
+  if (raw.chain && !(CHAINS as string[]).includes(raw.chain)) return { ok: false, code: 'invalid', message: `unknown chain — one of ${CHAINS.join(', ')}` }
+  if (raw.lang && !(SEARCH_LANGS as readonly string[]).includes(raw.lang)) return { ok: false, code: 'invalid', message: `unknown language — one of ${SEARCH_LANGS.join(', ')}` }
+  const chain = raw.chain || null
+  const lang = raw.lang || null
   const p = raw.path ? String(raw.path).trim().slice(0, 120) : ''
   let offset = 0
   if (raw.cursor) {
@@ -135,6 +150,9 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
   const syncMs = o.syncMs ?? 60_000
   const hardMs = o.hardMs ?? 1500
   const perIp = o.perIpPerMin ?? 20
+  const viewsPerIp = o.viewsPerIpPerMin ?? 60
+  const strikesPerIp = o.strikesPerIp ?? 2
+  const globalTrip = o.globalTimeoutsPerMin ?? 6
   const buildUrl = new URL('./build.mjs', import.meta.url)
   const queryUrl = new URL('./query.mjs', import.meta.url)
 
@@ -180,7 +198,53 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     }
   }
   const hits = new Map<string, number[]>()
+  const views = new Map<string, number[]>()
   let statsCache: { at: number; json: string } | null = null
+  /** Kept items the last sync listed (the denominator of a partial index). */
+  let syncTotal: number | null = null
+
+  // ─── regex time-outs: per address and over all addresses ─────────────────────
+  const strikes = new Map<string, number[]>()
+  const pausedUntil = new Map<string, number>()
+  let globalTimeouts: number[] = []
+  let globalPauseUntil = 0
+
+  /** A query of this address (or of the module API: ip null) ran out of time. */
+  function strike(ip: string | null) {
+    const now = Date.now()
+    globalTimeouts = globalTimeouts.filter((t) => t > now - GLOBAL_WINDOW_MS)
+    globalTimeouts.push(now)
+    if (globalTimeouts.length > globalTrip && globalPauseUntil < now) {
+      globalPauseUntil = now + GLOBAL_PAUSE_MS
+      log('warn', `code search: ${globalTimeouts.length} patterns ran out of time in a minute — regex mode paused for a minute (literal search keeps working)`)
+    }
+    if (!ip) return
+    const ts = (strikes.get(ip) ?? []).filter((t) => t > now - STRIKE_WINDOW_MS)
+    ts.push(now)
+    strikes.set(ip, ts)
+    if (ts.length >= strikesPerIp) {
+      pausedUntil.set(ip, now + STRIKE_PAUSE_MS)
+      strikes.delete(ip)
+    }
+    if (strikes.size > 5_000) for (const [k, v] of strikes) if (!v.length || v[v.length - 1] <= now - STRIKE_WINDOW_MS) strikes.delete(k)
+    if (pausedUntil.size > 5_000) for (const [k, t] of pausedUntil) if (t <= now) pausedUntil.delete(k)
+  }
+
+  /** Why a regex may not run now (null = it may): this address's pause, or the pause over all addresses. */
+  function regexPause(ip: string | null): { status: number; wait: number; message: string } | null {
+    const now = Date.now()
+    if (globalPauseUntil > now) {
+      const wait = Math.ceil((globalPauseUntil - now) / 1000)
+      return { status: 503, wait, message: `regex search is paused for ${wait} s: too many patterns ran out of time in the last minute — literal search still works` }
+    }
+    if (!ip) return null
+    const until = pausedUntil.get(ip) ?? 0
+    if (until > now) {
+      const wait = Math.ceil((until - now) / 1000)
+      return { status: 429, wait, message: `${strikesPerIp} patterns from this address ran out of time — regex search pauses here for ${Math.ceil(wait / 60)} min; literal search still works` }
+    }
+    return null
+  }
 
   // ─── workers ───────────────────────────────────────────────────────────────
 
@@ -242,7 +306,8 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
   }
 
   function spawnQuery(): QW {
-    const w = new Worker(queryUrl, { resourceLimits: { maxOldGenerationSizeMb: 64, maxYoungGenerationSizeMb: 8 } })
+    // ~20 MB of tables for today's corpus; the cap leaves room to grow (a cap, not a reservation)
+    const w = new Worker(queryUrl, { resourceLimits: { maxOldGenerationSizeMb: 96, maxYoungGenerationSizeMb: 8 } })
     w.unref()
     const qw: QW = { w, job: null, dead: false }
     for (const d of replay) w.postMessage({ type: 'delta', delta: d })
@@ -334,6 +399,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
       cursor = pg.next ?? undefined
     } while (cursor && ++guard < 10_000)
     const sig = `${entries.length}:${maxAt}:${sum}`
+    syncTotal = entries.length
     if (sig === lastSig) return
     lastSig = sig
     busyBuilding = true
@@ -387,17 +453,34 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     gen,
     ms,
     cached: false,
+    building: null,
     error,
   })
 
-  async function search(raw: SearchQuery): Promise<SearchResult> {
+  /** Set while the index is still being built: what the totals cover. */
+  function buildingNow(): SearchResult['building'] {
+    if (state === 'ready') return null
+    return { items: (bstats?.contracts ?? 0) + (bstats?.programs ?? 0), of: syncTotal }
+  }
+
+  function search(raw: SearchQuery): Promise<SearchResult> {
+    return searchAs(raw, null)
+  }
+
+  async function searchAs(raw: SearchQuery, ip: string | null): Promise<SearchResult> {
     const t0 = performance.now()
     const n = normalizeQuery(raw)
     if (!n.ok) return emptyResult(null, raw, { code: n.code, message: n.message })
     const q = n.q
     if (!stats().ready) return emptyResult(q, raw, { code: 'not-ready', message: 'the search index is being built — try again in a minute' })
+    if (q.re) {
+      const pz = regexPause(ip)
+      if (pz) return emptyResult(q, raw, { code: 'busy', message: pz.message })
+    }
+    const building = buildingNow()
     const out = await runJob(q)
     const ms = Math.round(performance.now() - t0)
+    if (!out.ok && out.code === 'timeout') strike(ip)
     if (!out.ok) return emptyResult(q, raw, { code: out.code, message: out.message }, ms)
     searches++
     recentMs.push(ms)
@@ -415,6 +498,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
       gen: r.gen,
       ms,
       cached: false,
+      building,
       error: null,
     }
   }
@@ -426,12 +510,21 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     return (out.result as { file: SearchFileRefs | null }).file
   }
 
-  async function source(id: number, raw?: SearchQuery | null): Promise<{ source: SearchSourceFile; marks: { n: number; hits: [number, number][] }[]; moreMarks: number; matches: number } | null> {
+  function source(id: number, raw?: SearchQuery | null): Promise<{ source: SearchSourceFile; marks: { n: number; hits: [number, number][] }[]; moreMarks: number; matches: number } | null> {
+    return sourceAs(id, raw ?? null, null)
+  }
+
+  async function sourceAs(id: number, raw: SearchQuery | null, ip: string | null): Promise<{ source: SearchSourceFile; marks: { n: number; hits: [number, number][] }[]; moreMarks: number; matches: number } | null> {
     if (!Number.isSafeInteger(id) || id < 0 || !stats().ready) return null
-    const n = raw && raw.q ? normalizeQuery(raw) : null
+    let n = raw && raw.q ? normalizeQuery(raw) : null
+    // regex mode paused for this address (or for everyone): the text without marks
+    if (n && n.ok && n.q.re && regexPause(ip)) n = null
     let out = await runJob({ source: id, q: n && n.ok ? n.q : null })
     // the query ran out of time on this file: send the text without marks rather than nothing
-    if (!out.ok && n && n.ok && out.code === 'timeout') out = await runJob({ source: id, q: null })
+    if (!out.ok && n && n.ok && out.code === 'timeout') {
+      strike(ip)
+      out = await runJob({ source: id, q: null })
+    }
     if (!out.ok) return null
     const r = out.result as { source: SearchSourceFile | null; marks: { n: number; hits: [number, number][] }[]; moreMarks: number; matches: number }
     return r.source ? { source: r.source, marks: r.marks, moreMarks: r.moreMarks, matches: r.matches } : null
@@ -439,18 +532,27 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
 
   const cacheKey = (q: NormQuery) => `${gen}|${JSON.stringify([q.q, q.re, q.case, q.chain, q.custom, q.path, q.lang, q.offset])}`
 
-  function takeIp(ip: string): number {
+  /** One more request of this address in a sliding minute: 0, or the ms to wait. */
+  function takeFrom(m: Map<string, number[]>, max: number, ip: string): number {
     const now = Date.now()
-    const ts = (hits.get(ip) ?? []).filter((t) => t > now - 60_000)
-    if (ts.length >= perIp) {
-      hits.set(ip, ts)
+    const ts = (m.get(ip) ?? []).filter((t) => t > now - 60_000)
+    if (ts.length >= max) {
+      m.set(ip, ts)
       return ts[0] + 60_000 - now
     }
     ts.push(now)
-    hits.set(ip, ts)
-    if (hits.size > 5_000) for (const [k, v] of hits) if (!v.length || v[v.length - 1] <= now - 60_000) hits.delete(k)
+    m.set(ip, ts)
+    if (m.size > 5_000) for (const [k, v] of m) if (!v.length || v[v.length - 1] <= now - 60_000) m.delete(k)
     return 0
   }
+  const takeIp = (ip: string) => takeFrom(hits, perIp, ip)
+  const takeView = (ip: string) => takeFrom(views, viewsPerIp, ip)
+  const viewLimited = (wait: number) => {
+    const s = Math.ceil(wait / 1000)
+    return { status: 429, json: JSON.stringify({ error: `${viewsPerIp} files a minute per address — wait ${s} s`, retryAfter: s }), headers: { 'Retry-After': String(s) } }
+  }
+  // file ids are renumbered when the server restarts: id-addressed answers are not kept by browsers
+  const NO_STORE = { 'Cache-Control': 'no-store' }
 
   async function route(p: string, params: URLSearchParams, ip: string): Promise<{ status: number; json: string; headers?: Record<string, string> }> {
     if (p === '/api/search/stats') {
@@ -463,24 +565,24 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
       if (!/^\d{1,7}$/.test(raw)) return { status: 400, json: JSON.stringify({ error: 'id must be a file id from a search result' }) }
       const key = `${gen}|file|${raw}`
       const hit = cache.get(key)
-      if (hit && Date.now() - hit.at < CACHE_TTL_MS) return { status: hit.status, json: hit.json, headers: { 'Cache-Control': 'public, max-age=60' } }
-      const wait = takeIp(ip)
-      if (wait > 0) return { status: 429, json: JSON.stringify({ error: `${perIp} searches a minute per address — wait ${Math.ceil(wait / 1000)} s` }), headers: { 'Retry-After': String(Math.ceil(wait / 1000)) } }
+      if (hit && Date.now() - hit.at < CACHE_TTL_MS) return { status: hit.status, json: hit.json, headers: NO_STORE }
+      const wait = takeView(ip)
+      if (wait > 0) return viewLimited(wait)
       const f = await file(Number(raw))
       const json = JSON.stringify(f ? { file: f } : { error: 'no such file in the index (it may have been rebuilt: search again)' })
       const status = f ? 200 : 404
       cachePut(key, { at: Date.now(), json, status })
-      return { status, json, headers: f ? { 'Cache-Control': 'public, max-age=60' } : undefined }
+      return { status, json, headers: NO_STORE }
     }
     if (p === '/api/search/source') {
-      // not kept in the server cache (a file can be large): the worker inflates it in a few ms; browsers cache it
+      // not kept in the server cache (a file can be large): the worker inflates it in a few ms
       const raw = params.get('id') ?? ''
       if (!/^\d{1,7}$/.test(raw)) return { status: 400, json: JSON.stringify({ error: 'id must be a file id from a search result' }) }
-      const wait = takeIp(ip)
-      if (wait > 0) return { status: 429, json: JSON.stringify({ error: `${perIp} searches a minute per address — wait ${Math.ceil(wait / 1000)} s` }), headers: { 'Retry-After': String(Math.ceil(wait / 1000)) } }
-      const src = await source(Number(raw), params.get('q') ? queryFromParams(params) : null)
-      if (!src) return { status: 404, json: JSON.stringify({ error: 'no such file in the index (it may have been rebuilt: search again)' }) }
-      return { status: 200, json: JSON.stringify(src), headers: { 'Cache-Control': 'public, max-age=300' } }
+      const wait = takeView(ip)
+      if (wait > 0) return viewLimited(wait)
+      const src = await sourceAs(Number(raw), params.get('q') ? queryFromParams(params) : null, ip)
+      if (!src) return { status: 404, json: JSON.stringify({ error: 'no such file in the index (it may have been rebuilt: search again)' }), headers: NO_STORE }
+      return { status: 200, json: JSON.stringify(src), headers: NO_STORE }
     }
     if (p !== '/api/search') return { status: 404, json: JSON.stringify({ error: 'not found' }) }
     const raw = queryFromParams(params)
@@ -494,6 +596,10 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
       j.cached = true
       return { status: hit.status, json: JSON.stringify(j), headers: { 'Cache-Control': 'public, max-age=60' } }
     }
+    if (n.q.re) {
+      const pz = regexPause(ip)
+      if (pz) return { status: pz.status, json: JSON.stringify(emptyResult(n.q, raw, { code: 'busy', message: pz.message })), headers: { 'Retry-After': String(pz.wait) } }
+    }
     const wait = takeIp(ip)
     if (wait > 0) {
       return {
@@ -502,14 +608,15 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
         headers: { 'Retry-After': String(Math.ceil(wait / 1000)) },
       }
     }
-    const r = await search(raw)
+    const r = await searchAs(raw, ip)
     const status = !r.error ? 200 : r.error.code === 'invalid' || r.error.code === 'refused' ? 400 : 503
     const json = JSON.stringify(r)
-    // results and timeouts are cached (a pattern that timed out is not run again for a while); busy / not-ready are not
-    if (!r.error || r.error.code === 'timeout') {
+    // complete results and timeouts are cached (a pattern that timed out is not run again for a while);
+    // busy / not-ready answers and results from a partial index (still building) are not
+    if ((!r.error && !r.building) || r.error?.code === 'timeout') {
       cachePut(key, { at: Date.now(), json, status })
     }
-    return { status, json, headers: status === 200 ? { 'Cache-Control': 'public, max-age=60' } : undefined }
+    return { status, json, headers: status === 200 && !r.building ? { 'Cache-Control': 'public, max-age=60' } : { 'Cache-Control': 'no-store' } }
   }
 
   return {

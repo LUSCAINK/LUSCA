@@ -627,16 +627,38 @@ function stats() {
       /** @type {Record<string, number>} */
       const chains = {}
       const seenIt = new Set()
-      let sample = null
+      /** @type {Map<number, number>} path id → contracts that include the file under it */
+      const byPath = new Map()
       for (const [iid, pid] of f.refs) {
+        byPath.set(pid, (byPath.get(pid) ?? 0) + 1)
         if (seenIt.has(iid)) continue
         seenIt.add(iid)
         const it = items[iid]
         chains[it.chain] = (chains[it.chain] ?? 0) + 1
-        if (!sample || (it.name && !sample.name)) sample = { chain: it.chain, address: it.address, name: it.name, path: paths[pid] }
       }
-      const p = sample?.path ?? ''
-      return { id: f.id, path: shownPath(p), contracts: n, chains, lines: f.lines, library: f.refs.some((r) => isLibPath(paths[r[1]])), codeIndex: f.ci, sample: sample ? { chain: sample.chain, address: sample.address, name: sample.name } : null }
+      // the path most contracts use for this file, and a named contract that uses it
+      let common = f.refs[0][1]
+      for (const [pid, k] of byPath) if (k > (byPath.get(common) ?? 0)) common = pid
+      let sample = null
+      for (const [iid, pid] of f.refs) {
+        if (pid !== common) continue
+        const it = items[iid]
+        if (!sample || (it.name && !sample.name)) sample = { chain: it.chain, address: it.address, name: it.name }
+      }
+      const libItems = new Set(f.refs.filter((r) => isLibPath(paths[r[1]])).map((r) => r[0]))
+      return {
+        id: f.id,
+        path: shownPath(paths[common] ?? ''),
+        pathCount: byPath.size,
+        pathContracts: byPath.get(common) ?? 0,
+        contracts: n,
+        chains,
+        lines: f.lines,
+        library: libItems.size === n,
+        libraryContracts: libItems.size,
+        codeIndex: f.ci,
+        sample,
+      }
     }),
     partial,
     builtAt,

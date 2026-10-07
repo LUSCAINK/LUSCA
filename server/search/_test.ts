@@ -112,11 +112,26 @@ await test('requiredRuns: literal runs every match must contain', () => {
   assert.equal(trigramsOf(['ABC'])[0], trigramsOf(['abc'])[0])
 })
 
-await test('refuseRegex: backreferences and nested quantifiers are refused, ordinary patterns pass', () => {
+await test('refuseRegex: backreferences and backtracking shapes are refused, ordinary patterns pass', () => {
   assert.ok(refuseRegex('(a+)+'))
   assert.ok(refuseRegex('(a|b)*c'))
   assert.ok(refuseRegex('(\\w+\\s?)*$'))
   assert.ok(refuseRegex('(a)\\1'))
+  // a bounded outer count does not make a nested repeat safe; nor do long runs of open-ended repeats
+  assert.ok(refuseRegex('(?:a+){2,64}b'))
+  assert.ok(refuseRegex('(?:\\w+\\s?){64}$'))
+  assert.ok(refuseRegex('(a+){64}'))
+  assert.ok(refuseRegex('.*.*.*.*.*.*.*.*=.*;9'))
+  assert.ok(refuseRegex('\\w*\\w*\\w*\\w*!'))
+  assert.ok(refuseRegex('.*a.*b.*c.*d.*e'))
+  assert.equal(refuseRegex('(\\w+\\s){1,3}x'), null)
+  assert.equal(refuseRegex('\\w+\\s+\\w+\\s*='), null)
+  assert.equal(refuseRegex('function\\s+\\w+\\s*\\([^)]*\\)\\s*(external|public)[^{]*onlyOwner'), null)
+  assert.equal(refuseRegex('SPDX[\\s\\S]{1,30}pragma'), null)
+  const chain = normalizeQuery({ q: 'abc', chain: 'bogus' as ChainId })
+  assert.ok(!chain.ok && chain.code === 'invalid', 'an unknown chain is refused, not ignored')
+  const lang = normalizeQuery({ q: 'abc', lang: 'cobol' as never })
+  assert.ok(!lang.ok && lang.code === 'invalid', 'an unknown language is refused, not ignored')
   assert.equal(refuseRegex('function\\s+\\w*[Mm]int\\w*\\('), null)
   assert.equal(refuseRegex('(foo|bar)baz'), null)
   assert.equal(refuseRegex('(ab)+c'), null)
@@ -140,12 +155,14 @@ await test('pathMatcher: substring and glob', () => {
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lusca-search-'))
 const LIB = `// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\nlibrary Address {\n  function functionDelegateCall(address target, bytes memory data) internal returns (bytes memory) {\n    (bool ok, bytes memory r) = target.delegatecall(data);\n    return r;\n  }\n}\n`
 const SHARED_CUSTOM = `contract Pool {\n  function kill() external onlyOwner {\n    selfdestruct(payable(owner));\n  }\n}\n`
+const BURN = `library Burn {\n  function eth(uint256 amount) internal {\n    new Burner{ value: amount }();\n  }\n}\ncontract Burner {\n  constructor() payable {\n    selfdestruct(payable(address(this)));\n  }\n}\n`
 const CHAIN3: ChainId[] = ['ethereum', 'base', 'arbitrum']
 const recs: Rec[] = []
 for (let i = 0; i < 60; i++) {
   const sources = [{ path: `contracts/C${i}.sol`, text: `contract C${i} {\n${fileText(30 + (i % 7) * 10)}\n}\n` }]
   if (i < 40) sources.push({ path: i % 2 ? '@openzeppelin/contracts/utils/Address.sol' : 'lib/openzeppelin-contracts/contracts/utils/Address.sol', text: LIB })
   if (i >= 50) sources.push({ path: `src/Pool${i}.sol`, text: i % 2 ? SHARED_CUSTOM.replace(/\n/g, '\r\n') : SHARED_CUSTOM })
+  if (i >= 50 && i <= 53) sources.push({ path: i === 53 ? 'lib/optimism/src/libraries/Burn.sol' : 'src/libraries/Burn.sol', text: BURN })
   if (i === 7) sources.push({ path: 'contracts/vyper/Vault.vy', text: '@external\ndef withdraw(amount: uint256):\n    send(msg.sender, amount)\n' })
   recs.push({ chain: CHAIN3[i % 3], address: addr(i), name: `C${i}`, readAt: 1_700_000_000_000 + i, sources })
 }
@@ -157,6 +174,9 @@ recs.push({
   idl: { metadata: { name: 'swift_pool', version: '0.1.0' }, instructions: [{ name: 'initialize_pool', accounts: [{ name: 'pool' }, { name: 'authority' }], args: [{ name: 'fee_bps', type: 'u16' }] }, { name: 'withdraw_fees', accounts: [], args: [] }], accounts: [{ name: 'Pool' }], errors: [{ code: 6000, name: 'InvalidFee', msg: 'fee too high' }] },
 })
 recs.push({ chain: 'solana', address: 'Sw1ft2222222222222222222222222222222222222', name: 'swift_pool_fork', readAt: 1_700_000_100_001, idl: recs[recs.length - 1].idl })
+// 26 more programs, each with its own IDL (IDL results page 12 at a time)
+for (let i = 0; i < 26; i++)
+  recs.push({ chain: 'solana', address: `Vau1t${String(i).padStart(2, '0')}${'1'.repeat(36)}`, name: `vault_${i}`, readAt: 1_700_000_200_000 + i, idl: { metadata: { name: `vault_${i}` }, instructions: [{ name: `withdraw_v${i}`, accounts: [{ name: 'vault' }], args: [{ name: 'amount', type: 'u64' }] }] } })
 writeStore(tmp, recs)
 // a protocol code index file listing the vyper vault's sha256 prefix
 fs.mkdirSync(path.join(tmp, 'code'), { recursive: true })
@@ -170,19 +190,22 @@ await ready(s)
 await test('dedup: a file shared by 40 contracts is stored once and counted per contract and chain', async () => {
   const st = s.stats()
   assert.equal(st.contracts, 60)
-  assert.equal(st.programs, 2)
-  // 60 own files + Address.sol + Pool (CRLF and LF variants deduplicate) + Vault.vy
-  assert.equal(st.uniqueFiles, 63)
-  assert.equal(st.fileRefs, 60 + 40 + 10 + 1)
+  assert.equal(st.programs, 28)
+  // 60 own files + Address.sol + Pool (CRLF and LF variants deduplicate) + Burn.sol + Vault.vy
+  assert.equal(st.uniqueFiles, 64)
+  assert.equal(st.fileRefs, 60 + 40 + 10 + 4 + 1)
   assert.equal(st.top[0].contracts, 40)
   assert.deepEqual(st.top[0].chains, { ethereum: 14, base: 13, arbitrum: 13 })
   const r = await s.search({ q: 'target.delegatecall(data)' })
   assert.equal(r.error, null)
+  assert.equal(r.building, null, 'a complete index is not marked partial')
   assert.equal(r.total.files, 1)
   assert.equal(r.total.contracts, 40)
   const f = r.groups[0].files[0]
   assert.equal(f.shared.contracts, 40)
   assert.equal(f.library, true)
+  assert.equal(f.libraryContracts, 40)
+  assert.equal(f.pathCount, 2)
   assert.equal(f.alsoIn.length, 8)
   assert.equal(f.blocks[0].find((l) => l.hits.length)!.n, 5)
   const pool = await s.search({ q: 'selfdestruct(payable(owner))', case: true })
@@ -252,7 +275,19 @@ await test('filters: chain, custom only, path glob, language', async () => {
   assert.equal(glob2.total.contracts, 1)
   const sol = await s.search({ q: 'withdraw', chain: 'solana' })
   assert.equal(sol.total.files, 0)
-  assert.equal(sol.total.programs, 2)
+  assert.equal(sol.total.programs, 28)
+  // library status belongs to each (contract, path) reference: 3 contracts have Burn.sol as their own code, 1 under lib/
+  const burn = await s.search({ q: 'selfdestruct(payable(address(this)))' })
+  assert.equal(burn.total.contracts, 4)
+  const bf = burn.groups[0].files[0]
+  assert.equal(bf.library, false)
+  assert.equal(bf.libraryContracts, 1)
+  assert.equal(bf.pathCount, 2)
+  const burnCustom = await s.search({ q: 'selfdestruct(payable(address(this)))', custom: true })
+  assert.equal(burnCustom.total.files, 1, 'a file some contracts have as their own code stays under Custom only')
+  assert.equal(burnCustom.total.contracts, 3, 'without the contract that vendors it under lib/')
+  assert.equal(burnCustom.groups[0].files[0].shared.contracts, 3)
+  assert.equal(s.stats().top.find((t) => t.contracts === 4)?.path, 'src/libraries/Burn.sol', 'the most-shared list names the most common path')
 })
 
 await test('IDL documents: instruction / account / error names, same IDL counted once', async () => {
@@ -265,6 +300,26 @@ await test('IDL documents: instruction / account / error names, same IDL counted
   assert.equal(r.idl[0].entries[0].text.slice(a, b), 'initialize_pool')
   const e = await s.search({ q: 'InvalidFee' })
   assert.equal(e.idl[0].entries[0].kind, 'error')
+  // IDL results page 12 at a time on the files' cursor, no program twice
+  const seen = new Set<string>()
+  let cur: string | null = null
+  let pages = 0
+  let programs = 0
+  do {
+    const pg = await s.search({ q: 'withdraw_', chain: 'solana', cursor: cur })
+    assert.equal(pg.total.programs, 28)
+    assert.ok(pg.idl.length <= 12)
+    for (const h of pg.idl) {
+      assert.ok(!seen.has(h.item.address), `${h.item.address} on two pages`)
+      seen.add(h.item.address)
+      programs += h.sharedPrograms
+    }
+    cur = pg.next
+    pages++
+  } while (cur && pages < 10)
+  assert.equal(seen.size, 27, 'every IDL reachable by paging (swift_pool and its fork share one IDL)')
+  assert.equal(programs, 28)
+  assert.equal(pages, 3)
 })
 
 await test('caps and paging: totals stop at the cap and say so; pages do not repeat files', async () => {
@@ -314,7 +369,7 @@ await test('regex time budget: a runaway pattern is stopped, the worker replaced
   await s.idle()
   await new Promise((r) => setTimeout(r, 50))
   const t0 = Date.now()
-  const r = await s.search({ q: '\\w*\\w*\\w*\\w*\\w*\\w*\\w*!', re: true })
+  const r = await s.search({ q: '\\w*\\w*\\w*!', re: true })
   const ms = Date.now() - t0
   assert.equal(r.error?.code, 'timeout', JSON.stringify(r.error))
   assert.ok(ms < 2000, `stopped after ${ms} ms`)
@@ -364,7 +419,37 @@ await test('route: validation, cache, per-address limit', async () => {
   assert.equal((await lim.route('/api/search', new URLSearchParams({ q: 'abc3' }), '2.2.2.2')).status, 429)
   assert.equal((await lim.route('/api/search', new URLSearchParams({ q: 'abc1' }), '2.2.2.2')).status, 200, 'cached answers do not count')
   assert.equal((await lim.route('/api/search', new URLSearchParams({ q: 'abc3' }), '3.3.3.3')).status, 200, 'another address has its own budget')
+  const anyFile = (await lim.search({ q: 'contract C1' })).groups[0].files[0]
+  const view = await lim.route('/api/search/source', new URLSearchParams({ id: String(anyFile.id) }), '2.2.2.2')
+  assert.equal(view.status, 200, 'opening a file has its own budget')
+  assert.equal(view.headers?.['Cache-Control'], 'no-store', 'id-addressed answers are not kept by browsers')
   s = lim
+})
+
+await test('regex time-outs: an address that keeps running out of time gets literal search only; a flood pauses regexes for all', async () => {
+  const t = createCodeSearch({ source: sourceOf(() => live), dataDir: tmp, log, startDelayMs: 0, hardMs: 250, perIpPerMin: 1000, strikesPerIp: 2, globalTimeoutsPerMin: 3, saveDelayMs: 0 })
+  t.start()
+  await ready(t)
+  const slowRe = (n: number) => new URLSearchParams({ q: `\\w*\\w*\\w*[!${String.fromCharCode(0x2600 + n)}]`, re: '1' }) // a class adds no literal (no prefilter) and matches nothing here: each one reaches Slow.sol
+  const a1 = await t.route('/api/search', slowRe(1), '5.5.5.5')
+  assert.equal(JSON.parse(a1.json).error?.code, 'timeout', a1.json.slice(0, 300))
+  const a2 = await t.route('/api/search', slowRe(2), '5.5.5.5')
+  assert.equal(JSON.parse(a2.json).error?.code, 'timeout', a2.json.slice(0, 400))
+  const a3 = await t.route('/api/search', slowRe(3), '5.5.5.5')
+  assert.equal(a3.status, 429, 'regex mode paused for this address (a new pattern does not get past it)')
+  assert.match(JSON.parse(a3.json).error.message, /literal search still works/)
+  assert.ok(Number(a3.headers?.['Retry-After']) > 60)
+  assert.equal((await t.route('/api/search', new URLSearchParams({ q: 'selfdestruct(' }), '5.5.5.5')).status, 200, 'literal search still works')
+  const b1 = await t.route('/api/search', new URLSearchParams({ q: 'contract C\\d+', re: '1' }), '6.6.6.6')
+  assert.equal(b1.status, 200, 'another address keeps regex mode')
+  // over all addresses: past 3 time-outs a minute, new regexes pause for everyone
+  await t.route('/api/search', slowRe(4), '7.7.7.7')
+  await t.route('/api/search', slowRe(5), '8.8.8.8')
+  const g = await t.route('/api/search', new URLSearchParams({ q: 'contract C1\\d', re: '1' }), '9.9.9.9')
+  assert.equal(g.status, 503)
+  assert.match(JSON.parse(g.json).error.message, /paused/)
+  assert.equal((await t.route('/api/search', new URLSearchParams({ q: 'tx.origin' }), '9.9.9.9')).status, 200)
+  await t.stop()
 })
 
 await test('snapshot: a restart loads the gzip snapshot and answers the same', async () => {
