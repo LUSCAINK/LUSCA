@@ -70,6 +70,7 @@ export default function Atlas() {
   const [ticker, setTicker] = useState<FeedRow[]>([])
   const seenFeed = useRef(new Set<string>())
   const pendingPulse = useRef(new Map<string, number>())
+  const focusRef = useRef<((p: Pt) => void) | null>(null)
 
   // ── data: map ──
   const loadMap = useCallback(async () => {
@@ -108,6 +109,13 @@ export default function Atlas() {
       clustersRef.current = m.clusters
       setMap(m)
       setErr(null)
+      if (first) {
+        // /atlas?focus=<chain>:<address> opens that item (shareable view)
+        const f = new URLSearchParams(window.location.search).get('focus')
+        const i = f ? f.indexOf(':') : -1
+        const fp = i > 0 ? nextMap.get(keyOf(f!.slice(0, i), f!.slice(i + 1))) : undefined
+        if (fp) setTimeout(() => focusRef.current?.(fp), 1800)
+      }
     } catch (e) {
       setErr((e as Error)?.message ?? 'The atlas could not be loaded.')
     }
@@ -446,6 +454,10 @@ export default function Atlas() {
       canvas.removeEventListener('pointerleave', onLeave)
       canvas.removeEventListener('wheel', onWheel)
     }
+  }, [select])
+
+  useEffect(() => {
+    focusRef.current = (p) => select(p, true)
   }, [select])
 
   useEffect(() => {

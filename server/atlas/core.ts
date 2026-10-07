@@ -175,8 +175,10 @@ export function labelClusters(nodes: AtlasNode[], cl: number[]): string[] {
     const local = new Map<string, number>()
     for (const x of sets) for (const t of x) if (/^(fn|ix|ev):/.test(t)) local.set(t, (local.get(t) ?? 0) + 1)
     const skip = new Set(sig?.all ?? [])
-    const ranked = [...local.entries()]
-      .filter(([t, c]) => c >= ms.length * 0.4 && !skip.has(t))
+    const common = (share: number) => [...local.entries()].filter(([t, c]) => c >= ms.length * share && !skip.has(t))
+    let pool = common(0.4)
+    if (pool.length === 0) pool = common(0.2) // loose families (Solana programs with their own IDLs)
+    const ranked = pool
       .map(([t, c]) => ({ t, s: (c / ms.length) * Math.log((n + 1) / (df.get(t) ?? 1)) * (t.startsWith('ev:') ? 0.6 : 1) }))
       .sort((a, b) => b.s - a.s || (a.t < b.t ? -1 : 1))
     const names: string[] = []
@@ -188,7 +190,13 @@ export function labelClusters(nodes: AtlasNode[], cl: number[]): string[] {
     }
     const pre = !head && sol ? 'Solana · ' : ''
     if (head) return names.length ? `${head} · ${names[0]}` : head
-    return names.length ? pre + names.join(' · ') : sol ? 'Solana programs' : 'mixed'
+    if (names.length) return pre + names.join(' · ')
+    if (sol) {
+      const shape = [['sol:idl', 'IDL'], ['sol:security.txt', 'security.txt'], ['sol:upgradeable', 'upgradeable'], ['sol:immutable', 'immutable']]
+        .filter(([t]) => has(t) >= ms.length * 0.6).map(([, l]) => l)
+      return shape.length ? `Solana · ${shape.join(' · ')}` : 'Solana programs'
+    }
+    return 'mixed'
   })
 }
 
