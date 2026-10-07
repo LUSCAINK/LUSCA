@@ -1,0 +1,298 @@
+{
+  "v": 1,
+  "reviewedAt": "2026-10-06",
+  "sources": [
+    "https://api.osv.dev/v1/query (ecosystem npm: @openzeppelin/contracts, @openzeppelin/contracts-upgradeable)",
+    "https://api.github.com/advisories?ecosystem=npm&affects=<package>",
+    "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories"
+  ],
+  "method": "Each advisory names the affected contract in its published text; the files below are the package files that define it. A file copy counts as affected only when every published release carrying that exact copy lies inside the affected range (so the fix release changed it). Ranges are the published ones; a per-file range is used where the advisory text narrows it. scripts/advisory/check-advisories.ts compares this file with osv.dev and the tests check every mapping against the fingerprint table.",
+  "advisories": [
+    {
+      "id": "GHSA-5vp3-v4hc-gx76", "aliases": ["CVE-2021-41264"], "severity": "critical",
+      "title": "UUPSUpgradeable: uninitialized implementation contracts can be taken over",
+      "note": "osv.dev also lists @openzeppelin/contracts-upgradeable here; that package's copy of the file is covered by its own advisory, GHSA-q4h9-46xg-m3x9.",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-5vp3-v4hc-gx76",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.1.0", "fixed": "4.3.2" }],
+          "files": [
+            { "path": "proxy/utils/UUPSUpgradeable.sol", "anchor": ["function upgradeTo(", "abstract contract UUPSUpgradeable"], "evidence": "Upgradeable contracts using `UUPSUpgradeable` (advisory text); fixed in commit 024cc50", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/commit/024cc50df478d2e8f78539819749e94d6df60592" }
+          ] }
+      ]
+    },
+    {
+      "id": "GHSA-q4h9-46xg-m3x9", "aliases": [], "severity": "critical",
+      "title": "UUPSUpgradeable (upgradeable package): uninitialized implementation contracts can be taken over",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/security/advisories/GHSA-q4h9-46xg-m3x9",
+      "packages": [
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.1.0", "fixed": "4.3.2" }],
+          "files": [
+            { "path": "proxy/utils/UUPSUpgradeable.sol", "anchor": ["function upgradeTo(", "abstract contract UUPSUpgradeable"], "evidence": "Upgradeable contracts using `UUPSUpgradeable` (advisory text)", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/security/advisories/GHSA-q4h9-46xg-m3x9" }
+          ] }
+      ]
+    },
+    {
+      "id": "GHSA-fg47-3c2x-m2wr", "aliases": ["CVE-2021-39167"], "severity": "critical",
+      "title": "TimelockController: an executor could reset the delay and escalate privileges",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-fg47-3c2x-m2wr",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "3.3.0", "fixed": "3.4.2" }, { "introduced": "4.0.0", "fixed": "4.3.1" }],
+          "files": [
+            { "path": "governance/TimelockController.sol", "anchor": ["function execute(", "contract TimelockController"], "evidence": "A vulnerability in `TimelockController` (advisory text); fixed in commit cec4f2e", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/commit/cec4f2ef57495d8b1742d62846da212515d99dd5" },
+            { "path": "access/TimelockController.sol", "anchor": ["function execute(", "contract TimelockController"], "evidence": "Same contract at its 3.x location (fixed in 3.4.2 and 3.4.2-solc-0.7)", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-fg47-3c2x-m2wr" }
+          ] }
+      ]
+    },
+    {
+      "id": "GHSA-vrw4-w73r-6mm8", "aliases": ["CVE-2021-39168"], "severity": "critical",
+      "title": "TimelockController (upgradeable package): an executor could reset the delay and escalate privileges",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/security/advisories/GHSA-vrw4-w73r-6mm8",
+      "packages": [
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "3.3.0", "fixed": "3.4.2" }, { "introduced": "4.0.0", "fixed": "4.3.1" }],
+          "files": [
+            { "path": "governance/TimelockControllerUpgradeable.sol", "anchor": ["function execute(", "contract TimelockControllerUpgradeable"], "evidence": "A vulnerability in `TimelockController` (advisory text)", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/security/advisories/GHSA-vrw4-w73r-6mm8" },
+            { "path": "access/TimelockControllerUpgradeable.sol", "anchor": ["function execute(", "contract TimelockControllerUpgradeable"], "evidence": "Same contract at its 3.x location", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/security/advisories/GHSA-vrw4-w73r-6mm8" },
+            { "path": "access/TimelockController.sol", "anchor": ["function execute(", "contract TimelockController"], "evidence": "Same contract in 3.4.0-solc-0.7 of the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/security/advisories/GHSA-vrw4-w73r-6mm8" }
+          ] }
+      ]
+    },
+    {
+      "id": "GHSA-4h98-2769-gh6h", "aliases": ["CVE-2022-35961"], "severity": "high",
+      "title": "ECDSA: recover and tryRecover accept compact (EIP-2098) signatures, a form of signature malleability",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-4h98-2769-gh6h",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.1.0", "fixed": "4.7.3" }],
+          "files": [{ "path": "utils/cryptography/ECDSA.sol", "anchor": ["function tryRecover(bytes32 hash, bytes memory signature)", "function recover(bytes32 hash, bytes memory signature)"], "evidence": "The functions `ECDSA.recover` and `ECDSA.tryRecover` (single `bytes` argument); fixed in commit d693d89", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/commit/d693d89d99325f395182e4f547dbf5ff8e5c3c87" }] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.1.0", "fixed": "4.7.3" }],
+          "files": [{ "path": "utils/cryptography/ECDSAUpgradeable.sol", "anchor": ["function tryRecover(bytes32 hash, bytes memory signature)", "function recover(bytes32 hash, bytes memory signature)"], "evidence": "Same library in the upgradeable package (ECDSAUpgradeable)", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-4h98-2769-gh6h" }] }
+      ]
+    },
+    {
+      "id": "GHSA-4g63-c64m-25w9", "aliases": ["CVE-2022-31172"], "severity": "high",
+      "title": "SignatureChecker may revert on invalid EIP-1271 signers",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-4g63-c64m-25w9",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.1.0", "fixed": "4.7.1" }],
+          "files": [{ "path": "utils/cryptography/SignatureChecker.sol", "anchor": ["function isValidSignatureNow("], "evidence": "`SignatureChecker.isValidSignatureNow` (advisory text); PR 3552", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3552" }] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.1.0", "fixed": "4.7.1" }],
+          "files": [{ "path": "utils/cryptography/SignatureCheckerUpgradeable.sol", "anchor": ["function isValidSignatureNow("], "evidence": "Same library in the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3552" }] }
+      ]
+    },
+    {
+      "id": "GHSA-qh9x-gcfh-pcrw", "aliases": ["CVE-2022-31170"], "severity": "high",
+      "title": "ERC165Checker may revert instead of returning false",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-qh9x-gcfh-pcrw",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.0.0", "fixed": "4.7.1" }],
+          "files": [{ "path": "utils/introspection/ERC165Checker.sol", "anchor": ["function supportsERC165InterfaceUnchecked(", "function _supportsERC165Interface(", "library ERC165Checker"], "evidence": "`ERC165Checker.supportsInterface` (advisory text); PR 3552", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3552" }] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.0.0", "fixed": "4.7.1" }],
+          "files": [{ "path": "utils/introspection/ERC165CheckerUpgradeable.sol", "anchor": ["function supportsERC165InterfaceUnchecked(", "function _supportsERC165Interface(", "library ERC165CheckerUpgradeable"], "evidence": "Same library in the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3552" }] }
+      ]
+    },
+    {
+      "id": "GHSA-93hq-5wgc-jc82", "aliases": ["CVE-2023-30542"], "severity": "high",
+      "title": "GovernorCompatibilityBravo may trim proposal calldata",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-93hq-5wgc-jc82",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.3.0", "fixed": "4.8.3" }],
+          "files": [{ "path": "governance/compatibility/GovernorCompatibilityBravo.sol", "anchor": ["function propose(", "abstract contract GovernorCompatibilityBravo"], "evidence": "The proposal creation entrypoint (`propose`) in `GovernorCompatibilityBravo`; fixed in commit 8d633cb", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/commit/8d633cb7d169f2f8595b273660b00b69e845c2fe" }] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.3.0", "fixed": "4.8.3" }],
+          "files": [{ "path": "governance/compatibility/GovernorCompatibilityBravoUpgradeable.sol", "anchor": ["function propose(", "abstract contract GovernorCompatibilityBravoUpgradeable"], "evidence": "Same contract in the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-93hq-5wgc-jc82" }] }
+      ]
+    },
+    {
+      "id": "GHSA-xrc4-737v-9q75", "aliases": ["CVE-2022-31198"], "severity": "high",
+      "title": "GovernorVotesQuorumFraction: lowering the quorum may make past defeated proposals executable",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-xrc4-737v-9q75",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.3.0", "fixed": "4.7.2" }],
+          "files": [{ "path": "governance/extensions/GovernorVotesQuorumFraction.sol", "anchor": ["function quorum(", "abstract contract GovernorVotesQuorumFraction"], "evidence": "Instances of Governor that use the module `GovernorVotesQuorumFraction`; PR 3561", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3561" }] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.3.0", "fixed": "4.7.2" }],
+          "files": [{ "path": "governance/extensions/GovernorVotesQuorumFractionUpgradeable.sol", "anchor": ["function quorum(", "abstract contract GovernorVotesQuorumFractionUpgradeable"], "evidence": "Same module in the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3561" }] }
+      ]
+    },
+    {
+      "id": "GHSA-7grf-83vw-6f5x", "aliases": ["CVE-2022-35915"], "severity": "moderate",
+      "title": "ERC165Checker: a supportsInterface target can cause unbounded gas consumption",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-7grf-83vw-6f5x",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "2.0.0", "fixed": "4.7.2" }],
+          "files": [
+            { "path": "utils/introspection/ERC165Checker.sol", "anchor": ["function supportsERC165InterfaceUnchecked(", "function _supportsERC165Interface(", "library ERC165Checker"], "evidence": "EIP-165 `supportsInterface` query (advisory text); PR 3587", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3587" },
+            { "path": "introspection/ERC165Checker.sol", "anchor": ["function _supportsERC165Interface(", "library ERC165Checker"], "evidence": "Same library at its 2.x / 3.x location", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3587" }
+          ] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "3.2.0", "fixed": "4.7.2" }],
+          "files": [
+            { "path": "utils/introspection/ERC165CheckerUpgradeable.sol", "anchor": ["function supportsERC165InterfaceUnchecked(", "function _supportsERC165Interface(", "library ERC165CheckerUpgradeable"], "evidence": "Same library in the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3587" },
+            { "path": "introspection/ERC165CheckerUpgradeable.sol", "anchor": ["function _supportsERC165Interface(", "library ERC165CheckerUpgradeable"], "evidence": "Same library at its 3.x location", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3587" },
+            { "path": "introspection/ERC165Checker.sol", "anchor": ["function _supportsERC165Interface(", "library ERC165Checker"], "evidence": "Same library in 3.4.0-solc-0.7 of the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3587" }
+          ] }
+      ]
+    },
+    {
+      "id": "GHSA-9c22-pwxw-p6hx", "aliases": ["CVE-2022-39384", "GHSA-88g8-f5mf-f5rj", "CVE-2021-46320"], "severity": "moderate",
+      "title": "Initializable: initializer reentrancy may lead to double initialization",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-9c22-pwxw-p6hx",
+      "note": "GHSA-88g8-f5mf-f5rj (rated high, range < 4.4.1) describes the same issue and links this advisory; OpenZeppelin's own rating and range are used here.",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "3.2.0", "fixed": "4.4.1" }],
+          "files": [
+            { "path": "proxy/utils/Initializable.sol", "anchor": ["modifier initializer()"], "evidence": "Initializer functions (the `initializer` modifier); PR 3006", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3006" },
+            { "path": "proxy/Initializable.sol", "anchor": ["modifier initializer()"], "evidence": "Same contract at its 3.x location", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3006" },
+            { "path": "utils/Initializable.sol", "anchor": ["modifier initializer()"], "evidence": "Same contract at its 4.0.0-beta location", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3006" }
+          ] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "3.2.0", "fixed": "4.4.1" }],
+          "files": [
+            { "path": "proxy/utils/Initializable.sol", "anchor": ["modifier initializer()"], "evidence": "Same contract in the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3006" },
+            { "path": "proxy/Initializable.sol", "anchor": ["modifier initializer()"], "evidence": "Same contract at its 3.x location", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3006" },
+            { "path": "utils/Initializable.sol", "anchor": ["modifier initializer()"], "evidence": "Same contract at its 4.0.0-beta location", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3006" }
+          ] }
+      ]
+    },
+    {
+      "id": "GHSA-5h3x-9wvq-w4m2", "aliases": ["CVE-2023-34234"], "severity": "moderate",
+      "title": "Governor: proposal creation may be blocked by frontrunning",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-5h3x-9wvq-w4m2",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.3.0", "fixed": "4.9.1" }],
+          "files": [
+            { "path": "governance/Governor.sol", "ranges": [{ "introduced": "4.9.0", "fixed": "4.9.1" }], "anchor": ["function propose(", "abstract contract Governor"], "evidence": "This impacts the `Governor` contract in v4.9.0 only; fixed in commit d947432", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/commit/d9474327a492f9f310f31bc53f38dbea56ed9a57" },
+            { "path": "governance/compatibility/GovernorCompatibilityBravo.sol", "anchor": ["function propose(", "abstract contract GovernorCompatibilityBravo"], "evidence": "And the `GovernorCompatibilityBravo` contract since v4.3.0", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/commit/d9474327a492f9f310f31bc53f38dbea56ed9a57" }
+          ] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.3.0", "fixed": "4.9.1" }],
+          "files": [
+            { "path": "governance/GovernorUpgradeable.sol", "ranges": [{ "introduced": "4.9.0", "fixed": "4.9.1" }], "anchor": ["function propose(", "abstract contract GovernorUpgradeable"], "evidence": "`Governor` in v4.9.0 only (upgradeable package); commit 66f390f", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/commit/66f390fa516b550838e2c2f65132b5bc2afe1ced" },
+            { "path": "governance/compatibility/GovernorCompatibilityBravoUpgradeable.sol", "anchor": ["function propose(", "abstract contract GovernorCompatibilityBravoUpgradeable"], "evidence": "`GovernorCompatibilityBravo` since v4.3.0 (upgradeable package)", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/commit/66f390fa516b550838e2c2f65132b5bc2afe1ced" }
+          ] }
+      ]
+    },
+    {
+      "id": "GHSA-699g-q6qh-q4v8", "aliases": ["CVE-2023-49798"], "severity": "moderate",
+      "title": "Multicall in 4.9.4 executes each subcall twice",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-699g-q6qh-q4v8",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.9.4", "fixed": "4.9.5" }],
+          "files": [{ "path": "utils/Multicall.sol", "anchor": ["function multicall("], "evidence": "Versions using `Multicall` from 4.9.4 execute each subcall twice; fixed in commit 88ac712", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/commit/88ac712e06832bce73b41e8166cded2729e25205" }] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.9.4", "fixed": "4.9.5" }],
+          "files": [{ "path": "utils/MulticallUpgradeable.sol", "anchor": ["function multicall("], "evidence": "`Multicall` from contracts-upgradeable@4.9.4; commit 31f9fb9", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/commit/31f9fb9d171f60b2271b2b9c6f62d43302bf9489" }] }
+      ]
+    },
+    {
+      "id": "GHSA-878m-3g6q-594q", "aliases": ["CVE-2023-26488"], "severity": "moderate",
+      "title": "ERC721Consecutive does not update balances for batches of size 1",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-878m-3g6q-594q",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.8.0", "fixed": "4.8.2" }],
+          "files": [{ "path": "token/ERC721/extensions/ERC721Consecutive.sol", "anchor": ["function _mintConsecutive(", "abstract contract ERC721Consecutive"], "evidence": "The ERC721Consecutive contract designed for minting NFTs in batches; fixed in commit 167bf67", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/commit/167bf67ed3907f4a674043496019fa346cee7705" }] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.8.0", "fixed": "4.8.2" }],
+          "files": [{ "path": "token/ERC721/extensions/ERC721ConsecutiveUpgradeable.sol", "anchor": ["function _mintConsecutive(", "abstract contract ERC721ConsecutiveUpgradeable"], "evidence": "Same contract in the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-878m-3g6q-594q" }] }
+      ]
+    },
+    {
+      "id": "GHSA-9j3m-g383-29qr", "aliases": ["CVE-2022-35916"], "severity": "moderate",
+      "title": "Arbitrum L2 cross-chain utilities see EOA calls as cross-chain calls",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-9j3m-g383-29qr",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.6.0", "fixed": "4.7.2" }],
+          "files": [
+            { "path": "crosschain/arbitrum/LibArbitrumL2.sol", "anchor": ["function isCrossChain(", "library LibArbitrumL2"], "evidence": "`LibArbitrumL2` (advisory text); PR 3578", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3578" },
+            { "path": "crosschain/arbitrum/CrossChainEnabledArbitrumL2.sol", "anchor": ["function _isCrossChain(", "abstract contract CrossChainEnabledArbitrumL2"], "evidence": "`CrossChainEnabledArbitrumL2` (advisory text); PR 3578", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3578" }
+          ] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.6.0", "fixed": "4.7.2" }],
+          "files": [
+            { "path": "crosschain/arbitrum/LibArbitrumL2Upgradeable.sol", "anchor": ["function isCrossChain(", "library LibArbitrumL2Upgradeable"], "evidence": "Same library in the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3578" },
+            { "path": "crosschain/arbitrum/CrossChainEnabledArbitrumL2Upgradeable.sol", "anchor": ["function _isCrossChain(", "abstract contract CrossChainEnabledArbitrumL2Upgradeable"], "evidence": "Same contract in the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/3578" }
+          ] }
+      ]
+    },
+    {
+      "id": "GHSA-9rcw-c2f9-2j55", "aliases": ["CVE-2025-54070"], "severity": "moderate",
+      "title": "Bytes.lastIndexOf with a position argument reads out of bounds on empty buffers",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-9rcw-c2f9-2j55",
+      "note": "The upgradeable package is listed as affected because its 5.x releases import Bytes.sol from @openzeppelin/contracts; it ships no copy of the file, so matching is on the @openzeppelin/contracts file.",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "5.2.0", "fixed": "5.4.0" }],
+          "files": [{ "path": "utils/Bytes.sol", "anchor": ["function lastIndexOf(bytes memory buffer, bytes1 s, uint256 pos)", "library Bytes"], "evidence": "The `lastIndexOf(bytes,byte,uint256)` function of the `Bytes.sol` library; PR 5797", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/5797" }] }
+      ]
+    },
+    {
+      "id": "GHSA-9vx6-7xxf-x967", "aliases": ["CVE-2024-27094"], "severity": "moderate",
+      "title": "Base64.encode may read from potentially dirty memory",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-9vx6-7xxf-x967",
+      "note": "The 5.x upgradeable releases import Base64.sol from @openzeppelin/contracts; matching for them is on the @openzeppelin/contracts file.",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.5.0", "fixed": "4.9.6" }, { "introduced": "5.0.0-rc.0", "fixed": "5.0.2" }],
+          "files": [{ "path": "utils/Base64.sol", "anchor": ["function encode(", "library Base64"], "evidence": "The `Base64.encode` function (advisory text); fixed in commit 9222453", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/commit/92224533b1263772b0774eec3134e132a3d7b2a6" }] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.5.0", "fixed": "4.9.6" }, { "introduced": "5.0.0-rc.0", "fixed": "5.0.2" }],
+          "files": [{ "path": "utils/Base64Upgradeable.sol", "anchor": ["function encode(", "library Base64Upgradeable"], "evidence": "Same library in the 4.x upgradeable package; commit 2d081f2", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/commit/2d081f24cac1a867f6f73d512f2022e1fa987854" }] }
+      ]
+    },
+    {
+      "id": "GHSA-g4vp-m682-qqmp", "aliases": ["CVE-2023-40014"], "severity": "moderate",
+      "title": "ERC2771Context: _msgSender may return address(0) for forwarder calls shorter than 20 bytes",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-g4vp-m682-qqmp",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.0.0", "fixed": "4.9.3" }],
+          "files": [{ "path": "metatx/ERC2771Context.sol", "anchor": ["function _msgSender(", "abstract contract ERC2771Context"], "evidence": "Contracts using `ERC2771Context` along with a custom trusted forwarder; fixed in commit 9445f96", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/commit/9445f96223041abf2bf08daa56f8da50b674cbcd" }] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.0.0", "fixed": "4.9.3" }],
+          "files": [{ "path": "metatx/ERC2771ContextUpgradeable.sol", "anchor": ["function _msgSender(", "abstract contract ERC2771ContextUpgradeable"], "evidence": "Same contract in the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/4484" }] }
+      ]
+    },
+    {
+      "id": "GHSA-m6w8-fq7v-ph4m", "aliases": [], "severity": "moderate",
+      "title": "GovernorCompatibilityBravo: incorrect ABI encoding of proposals created with explicit signatures",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-m6w8-fq7v-ph4m",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.3.0", "fixed": "4.4.2" }],
+          "files": [{ "path": "governance/compatibility/GovernorCompatibilityBravo.sol", "anchor": ["function _encodeCalldata(", "function propose(", "abstract contract GovernorCompatibilityBravo"], "evidence": "The `GovernorCompatibilityBravo` module may create proposals with bad ABI encoding", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-m6w8-fq7v-ph4m" }] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.3.0", "fixed": "4.4.2" }],
+          "files": [{ "path": "governance/compatibility/GovernorCompatibilityBravoUpgradeable.sol", "anchor": ["function _encodeCalldata(", "function propose(", "abstract contract GovernorCompatibilityBravoUpgradeable"], "evidence": "Same module in the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-m6w8-fq7v-ph4m" }] }
+      ]
+    },
+    {
+      "id": "GHSA-mx2q-35m2-x2rh", "aliases": ["CVE-2023-30541"], "severity": "moderate",
+      "title": "TransparentUpgradeableProxy: calls with a selector clashing with the proxy's may not be delegated",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-mx2q-35m2-x2rh",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "3.2.0", "fixed": "4.8.3" }],
+          "files": [
+            { "path": "proxy/transparent/TransparentUpgradeableProxy.sol", "anchor": ["modifier ifAdmin()", "contract TransparentUpgradeableProxy"], "evidence": "A function whose selector clashes with one of the proxy's own selectors; PR 4154", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/4154" },
+            { "path": "proxy/TransparentUpgradeableProxy.sol", "anchor": ["modifier ifAdmin()", "contract TransparentUpgradeableProxy"], "evidence": "Same proxy at its 3.x location", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/pull/4154" }
+          ] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "3.2.0", "fixed": "4.8.3" }],
+          "files": [{ "path": "proxy/TransparentUpgradeableProxy.sol", "anchor": ["modifier ifAdmin()", "contract TransparentUpgradeableProxy"], "evidence": "Same proxy in 3.4.0-solc-0.7 of the upgradeable package; commit 58fa0f8", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/commit/58fa0f81c4036f1a3b616fdffad2fd27e5d5ce21" }] }
+      ]
+    },
+    {
+      "id": "GHSA-wprv-93r4-jj2p", "aliases": ["CVE-2023-34459"], "severity": "moderate",
+      "title": "MerkleProof multiproofs may allow proving arbitrary leaves for specific trees",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-wprv-93r4-jj2p",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.7.0", "fixed": "4.9.2" }],
+          "files": [{ "path": "utils/cryptography/MerkleProof.sol", "anchor": ["function processMultiProof(", "library MerkleProof"], "evidence": "When `verifyMultiProof` / `processMultiProof` (and calldata variants) are in use; fixed in commit 4d2383e", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/commit/4d2383e17186be3e8ccf5a442e9686ecc7de1c55" }] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.7.0", "fixed": "4.9.2" }],
+          "files": [{ "path": "utils/cryptography/MerkleProofUpgradeable.sol", "anchor": ["function processMultiProof(", "library MerkleProofUpgradeable"], "evidence": "Same library in the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-wprv-93r4-jj2p" }] }
+      ]
+    },
+    {
+      "id": "GHSA-wmpv-c2jp-j2xg", "aliases": [], "severity": "low",
+      "title": "ERC1155Supply: total supply is updated after the mint callback",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-wmpv-c2jp-j2xg",
+      "packages": [
+        { "name": "@openzeppelin/contracts", "ranges": [{ "introduced": "4.2.0", "fixed": "4.3.3" }],
+          "files": [{ "path": "token/ERC1155/extensions/ERC1155Supply.sol", "anchor": ["function _mint(", "function _beforeTokenTransfer(", "abstract contract ERC1155Supply"], "evidence": "When including the `ERC1155Supply` extension, total supply is not updated until after the callback", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-wmpv-c2jp-j2xg" }] },
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.2.0", "fixed": "4.3.3" }],
+          "files": [{ "path": "token/ERC1155/extensions/ERC1155SupplyUpgradeable.sol", "anchor": ["function _mint(", "function _beforeTokenTransfer(", "abstract contract ERC1155SupplyUpgradeable"], "evidence": "Same extension in the upgradeable package", "ref": "https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-wmpv-c2jp-j2xg" }] }
+      ]
+    },
+    {
+      "id": "GHSA-7j52-6fjp-58gr", "aliases": [], "severity": "low",
+      "title": "ERC2771ContextUpgradeable: storage layout differs between 4.0-4.2 and 4.3+",
+      "url": "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/security/advisories/GHSA-7j52-6fjp-58gr",
+      "packages": [
+        { "name": "@openzeppelin/contracts-upgradeable", "ranges": [{ "introduced": "4.0.0", "fixed": "4.3.0" }],
+          "files": [{ "path": "metatx/ERC2771ContextUpgradeable.sol", "anchor": ["_trustedForwarder", "abstract contract ERC2771ContextUpgradeable"], "evidence": "The storage layout of the ERC2771ContextUpgradeable is not constant between versions (51 slots in 4.0.0-4.2.0); transpiler PR 86", "ref": "https://github.com/OpenZeppelin/openzeppelin-transpiler/pull/86" }] }
+      ]
+    }
+  ]
+}

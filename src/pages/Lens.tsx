@@ -29,6 +29,7 @@ import {
   sourcifyUrl,
 } from '@/lib/lens'
 import './lens.css'
+import { LensAdvisories } from '@/components/advisory/AdvisoryCard'
 import { lensPostUrl } from '@/lib/xpost'
 
 const EVM_CHAINS: ChainId[] = ['ethereum', 'base', 'arbitrum']
@@ -904,7 +905,9 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
       </Section>
       )}
 
-      <Section n={sol ? '08' : '07'} title="SEPIA-1 dataset" id="ln-data" meta={<span className={`ln-verdict ${VERDICT_CLASS[d.verdict] ?? ''}`}>{VERDICT_LABEL[d.verdict]}</span>}>
+      {!sol && isCode && <LensAdvisories chain={r.chain} address={d.address} n="07" />}
+
+      <Section n={!sol && !isCode ? '07' : '08'} title="SEPIA-1 dataset" id="ln-data" meta={<span className={`ln-verdict ${VERDICT_CLASS[d.verdict] ?? ''}`}>{VERDICT_LABEL[d.verdict]}</span>}>
         <Row k="address judged">
           <span className="mono">{d.address}</span> {d.address !== r.address && <span className="dim">(the implementation: that is the code)</span>}
         </Row>
@@ -930,7 +933,7 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
         </p>
       </Section>
 
-      <Section n={sol ? '09' : '08'} title="Read notes" open={false} meta={<span className="mono dim">{r.notes.length}</span>}>
+      <Section n={!sol && !isCode ? '08' : '09'} title="Read notes" open={false} meta={<span className="mono dim">{r.notes.length}</span>}>
         <ul className="ln-notes mono">
           {r.notes.map((n) => (
             <li key={n}>{n}</li>

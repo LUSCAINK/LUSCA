@@ -1,0 +1,282 @@
+/* ════════════════════════════════════════════════════════════════════════
+   ADVISORY CHECK — shared pieces (per-contract card, evidence lines, severity
+   chips, compiler bugs). Published severity only: critical in orange, high in
+   light orange, moderate in bone, low in grey. Mono facts, hairlines.
+   ════════════════════════════════════════════════════════════════════════ */
+
+.sv-critical { --sv: var(--hot); }
+.sv-high { --sv: var(--hot-2); }
+.sv-moderate { --sv: var(--fg-1); }
+.sv-low { --sv: var(--fg-2); }
+
+.av-sev {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px 2px;
+  border: 1px solid var(--sv, var(--line-3));
+  color: var(--sv, var(--fg-1));
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+.av-sev.sv-critical {
+  background: var(--hot-a10);
+}
+
+.av-id {
+  color: var(--fg);
+  font-size: var(--t-xs);
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.av-id:hover {
+  color: var(--hot);
+}
+
+/* ─── evidence line: ≡ path/File.sol:line  symbol  identical to … ─── */
+.av-ev {
+  display: grid;
+  grid-template-columns: 30px minmax(0, auto) auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 7px 0;
+  border-top: 1px dashed var(--line-2);
+  min-width: 0;
+}
+.av-ev-m {
+  font-size: var(--t-xs);
+  color: var(--hot);
+  text-align: center;
+  border: 1px solid var(--hot-a40);
+  padding: 1px 0;
+}
+.av-ev-m.header {
+  color: var(--fg-1);
+  border-color: var(--line-3);
+  font-size: var(--t-3xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+.av-ev-p {
+  font-family: var(--f-mono);
+  font-size: var(--t-sm);
+  color: var(--fg-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.av-ev-p .dir {
+  color: var(--fg-2);
+}
+.av-ev-p b {
+  color: var(--fg);
+  font-weight: 500;
+}
+.av-ev-p .ln {
+  color: var(--hot);
+}
+.av-ev-s {
+  font-size: var(--t-xs);
+  color: var(--fg);
+  padding: 1px 6px;
+  background: var(--bg-3);
+  white-space: nowrap;
+  max-width: 100%;
+  min-width: 0;
+}
+.av-ev-r {
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ─── per-contract card ─── */
+.av-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.av-card-h {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 16px;
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  letter-spacing: 0.02em;
+}
+.av-card-h b {
+  color: var(--fg);
+  font-weight: 500;
+}
+.av-card-lens {
+  color: var(--hot);
+  text-decoration: none;
+}
+.av-card-none,
+.av-card-note {
+  color: var(--fg-1);
+  font-size: var(--t-md);
+}
+.av-card-note {
+  font-size: var(--t-sm);
+  color: var(--fg-2);
+}
+.av-card-advs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--line-2);
+  border: 1px solid var(--line-2);
+}
+.av-card-adv {
+  padding: 12px 14px 6px;
+  background: var(--bg-1);
+  border-left: 2px solid var(--sv);
+  min-width: 0;
+}
+.av-card-adv-h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding-bottom: 8px;
+}
+.av-card-t {
+  color: var(--fg);
+  font-size: var(--t-md);
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.av-card-r {
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+}
+.av-scope {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--line-2);
+  border-left: 2px solid var(--fg-2);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  color: var(--fg-1);
+  letter-spacing: 0.01em;
+}
+.av-card-solc {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+.av-card-notes {
+  margin: 0;
+  padding-left: 16px;
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+}
+
+/* ─── compiler bugs ─── */
+.av-bugs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.av-bug {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px dashed var(--line-2);
+}
+.av-bsev {
+  justify-self: start;
+  font-size: var(--t-3xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-1);
+  border: 1px solid var(--line-3);
+  padding: 2px 6px 1px;
+  white-space: nowrap;
+  height: fit-content;
+}
+.av-bsev.s-high,
+.av-bsev.s-mediumhigh {
+  color: var(--hot);
+  border-color: var(--hot-a40);
+}
+.av-bsev.s-medium,
+.av-bsev.s-lowmedium {
+  color: var(--hot-2);
+  border-color: var(--line-4);
+}
+.av-bsev.s-verylow {
+  color: var(--fg-2);
+}
+.av-bug-b {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.av-bug-n {
+  color: var(--fg);
+  font-family: var(--f-mono);
+  font-size: var(--t-sm);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+a.av-bug-n:hover {
+  color: var(--hot);
+}
+.av-bug-s {
+  color: var(--fg-1);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+}
+.av-conds {
+  align-self: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.av-cond {
+  font-size: var(--t-2xs);
+  color: var(--fg-1);
+  padding: 2px 6px;
+  border: 1px solid var(--line-3);
+  letter-spacing: 0.02em;
+}
+.av-cond.none {
+  align-self: flex-start;
+  border-style: dashed;
+  color: var(--fg-2);
+}
+
+@media (max-width: 720px) {
+  .av-ev {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+  .av-ev-s,
+  .av-ev-r {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .av-ev-s {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .av-bug {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+}
