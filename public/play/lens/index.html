@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LUSCA Lens</title>
+<meta name="robots" content="noindex">
+<link rel="preload" href="/play/fonts/geist-mono.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/play/fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/play/lens.css">
+</head>
+<body>
+<div id="fit">
+  <main id="st" aria-label="LUSCA Lens readout">
+    <div class="glow"></div><div class="grid"></div>
+    <i class="tk tl"></i><i class="tk tr"></i><i class="tk bl"></i><i class="tk br"></i>
+
+    <header class="hd mono">
+      <span class="brand"><b>■</b> LUSCA · LENS</span>
+      <span class="live"><i></i><span id="live">READING</span></span>
+    </header>
+
+    <section class="tg">
+      <div class="row mono"><span id="chain" class="chip">—</span><span id="kind" class="kd"></span><span id="ago" class="ago"></span></div>
+      <div id="name" class="nm addr typing"></div>
+      <div id="addr" class="ad mono"></div>
+    </section>
+
+    <section class="ro mono" aria-label="Readout">
+      <div id="rows" class="ro-rows"></div>
+      <i id="scan" class="ro-scan on"></i>
+    </section>
+
+    <section id="pv" class="pv mono"></section>
+
+    <section id="vd" class="vd mono"><span class="k">sepia-1</span><span id="vtext" class="dim">reading…</span></section>
+
+    <footer class="ft mono">
+      <span id="meta" class="dim"></span>
+      <a id="out" href="https://lusca.ink/lens" target="_blank" rel="noopener">lusca.ink/lens ↗</a>
+    </footer>
+  </main>
+</div>
+<script src="/play/lens.js" defer></script>
+</body>
+</html>

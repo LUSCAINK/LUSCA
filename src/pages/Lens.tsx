@@ -29,6 +29,7 @@ import {
   sourcifyUrl,
 } from '@/lib/lens'
 import './lens.css'
+import { lensPostUrl } from '@/lib/xpost'
 
 const EVM_CHAINS: ChainId[] = ['ethereum', 'base', 'arbitrum']
 
@@ -812,6 +813,9 @@ function Report({ a, onRetry }: { a: LensAnswer; onRetry: () => void }) {
           <span className="mono">{r.address}</span>
           <Copy text={r.address} />
           <ShareLink />
+          <a className="ln-copy ln-x" href={lensPostUrl(r.chain, r.address, r.name)} target="_blank" rel="noopener" title="Post this report to X as a live card">
+            post to X ↗
+          </a>
           <Ext href={explorerUrl(r.chain, r.address)}>{explorerName(r.chain)} ↗</Ext>
           <button className="ln-copy" onClick={onRetry} title="Read again (served from cache within 15 minutes)">
             reload
