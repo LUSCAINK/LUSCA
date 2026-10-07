@@ -55,6 +55,7 @@ shows "—" and reconnects; it never substitutes recorded or generated data.
 | Proof of contribution: verify the credit chain and your own leaf | https://lusca.ink/earn#ep-proofs |
 | Lens: read any Solana program or EVM contract, with a cited report | https://lusca.ink/lens |
 | Scan: watch the chain agents read contracts live, call by call | https://lusca.ink/scan |
+| MCP: plug LUSCA into Claude, Cursor or any MCP client (`claude mcp add --transport http lusca https://lusca.ink/mcp`) | https://lusca.ink/mcp |
 | SEPIA-1 tokenizer playground and release files | https://lusca.ink/sepia#sp-tok · `/models/sepia-1-tokenizer/` |
 | Manual (protocol, threat model, economics) | https://lusca.ink/docs |
 | Source | https://github.com/LUSCAINK/LUSCA |
@@ -397,6 +398,8 @@ Nothing reads a `.env` file.
 | `LUSCA_LENS_SOL_CALLS` | 15 % of the agents' Solana limit (1,200 at the default) | Lens's daily share of Solana RPC calls, charged on top of the chain agents' budget |
 | `LUSCA_LENS_EVM_CALLS` | 15 % of the agents' EVM limit (2,250 at the default) | Lens's daily share of RPC calls per EVM chain |
 | `LUSCA_LENS_HTTP_CALLS` | 40 % of the registry limit | Lens's daily share of Sourcify and OtterSec calls, each |
+| `LUSCA_MCP` | on | `0` = no MCP endpoint; `/mcp` is then only the setup page |
+| `LUSCA_MCP_REQ_PER_MIN` · `_TOOLS_PER_MIN` · `_GLOBAL_PER_MIN` | 90 · 40 · 2,400 | POST `/mcp` per client address, `tools/call` per client address, POST `/mcp` for all clients together, per minute |
 | `LUSCA_RADAR` | on | `0` = upgrade radar off; `/api/radar*` answers 503 |
 | `LUSCA_RADAR_BACKFILL` | on | `0` = no first-start backfill (it runs once per data directory; once more only when its very first call was refused). EVM: the last 24 h. Solana: at most 500 loader transactions inspected, a few hours back |
 | `LUSCA_RADAR_SOL_CALLS` | 25 % of the agents' Solana limit (2,000 at the default) | the radar's daily share of Solana RPC calls (re-reads, getTransaction; getProgramAccounts counts as 10), on top of the agents' budget and never below a 10 % floor of it |
@@ -474,6 +477,7 @@ LUSCA/
 │   ├── auth/       wallet sign-in (nonce, ed25519 signature, session tokens)
 │   ├── proofs/     contribution epochs: Merkle leaves, hash-linked headers, proof lookups
 │   ├── lens/       LUSCA Lens: on-demand reads of one program or contract, cited reports
+│   ├── mcp/        MCP server at /mcp: JSON-RPC over HTTP, read-only tools for AI agents (Claude, Cursor)
 │   └── data/       runtime data (git-ignored): dataset, checkpoint, ledger, salts
 ├── shared/         code used by server, browser and desktop neuron: protocol.ts, sectors, vectorizer, payouts
 │   └── sepia/      the one SEPIA implementation: forward, backward, f16 gradient codec, trainFlops

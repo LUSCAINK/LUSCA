@@ -7,7 +7,8 @@
 //
 // Read-only. Every tool answers from data the REST API already serves; Lens reads go through server/lens
 // with its cache, limits and daily budget. Env: LUSCA_MCP=0 turns /mcp off · LUSCA_MCP_UPSTREAM=https://…
-// (local QA only: answer from another LUSCA server's public API, ≤ 1 request/s; never set in production).
+// (local QA only: answer from another LUSCA server's public API, ≤ 1 request/s; never set in production)
+// · LUSCA_MCP_REQ_PER_MIN (90) · LUSCA_MCP_TOOLS_PER_MIN (40) per client address · LUSCA_MCP_GLOBAL_PER_MIN (2400).
 //
 // Plain function API (for other server code):
 //   const mcp = createMcp({ source, site })
@@ -91,6 +92,22 @@ export function mcpSourceFromEnv(getModules: () => LocalModules | null, extras: 
 export function mcpSite(): string {
   const h = (process.env.LUSCA_CANONICAL_HOST ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
   return `https://${/^[a-z0-9.-]+(:\d{1,5})?$/.test(h) ? h : 'lusca.ink'}`
+}
+
+/** Limits from env (unset or invalid → the defaults in http.ts). */
+export function mcpLimitsFromEnv(env: NodeJS.ProcessEnv = process.env): Partial<McpHttpLimits> {
+  const out: Partial<McpHttpLimits> = {}
+  const num = (k: string, lo: number, hi: number) => {
+    const v = Number(env[k])
+    return env[k] !== undefined && env[k] !== '' && Number.isInteger(v) && v >= lo && v <= hi ? v : undefined
+  }
+  const r = num('LUSCA_MCP_REQ_PER_MIN', 1, 100_000)
+  const t = num('LUSCA_MCP_TOOLS_PER_MIN', 1, 100_000)
+  const g = num('LUSCA_MCP_GLOBAL_PER_MIN', 1, 1_000_000)
+  if (r !== undefined) out.requestsPerMin = r
+  if (t !== undefined) out.toolCallsPerMin = t
+  if (g !== undefined) out.globalPerMin = g
+  return out
 }
 
 export const mcpEnabled = () => !/^(0|false|no|off)$/i.test(process.env.LUSCA_MCP?.trim() ?? '')

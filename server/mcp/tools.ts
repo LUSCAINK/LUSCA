@@ -13,6 +13,7 @@ import { diffable } from '../../shared/radarDiff.ts'
 import { CONTROL_CLASSES, type ControlClass, type ControlEntry } from '../../shared/control.ts'
 import type { LensReport } from '../../shared/lens.ts'
 import { isSolanaAddress } from '../../shared/base58.ts'
+import { isOnCurve } from '../control/curve.ts'
 import type { JsonSchema } from './schema.ts'
 import { SourceError, type McpSource } from './source.ts'
 import { ago, bound, bytes, DASH, int, iso, list, pct, yesNo } from './format.ts'
@@ -561,20 +562,63 @@ function hopsText(e: ControlEntry): string {
     .join(' ')
 }
 
+/**
+ * Custody chain of an address the control map does not hold (not kept), from a Lens read: Solana upgrade
+ * authority classified on / off the ed25519 curve; EVM proxy admin as read (not classified further: the
+ * control map's Safe / timelock calls run for kept items only).
+ */
+async function controlFromLens(chain: ChainId, address: string, ctx: ToolContext): Promise<ControlEntry> {
+  const r = await from(ctx.source.lens(chain, address, ctx.ip))
+  if (!r.ok) throw new ToolError(`${address} on ${chain} is not in the control map (kept items only), and the Lens read needed for it was refused: ${r.error}`, r.retryAfterS)
+  const rep = r.answer.report
+  const base = { chain, address: rep.address, name: rep.name, at: rep.readAt, calls: rep.rpcCalls }
+  if (rep.solana) {
+    const s = rep.solana
+    const first = { kind: 'program' as const, address: rep.address, label: `program · ${s.loader ?? 'loader not read'}` }
+    if (s.upgradeable === false) return { ...base, cls: 'immutable', hops: [first], basis: `the program is not upgradeable (${s.loader ?? 'loader'}; Lens read)` }
+    if (!s.upgradeAuthority) return { ...base, cls: 'unknown', hops: [first], basis: 'the upgrade authority could not be read' }
+    const on = isOnCurve(s.upgradeAuthority)
+    if (on === null) return { ...base, cls: 'unknown', hops: [first, { kind: 'none', address: s.upgradeAuthority, label: 'upgrade authority', via: 'upgrade authority' }], basis: 'the upgrade authority is not a valid ed25519 encoding' }
+    return {
+      ...base,
+      cls: on ? 'key' : 'pda',
+      hops: [first, { kind: on ? 'key' : 'pda', address: s.upgradeAuthority, label: on ? 'single key' : 'program-derived address', via: 'upgrade authority' }],
+      basis: on ? 'upgrade authority is an ed25519 point (a keypair)' : 'upgrade authority is off the ed25519 curve (a PDA)',
+    }
+  }
+  const evm = rep.evm
+  if (!evm?.proxy) return { ...base, cls: 'immutable', hops: [{ kind: 'contract', address: rep.address, label: 'contract · no proxy' }], basis: 'no proxy found by the Lens read: the bytecode at this address is the code' }
+  const px = evm.proxy
+  const hops: ControlEntry['hops'] = [{ kind: px.standard === 'beacon' ? 'beacon' : px.standard === 'eip1167' ? 'clone' : 'proxy', address: rep.address, label: px.label }]
+  if (px.standard === 'eip1167') return { ...base, cls: 'immutable', hops, basis: 'EIP-1167 clone: the implementation address is fixed in the bytecode' }
+  if (px.admin) {
+    hops.push({ kind: 'contract', address: px.admin, label: 'proxy admin', via: 'admin slot' })
+    return { ...base, cls: 'unknown', hops, basis: 'EIP-1967 admin slot (Lens read)' }
+  }
+  const up = (evm.implementation?.privileged ?? []).filter((p) => /upgrade/i.test(p.fn)).slice(0, 2)
+  return {
+    ...base,
+    cls: 'unknown',
+    hops,
+    basis: up.length ? `no admin in the proxy slot; the implementation guards ${up.map((p) => `${p.fn} with ${p.guard} (${p.file}:${p.line})`).join('; ')}` : 'no admin in the proxy slot (UUPS-style: the upgrade check lives in the implementation code)',
+  }
+}
+
 const controlTool = defineTool({
   name: 'lusca_control',
   title: 'Who can change the code',
   description:
-    "Who can change the code of one kept Solana program or EVM contract: the custody chain from the code to the controlling account (Solana upgrade authority and whether it is a keypair or a program-derived address; EVM proxy admin followed to a key, Safe with its threshold, timelock with its delay, or another contract) and every other kept program / contract the same controller can change. Facts about who holds the upgrade right; nothing about intent.",
+    "Who can change the code of a Solana program or EVM contract: the custody chain from the code to the controlling account (Solana upgrade authority and whether it is a keypair or a program-derived address; EVM proxy admin followed to a key, Safe with its threshold, timelock with its delay, or another contract) and every other kept program / contract the same controller can change. Kept items answer from the control map; any other address is read with Lens first. Facts about who holds the upgrade right; nothing about intent.",
   inputSchema: target(),
+  annotations: { openWorldHint: true },
   cacheS: 10,
+  timeoutMs: 62_000,
   async run(args, ctx) {
     const { chain, address } = targetOf(args)
     const now = ctx.now()
-    const e = await from(ctx.source.controlGet(chain, address))
-    if (!e) {
-      throw new ToolError(`${address} on ${chain} is not in the control map: it maps the programs and contracts LUSCA keeps. lusca_lens reads any address directly, including its upgrade authority / proxy admin.`)
-    }
+    const stored = await from(ctx.source.controlGet(chain, address))
+    const viaLens = stored ? null : await controlFromLens(chain, address, ctx)
+    const e = stored ?? viaLens!
     const ctl = finalController(e)
     let others: { chain: ChainId; address: string; name: string | null; cls: ControlClass; url: string }[] = []
     let total = 0
@@ -586,7 +630,12 @@ const controlTool = defineTool({
         others = rest.slice(0, 25).map((x) => ({ chain: x.chain, address: x.address, name: x.name, cls: x.cls, url: ctx.site + lensPath(x.chain, x.address) }))
       }
     }
-    const out = [`Control · ${e.chain} · ${e.name ?? '(no name)'} ${e.address}`, `class: ${CLASS_TEXT[e.cls]}`, `basis: ${e.basis}`, `custody chain: ${hopsText(e) || 'not resolved yet'}`]
+    const out = [
+      `Control · ${e.chain} · ${e.name ?? '(no name)'} ${e.address}${viaLens ? ' · not kept by LUSCA: read with Lens just now' : ''}`,
+      `class: ${viaLens && e.cls === 'unknown' ? 'proxy admin read, not classified (key / Safe / timelock are classified for kept items only)' : CLASS_TEXT[e.cls]}`,
+      `basis: ${e.basis}`,
+      `custody chain: ${hopsText(e) || 'not resolved yet'}`,
+    ]
     if (ctl) out.push(`controller: ${ctl.address} (${ctl.label})`)
     if (ctl && e.cls !== 'immutable') {
       if (others.length) {
@@ -595,12 +644,13 @@ const controlTool = defineTool({
         if (total > 20) out.push(`  … +${int(total - 20)} more`)
       } else out.push('the same controller changes no other kept program / contract')
     }
-    if (e.at) out.push(`resolved ${iso(e.at)}${e.calls ? ` with ${e.calls} RPC calls` : ' from the stored read (no extra calls)'}`)
-    const l = links(ctx.site, '/control', `/api/control/${e.chain}/${e.address}`, ctl ? `/api/control/items?controller=${ctl.address}` : '', lensPath(e.chain, e.address))
+    if (viaLens) out.push(`read ${iso(e.at)} by LUSCA Lens`)
+    else if (e.at) out.push(`resolved ${iso(e.at)}${e.calls ? ` with ${e.calls} RPC calls` : ' from the stored read (no extra calls)'}`)
+    const l = links(ctx.site, viaLens ? lensPath(e.chain, e.address) : '/control', viaLens ? `/api/lens/${e.chain}/${e.address}` : `/api/control/${e.chain}/${e.address}`, ctl ? `/api/control/items?controller=${ctl.address}` : '', lensPath(e.chain, e.address))
     out.push(`Sources: ${l.join(' · ')}`)
     return {
       text: bound(out.join('\n'), TEXT_MAX),
-      data: { chain: e.chain, address: e.address, name: e.name, class: e.cls, classText: CLASS_TEXT[e.cls], basis: e.basis, hops: e.hops, controller: ctl, sameController: { total, items: others }, resolvedAt: e.at || null, links: l, asOf: now },
+      data: { source: viaLens ? 'lens' : 'control-map', chain: e.chain, address: e.address, name: e.name, class: e.cls, classText: CLASS_TEXT[e.cls], basis: e.basis, hops: e.hops, controller: ctl, sameController: { total, items: others }, resolvedAt: e.at || null, links: l, asOf: now },
     }
   },
 })

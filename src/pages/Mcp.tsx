@@ -331,6 +331,12 @@ export default function Mcp() {
             A remote MCP server for Claude, Cursor and any MCP client. Your agent asks; LUSCA answers from what its agents read on Solana, Ethereum, Base and Arbitrum — who
             can change a program’s code and what else that key controls, what changed on-chain, what a contract exposes — with a lusca.ink link for every fact.
           </p>
+          <ol className="mc-flow mono" aria-label="How an answer is made">
+            <li>any MCP client</li>
+            <li className="hot">POST /mcp</li>
+            <li>{tools ? tools.map((t) => t.name.replace(/^lusca_/, '').replace(/_.*$/, '')).filter((v, i, a) => a.indexOf(v) === i).join(' · ') : 'lens · control · radar · atlas · scan · stats'}</li>
+            <li>facts + links</li>
+          </ol>
         </div>
         <div className="mc-end">
           <div className="mc-end-h mono">

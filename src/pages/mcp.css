@@ -65,6 +65,62 @@
   color: var(--fg-1);
 }
 
+/* flow: agent → endpoint → stores → answer */
+.mc-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 0;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-1);
+}
+.mc-flow li {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  border: 1px solid var(--line-3);
+  background: var(--bg);
+  white-space: nowrap;
+}
+.mc-flow li.hot {
+  color: var(--fg);
+  border-color: var(--hot);
+  background: var(--hot-a10);
+}
+.mc-flow li + li {
+  position: relative;
+  margin-left: 34px;
+}
+.mc-flow li + li::before {
+  content: '';
+  position: absolute;
+  left: -30px;
+  top: 50%;
+  width: 26px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-4) 0 40%, var(--hot) 40% 60%, var(--line-4) 60%) 0 0 / 300% 100%;
+  animation: mc-wire 2.4s linear infinite;
+}
+.mc-flow li:nth-child(3)::before {
+  animation-delay: 0.8s;
+}
+.mc-flow li:nth-child(4)::before {
+  animation-delay: 1.6s;
+}
+@keyframes mc-wire {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
 /* endpoint card */
 .mc-end {
   position: relative;
@@ -576,7 +632,8 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .mc-text .ln,
-  .mc-scan {
+  .mc-scan,
+  .mc-flow li + li::before {
     animation: none;
   }
 }

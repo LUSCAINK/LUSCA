@@ -12,7 +12,7 @@ import type { RadarCodeDiff } from '../../shared/radarDiff.ts'
 import type { ControlEntry, ControlSummary } from '../../shared/control.ts'
 import type { AtlasItem } from '../../shared/atlas.ts'
 import type { LensAnswer, LensReport } from '../../shared/lens.ts'
-import { createMcp, defineTool } from './index.ts'
+import { createMcp, defineTool, mcpLimitsFromEnv } from './index.ts'
 import { localSource, remoteSource, SourceError, type McpSource } from './source.ts'
 import { validate } from './schema.ts'
 import { scrub } from './format.ts'
@@ -440,6 +440,26 @@ try {
     assert.match(miss.json.result.content[0].text, /not in the control map/)
   })
 
+  await test('lusca_control on an address that is not kept: Lens read first, authority classified, same-controller list', async () => {
+    const m = createMcp({ source: fixtureSource({ controlGet: async () => null }), now: () => NOW })
+    const r = await m.callTool('lusca_control', { chain: 'solana', address: PUMP }, { ip: '1' })
+    assert.equal(r.isError, false)
+    const t = r.content[0].text
+    assert.match(t, /not kept by LUSCA: read with Lens just now/)
+    assert.match(t, /class: program-derived address/)
+    assert.match(t, /upgrade authority is off the ed25519 curve/)
+    assert.match(t, /can change 2 other kept programs/)
+    assert.equal((r.structuredContent as any).source, 'lens')
+    const evmReport = {
+      ...REPORT, chain: 'base', address: PROXY, kind: 'contract', name: 'Vault', solana: null,
+      evm: { chainId: 8453, bytecodeBytes: 500, codeHash: null, proxy: { standard: 'eip1967', label: 'EIP-1967 transparent', implementation: IMPL_B, admin: '0x' + '7'.repeat(40) }, self: null, implementation: null },
+    } as unknown as LensReport
+    const e = createMcp({ source: fixtureSource({ controlGet: async () => null, lens: async () => ({ ok: true, answer: { report: evmReport, cached: false, fresh: 0 } }) }), now: () => NOW })
+    const er = await e.callTool('lusca_control', { chain: 'base', address: PROXY }, { ip: '1' })
+    assert.match(er.content[0].text, /proxy admin read, not classified/)
+    assert.ok(er.content[0].text.includes('[admin slot] proxy admin 0x7777'))
+  })
+
   await test('lusca_lens: report summary, IDL, primitives, dataset verdict; refusals carry Retry-After', async () => {
     const r = await call(url, 'lusca_lens', { chain: 'solana', address: PUMP }, 1, { 'x-test-ip': '10.0.0.7' })
     const res = r.json.result
@@ -629,6 +649,7 @@ try {
     assert.equal(scrub('Solana public websocket, gaps on Solana public RPC, via PublicNode'), 'websocket, gaps on RPC, via RPC')
     assert.equal(validate({ type: 'object', properties: { n: { type: 'integer', minimum: 1 } }, additionalProperties: false }, { n: 1.5 }), 'n must be an integer')
     assert.equal(validate({ type: 'object', properties: {}, additionalProperties: false }, null), 'arguments must be an object')
+    assert.deepEqual(mcpLimitsFromEnv({ LUSCA_MCP_REQ_PER_MIN: '300', LUSCA_MCP_TOOLS_PER_MIN: 'x', LUSCA_MCP_GLOBAL_PER_MIN: '0' }), { requestsPerMin: 300 })
   })
 } finally {
   server.close()

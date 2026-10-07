@@ -31,7 +31,7 @@ import type { LuscaCoordinator } from './neurons/coordinator.ts'
 import { parseV6 } from './ingest/netguard.ts'
 import { BOT_CONTACT, BOT_FROM, ROBOTS_UA, USER_AGENT } from './ingest/util.ts'
 import { playerFile, resolveShare } from './share/cards.ts'
-import { createMcp, mcpEnabled, mcpSite, mcpSourceFromEnv } from './mcp/index.ts'
+import { createMcp, mcpEnabled, mcpLimitsFromEnv, mcpSite, mcpSourceFromEnv } from './mcp/index.ts'
 
 /** GET /api/bot: who LuscaBot is and where site owners reach its operator (env LUSCA_BOT_CONTACT). */
 const BOT_INFO = { userAgent: USER_AGENT, robotsToken: ROBOTS_UA, contact: BOT_CONTACT || null, from: BOT_FROM }
@@ -1339,6 +1339,7 @@ export function createHub(opts: HubOptions): Hub {
         source: mcpSourceFromEnv(() => modules, { stats: buildStats, audits: () => (modules ? modelInfo(modules.trainer).audits : null) }, mcpLog),
         site: mcpSite(),
         originAllowed,
+        limits: mcpLimitsFromEnv(),
         log: mcpLog,
       })
     : null
