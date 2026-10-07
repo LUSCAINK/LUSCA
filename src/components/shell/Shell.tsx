@@ -22,6 +22,8 @@ export const NAV = [
   { to: '/radar', label: 'Radar', n: '08' },
   { to: '/sepia', label: 'Model', n: '09' },
   { to: '/docs', label: 'Docs', n: '10' },
+  { to: '/control', label: 'Control', n: '11' },
+  { to: '/atlas', label: 'Atlas', n: '12' },
 ]
 
 /** Legal pages: status bar (desktop/tablet) and the menu drawer (mobile). */

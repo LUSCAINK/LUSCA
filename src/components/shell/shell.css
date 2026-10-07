@@ -386,7 +386,7 @@
 }
 
 /* menu drawer: below this width the seven nav items and the bar controls no longer fit in one row */
-@media (max-width: 1320px) {
+@media (max-width: 1520px) {
   .burger {
     display: flex;
   }
