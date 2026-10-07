@@ -52,6 +52,8 @@ export interface CodeSearchOptions {
   strikesPerIp?: number
   /** Regex time-outs a minute over all addresses before new regexes pause for everyone for a minute (default 10). */
   globalTimeoutsPerMin?: number
+  /** Replay-log length past which the idle builder sends one base delta that replaces it (default 4). */
+  compactAfter?: number
   /** Snapshot save debounce after changes, ms (default 120 s). */
   saveDelayMs?: number
   /** The builder worker exits after this long with nothing to do and nothing unsaved, ms (default 30 s); the next change starts it again from the deltas the main thread keeps. */
@@ -92,6 +94,8 @@ const GLOBAL_WINDOW_MS = 60_000
 const GLOBAL_PAUSE_MS = 60_000
 /** A query worker stops scanning at 900 ms (query.mjs SOFT_MS): a regex that ran this long used up its budget. */
 const SLOW_MS = 850
+/** Past this many deltas in the replay log, the idle builder is asked for one base delta that replaces them. */
+const COMPACT_AFTER = 4
 
 interface NormQuery { q: string; re: boolean; case: boolean; chain: ChainId | null; custom: boolean; path: string | null; lang: SearchLang | null; offset: number }
 interface Job { id: number; q: NormQuery | { file: number } | { source: number; q: NormQuery | null }; resolve: (r: WorkerOut) => void; queuedAt: number; timer: NodeJS.Timeout | null }
@@ -156,6 +160,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
   const viewsPerIp = o.viewsPerIpPerMin ?? 60
   const strikesPerIp = o.strikesPerIp ?? 2
   const globalTrip = o.globalTimeoutsPerMin ?? 10
+  const compactAfter = o.compactAfter ?? COMPACT_AFTER
   const buildUrl = new URL('./build.mjs', import.meta.url)
   const queryUrl = new URL('./query.mjs', import.meta.url)
 
@@ -169,6 +174,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
   let searches = 0
   const builderIdleMs = o.builderIdleMs ?? 30_000
   const replay: unknown[] = []
+  let compacting = false
   let gen = 0
   let bstats: BuilderStats | null = null
   let state: SearchStats['state'] = 'loading'
@@ -266,9 +272,20 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
         state = bstats.state
         statsCache = null
       } else if (m.type === 'log') log(m.lvl as 'info', String(m.msg))
-      else if (m.type === 'idle') {
+      else if (m.type === 'base') {
+        // the whole index as one delta, sent after every delta it covers: a query worker started later (after a
+        // time-out) applies this one message instead of every change since the process started
+        log('info', `code search: replay log compacted (${replay.length} deltas → 1)`)
+        replay.length = 0
+        replay.push(m.delta)
+        compacting = false
+      } else if (m.type === 'idle') {
         busyBuilding = false
         builderCrashes = 0
+        if (replay.length > compactAfter && !compacting && builder === w) {
+          compacting = true
+          w.postMessage({ type: 'compact' })
+        }
         const ws = idleWaiters
         idleWaiters = []
         for (const f of ws) f()
@@ -294,6 +311,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     })
     w.on('error', (e) => log('error', `code search builder: ${e.stack ?? e.message}`))
     w.on('exit', (code) => {
+      compacting = false
       if (stopped || retiring === w) return
       builderCrashes++
       if (builder === w) builder = null

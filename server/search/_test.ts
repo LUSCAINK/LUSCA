@@ -427,9 +427,16 @@ await test('route: validation, cache, per-address limit', async () => {
 })
 
 await test('regex time-outs: an address that keeps running out of time gets literal search only; a flood pauses regexes for all', async () => {
-  const t = createCodeSearch({ source: sourceOf(() => live), dataDir: tmp, log, startDelayMs: 0, hardMs: 250, perIpPerMin: 1000, strikesPerIp: 2, globalTimeoutsPerMin: 3, saveDelayMs: 0 })
+  let tlog = ''
+  const t = createCodeSearch({ source: sourceOf(() => live), dataDir: tmp, log: (_l, m) => (tlog += `${m}
+`), startDelayMs: 0, hardMs: 250, perIpPerMin: 1000, strikesPerIp: 2, globalTimeoutsPerMin: 3, saveDelayMs: 0, compactAfter: 0, builderIdleMs: 150, syncMs: 100 })
   t.start()
   await ready(t)
+  // the idle builder replaced the replay log with one base delta: workers started after a time-out load from it
+  await new Promise((r) => setTimeout(r, 200))
+  const before = await t.search({ q: 'delegatecall(data)' })
+  const beforeIdl = await t.search({ q: 'withdraw_', chain: 'solana' })
+  assert.match(tlog, /replay log compacted/)
   const slowRe = (n: number) => new URLSearchParams({ q: `\\w*\\w*\\w*[!${String.fromCharCode(0x2600 + n)}]`, re: '1' }) // a class adds no literal (no prefilter) and matches nothing here: each one reaches Slow.sol
   const a1 = await t.route('/api/search', slowRe(1), '5.5.5.5')
   assert.equal(JSON.parse(a1.json).error?.code, 'timeout', a1.json.slice(0, 300))
@@ -449,7 +456,24 @@ await test('regex time-outs: an address that keeps running out of time gets lite
   assert.equal(g.status, 503)
   assert.match(JSON.parse(g.json).error.message, /paused/)
   assert.equal((await t.route('/api/search', new URLSearchParams({ q: 'tx.origin' }), '9.9.9.9')).status, 200)
+  // 4 time-outs killed both original workers: the ones started from the compacted log answer the same
+  for (let i = 0; i < 2; i++) {
+    assert.deepEqual((await t.search({ q: 'delegatecall(data)' })).total, before.total)
+    assert.deepEqual((await t.search({ q: 'withdraw_', chain: 'solana' })).total, beforeIdl.total)
+  }
+  // the builder left; the next kept item starts a new one from the compacted log (restore), and it is searchable
+  for (let i = 0; i < 200 && (await t.heaps())[0] !== 0; i++) await new Promise((r) => setTimeout(r, 25))
+  assert.equal((await t.heaps())[0], 0, 'the idle builder exited')
+  live = live.concat([{ chain: 'arbitrum', address: addr(990), name: 'AfterBase', readAt: 1_800_000_000_900, sources: [{ path: 'src/AfterBase.sol', text: 'contract AfterBase {\n  function ping() external { emit Pinged(after_base_marker); }\n}\n' }] }])
+  writeStore(tmp, live.slice(-1), 'chain-000004.jsonl.gz')
+  await new Promise((r) => setTimeout(r, 300))
+  await t.idle()
+  await new Promise((r) => setTimeout(r, 50))
+  const after = await t.search({ q: 'after_base_marker' })
+  assert.equal(after.total.contracts, 1)
+  assert.deepEqual((await t.search({ q: 'delegatecall(data)' })).total, before.total)
   await t.stop()
+  live = live.filter((r) => r.name !== 'AfterBase') // the next test compares with the instance from before
 })
 
 await test('snapshot: a restart loads the gzip snapshot and answers the same', async () => {
