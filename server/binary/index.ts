@@ -52,7 +52,7 @@ export interface BinaryLimits {
   pending: number
   /** Programs remembered (census). */
   maxPrograms: number
-  /** results.jsonl stops growing past this (MB). */
+  /** results.jsonl stops growing past this (MB); the results held in memory take about 4x its size. */
   maxResultsMb: number
   /** Largest executable recovered (bytes). */
   maxElfBytes: number
@@ -66,7 +66,7 @@ export const DEFAULT_BINARY_LIMITS: BinaryLimits = {
   gapMs: 6_000,
   pending: 4,
   maxPrograms: 20_000,
-  maxResultsMb: 60,
+  maxResultsMb: 32,
   maxElfBytes: 12 * 1024 * 1024,
 }
 
@@ -185,12 +185,17 @@ export function createBinary(d: BinaryDeps): BinaryService {
   try {
     const text = fs.readFileSync(resultsFile, 'utf8')
     resultBytes = Buffer.byteLength(text)
+    const latest = new Map<string, string>() // address → code hash of its newest line (older code is superseded)
     for (const line of text.split('\n')) {
       if (!line) continue
       resultLines++
       try {
         const r = JSON.parse(line) as BinaryInterface
-        if (r && r.v === 1 && typeof r.codeHash === 'string' && typeof r.address === 'string') results.set(r.codeHash, r)
+        if (!(r && r.v === 1 && typeof r.codeHash === 'string' && typeof r.address === 'string')) continue
+        const prev = latest.get(r.address)
+        if (prev && prev !== r.codeHash && results.get(prev)?.address === r.address) results.delete(prev)
+        latest.set(r.address, r.codeHash)
+        results.set(r.codeHash, r)
       } catch {
         /* a torn last line */
       }
@@ -258,17 +263,28 @@ export function createBinary(d: BinaryDeps): BinaryService {
     }
   }
 
+  /** results.jsonl at its cap (after dropping superseded lines): no new result is made, in memory or on disk. */
+  let fullLogged = false
+  function resultsFull(next?: number): boolean {
+    const cap = L.maxResultsMb * 1024 * 1024
+    // before a read: room for a typical result (16 KB, or a quarter of a small cap) must be left
+    const extra = next ?? Math.min(16_384, cap / 4)
+    if (resultBytes + extra <= cap) return false
+    if (resultLines > results.size) compact()
+    if (resultBytes + extra <= cap) return false
+    if (!fullLogged) log('warn', `binary results are at their ${L.maxResultsMb} MB cap: no new recoveries until the cap is raised`)
+    fullLogged = true
+    return true
+  }
+
   function appendResult(r: BinaryInterface) {
     const line = JSON.stringify(r) + '\n'
-    if (resultBytes + line.length > L.maxResultsMb * 1024 * 1024) {
-      log('warn', 'binary results.jsonl is at its size cap: result kept in memory only')
-      return
-    }
+    if (resultsFull(Buffer.byteLength(line))) return
     try {
       fs.mkdirSync(dir, { recursive: true })
       fs.appendFileSync(resultsFile, line)
       resultLines++
-      resultBytes += line.length
+      resultBytes += Buffer.byteLength(line)
       if (resultLines > results.size * 1.5 + 50) compact()
     } catch (e) {
       log('warn', `binary result append failed: ${errMsg(e)}`)
@@ -316,6 +332,7 @@ export function createBinary(d: BinaryDeps): BinaryService {
     const trimmed = trimTrailingZeros(elf)
     const codeHash = read.codeHash ?? (await codeHashOf(trimmed))
     if (results.has(codeHash) && results.get(codeHash)!.dictionary.idls >= dict.idls * 0.9) return
+    if (resultsFull()) return
     const hasIdl = !!read.idl
     const r = await recoverInterface(trimmed, dict, { exclude: hasIdl ? read.address : undefined, pause })
     if (stopped) return
@@ -347,6 +364,19 @@ export function createBinary(d: BinaryDeps): BinaryService {
     if (Object.keys(r.more).length) out.more = r.more
     if (!isElf(trimmed)) out.notes.push('the program bytes do not start with an ELF header')
     if (hasIdl && read.idl) out.check = checkAgainstIdl(out, read.idl)
+    if (resultsFull(Buffer.byteLength(JSON.stringify(out)) + 1)) return
+    // one result per program: the code it ran before an upgrade is dropped (unless another program runs it too)
+    for (const [h, x] of results) {
+      if (x.address !== read.address || h === codeHash) continue
+      let shared = false
+      for (const q of programs.values()) if (q.address !== read.address && q.codeHash === h) shared = true
+      if (!shared) results.delete(h)
+    }
+    const ref = programs.get(read.address)
+    if (ref && ref.codeHash !== codeHash) {
+      ref.codeHash = codeHash
+      saveSoon()
+    }
     results.set(codeHash, out)
     appendResult(out)
     if (r.learned.length) dict.addLogNames(read.address, r.learned)
@@ -446,7 +476,7 @@ export function createBinary(d: BinaryDeps): BinaryService {
   let readsDone = 0
 
   async function tick(): Promise<'read' | 'none' | 'budget' | 'error'> {
-    if (stopped || !dictReady) return 'none'
+    if (stopped || !dictReady || resultsFull()) return 'none'
     const p = nextCandidate()
     if (!p) {
       state = 'idle'
