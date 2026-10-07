@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import type { ChainId } from '@shared/chain'
-import type { SearchFileHit, SearchFileRefs, SearchGroup, SearchIdlHit, SearchLang, SearchLine, SearchResult, SearchStats } from '@shared/search'
+import type { SearchFileHit, SearchFileRefs, SearchGroup, SearchIdlHit, SearchItem, SearchLang, SearchLine, SearchResult, SearchStats } from '@shared/search'
 import { Kicker } from '@/components/docs/pagekit'
 import { CHAINS, CHAIN_LABEL, CHAIN_SHORT, explorerName, explorerUrl, shortAddress } from '@/lib/chain'
 import { DASH, fmtBytes, fmtInt } from '@/lib/format'
@@ -148,27 +148,27 @@ function FileHit({ f, open, toggle }: { f: SearchFileHit; open: boolean; toggle:
           )}
         </div>
       )}
-      {open && f.alsoIn.length > 0 && <AlsoIn f={f} />}
+      {open && f.alsoIn.length > 0 && <RefsList id={f.id} preview={f.alsoIn} others={f.shared.contracts - 1} />}
     </div>
   )
 }
 
-/** Every kept contract with this exact file: the first 8 come with the result, the rest from /api/search/file. */
-function AlsoIn({ f }: { f: SearchFileHit }) {
+/** Every kept contract with this exact file: a few come with the result (`preview`), the rest from /api/search/file. */
+function RefsList({ id, preview, others }: { id: number; preview: (SearchItem & { path: string })[]; others: number }) {
   const [refs, setRefs] = useState<SearchFileRefs | 'loading' | 'error' | null>(null)
-  const partial = f.shared.contracts - 1 > f.alsoIn.length
+  const partial = others > preview.length
   useEffect(() => {
     if (!partial) return
     const ac = new AbortController()
     setRefs('loading')
-    fetch(`/api/search/file?id=${f.id}`, { signal: ac.signal })
+    fetch(`/api/search/file?id=${id}`, { signal: ac.signal })
       .then((r) => (r.ok ? (r.json() as Promise<{ file: SearchFileRefs }>) : Promise.reject(new Error(String(r.status)))))
       .then((j) => setRefs(j.file))
       .catch(() => !ac.signal.aborted && setRefs('error'))
     return () => ac.abort()
-  }, [f.id, partial])
+  }, [id, partial])
   const full = refs && typeof refs === 'object' ? refs : null
-  const list = full ? full.list : f.alsoIn
+  const list = full ? full.list : preview
   return (
     <div className="sx-also-w">
       {full && (
@@ -193,7 +193,7 @@ function AlsoIn({ f }: { f: SearchFileHit }) {
           </li>
         ))}
         {!full && partial && (
-          <li className="dim">{refs === 'error' ? `and ${fmtInt(f.shared.contracts - 1 - f.alsoIn.length)} more (could not load them)` : `loading the other ${fmtInt(f.shared.contracts - 1 - f.alsoIn.length)}…`}</li>
+          <li className="dim">{refs === 'error' ? `and ${fmtInt(others - preview.length)} more (could not load them)` : `loading ${preview.length ? 'the other ' : ''}${fmtInt(others - preview.length)}…`}</li>
         )}
         {full && full.more > 0 && <li className="dim">and {fmtInt(full.more)} more</li>}
       </ul>
@@ -309,6 +309,7 @@ export default function Search() {
   const [err, setErr] = useState('')
   const [open, setOpen] = useState<Set<number>>(new Set())
   const [moreBusy, setMoreBusy] = useState(false)
+  const [topOpen, setTopOpen] = useState<number | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const active = useMemo(() => formOf(sp), [sp])
   const activeKey = paramsOf(active).toString()
@@ -672,21 +673,25 @@ export default function Search() {
           {s && s.top.length ? (
             <ol className="sx-top-list">
               {s.top.map((f, i) => (
-                <li key={`${f.path}:${i}`}>
-                  <span className="sx-top-n num">{fmtInt(f.contracts)}</span>
-                  <span className="sx-top-b">
-                    <span className="sx-path mono" title={f.path}>
-                      {f.path}
+                <li key={`${f.path}:${i}`} className={topOpen === f.id ? 'open' : ''}>
+                  <button className="sx-top-row" onClick={() => setTopOpen(topOpen === f.id ? null : f.id)} aria-expanded={topOpen === f.id} title="Every kept contract that includes this exact file">
+                    <span className="sx-top-n num">{fmtInt(f.contracts)}</span>
+                    <span className="sx-top-b">
+                      <span className="sx-path mono" title={f.path}>
+                        {f.path}
+                      </span>
+                      <span className="sx-top-s mono">
+                        {CHAINS.filter((c) => (f.chains[c] ?? 0) > 0)
+                          .map((c) => `${CHAIN_SHORT[c]} ${fmtInt(f.chains[c] ?? 0)}`)
+                          .join(' · ')}{' '}
+                        · {fmtInt(f.lines)} lines{f.library ? ' · library' : f.codeIndex ? ' · in code index' : ''}
+                        {f.sample ? ` · e.g. ${f.sample.name ?? shortAddress(f.sample.address, 4, 4)}` : ''}
+                      </span>
                     </span>
-                    <span className="sx-top-s mono">
-                      {CHAINS.filter((c) => (f.chains[c] ?? 0) > 0)
-                        .map((c) => `${CHAIN_SHORT[c]} ${fmtInt(f.chains[c] ?? 0)}`)
-                        .join(' · ')}{' '}
-                      · {fmtInt(f.lines)} lines{f.library ? ' · library' : f.codeIndex ? ' · in code index' : ''}
-                      {f.sample ? ` · e.g. ${f.sample.name ?? shortAddress(f.sample.address, 4, 4)}` : ''}
-                    </span>
-                  </span>
-                  <span className="sx-top-bar" style={{ ['--w' as string]: `${Math.max(4, (f.contracts / (s.top[0]?.contracts || 1)) * 100)}%` }} aria-hidden="true" />
+                    <span className="sx-top-t mono">{topOpen === f.id ? 'hide' : 'show all'}</span>
+                    <span className="sx-top-bar" style={{ ['--w' as string]: `${Math.max(4, (f.contracts / (s.top[0]?.contracts || 1)) * 100)}%` }} aria-hidden="true" />
+                  </button>
+                  {topOpen === f.id && <RefsList id={f.id} preview={[]} others={f.contracts} />}
                 </li>
               ))}
             </ol>

@@ -704,14 +704,38 @@ mark {
   flex-direction: column;
 }
 .sx-top-list li {
+  border-bottom: 1px solid var(--line-2);
+}
+.sx-top-list li.open {
+  padding-bottom: 14px;
+  background: var(--bg-1);
+}
+.sx-top-row {
   position: relative;
   display: grid;
-  grid-template-columns: 140px minmax(0, 1fr);
+  grid-template-columns: 140px minmax(0, 1fr) auto;
   gap: 18px;
   align-items: center;
+  width: 100%;
   padding: 16px var(--gutter);
-  border-bottom: 1px solid var(--line-2);
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
   overflow: hidden;
+}
+.sx-top-row:hover .sx-path {
+  color: var(--hot);
+}
+.sx-top-t {
+  position: relative;
+  z-index: 1;
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--hot-2);
 }
 .sx-top-n {
   position: relative;
@@ -780,7 +804,7 @@ mark {
   .sx-file-h,
   .sx-file-f,
   .sx-idl,
-  .sx-top-list li,
+  .sx-top-row,
   .sx-foot {
     padding-left: 28px;
     padding-right: 28px;
@@ -854,9 +878,12 @@ mark {
   .sx-ln {
     padding-right: 8px;
   }
-  .sx-top-list li {
+  .sx-top-row {
     grid-template-columns: 64px minmax(0, 1fr);
     gap: 12px;
+  }
+  .sx-top-t {
+    display: none;
   }
   .sx-idl-e li {
     grid-template-columns: minmax(0, 1fr);

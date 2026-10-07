@@ -120,7 +120,7 @@ export interface SearchFileRefs {
   more: number
 }
 
-export interface SearchTopFile { path: string; contracts: number; chains: Partial<Record<ChainId, number>>; lines: number; library: boolean; codeIndex: boolean; sample: SearchItem | null }
+export interface SearchTopFile { id: number; path: string; contracts: number; chains: Partial<Record<ChainId, number>>; lines: number; library: boolean; codeIndex: boolean; sample: SearchItem | null }
 
 export interface SearchStats {
   ready: boolean

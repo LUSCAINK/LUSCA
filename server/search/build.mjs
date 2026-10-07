@@ -576,7 +576,7 @@ function stats() {
         if (!sample || (it.name && !sample.name)) sample = { chain: it.chain, address: it.address, name: it.name, path: paths[pid] }
       }
       const p = sample?.path ?? ''
-      return { path: p, contracts: n, chains, lines: f.lines, library: f.refs.some((r) => isLibPath(paths[r[1]])), codeIndex: f.ci, sample: sample ? { chain: sample.chain, address: sample.address, name: sample.name } : null }
+      return { id: f.id, path: p, contracts: n, chains, lines: f.lines, library: f.refs.some((r) => isLibPath(paths[r[1]])), codeIndex: f.ci, sample: sample ? { chain: sample.chain, address: sample.address, name: sample.name } : null }
     }),
     partial,
     builtAt,
