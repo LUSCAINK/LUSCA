@@ -6,7 +6,7 @@
 // serves (chain feed and stats, radar events, control entries, atlas items) and sends Lens reads through
 // server/lens with its cache, per-address limits and daily budget slice, exactly like GET /api/lens/*.
 
-import type { ChainEvent, ChainId, ChainStats } from '../../shared/chain.ts'
+import type { ChainEvent, ChainId, ChainIndexItem, ChainRead, ChainStats } from '../../shared/chain.ts'
 import type { RadarEvent, RadarKind, RadarPage } from '../../shared/radar.ts'
 import type { RadarCodeDiff } from '../../shared/radarDiff.ts'
 import type { ControlEntry, ControlPage, ControlSummary } from '../../shared/control.ts'
@@ -52,6 +52,8 @@ export interface McpSource {
   stats(): Promise<SourceStats>
   /** Chain feed, newest first, with call traces (≤ 50). */
   feed(limit: number): Promise<ChainEvent[]>
+  /** One kept item and its stored read (no RPC); null when not kept. */
+  chainItem(chain: ChainId, address: string): Promise<{ item: ChainIndexItem; read: ChainRead } | null>
   lens(chain: ChainId, address: string, ip: string): Promise<LensResult>
   radarList(q: RadarQuery): Promise<RadarPage>
   radarGet(id: string): Promise<RadarEvent | null>
@@ -69,7 +71,7 @@ type Route = { status: number; json: string; headers?: Record<string, string> }
 
 /** The parts of the hub's modules (server/http.ts Modules) the tools read. All optional: a missing one is a SourceError. */
 export interface LocalModules {
-  chain?: { stats(): ChainStats; feed(limit: number): ChainEvent[] } | null
+  chain?: { stats(): ChainStats; feed(limit: number): ChainEvent[]; item(chain: ChainId, address: string): { item: ChainIndexItem; read: ChainRead } | null } | null
   code?: { stats(): CodeIndexStats } | null
   lens?: { route(p: string, ip: string): Promise<Route> } | null
   radar?: { list(q: { chain?: ChainId; kind?: RadarKind; known?: boolean; sort?: 'new'; limit?: number }): RadarPage; get(id: string): RadarEvent | null } | null
@@ -140,6 +142,9 @@ export function localSource(getModules: () => LocalModules | null, extras: Local
     },
     async feed(limit) {
       return need(mods().chain, 'the chain feed').feed(Math.min(50, limit))
+    },
+    async chainItem(chain, address) {
+      return need(mods().chain, 'the chain index').item(chain, address)
     },
     async lens(chain, address, ip) {
       const lens = need(mods().lens, 'LUSCA Lens')
@@ -299,6 +304,9 @@ export function remoteSource(o: RemoteOptions): McpSource {
     },
     async feed(limit) {
       return ok<ChainEvent[]>(`/api/chain/feed?limit=${Math.min(50, limit)}&scan=1`, 'chain feed')
+    },
+    async chainItem(c, address) {
+      return orNull<{ item: ChainIndexItem; read: ChainRead }>(`/api/chain/item/${c}/${enc(address)}`, 'chain item')
     },
     async lens(c, address) {
       const r = await get<LensAnswer | { error?: string }>(`/api/lens/${c}/${enc(address)}`)

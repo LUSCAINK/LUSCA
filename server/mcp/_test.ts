@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import type { ChainEvent, ChainId } from '../../shared/chain.ts'
+import type { ChainEvent, ChainId, ChainIndexItem, ChainRead } from '../../shared/chain.ts'
 import type { RadarEvent, RadarPage } from '../../shared/radar.ts'
 import type { RadarCodeDiff } from '../../shared/radarDiff.ts'
 import type { ControlEntry, ControlSummary } from '../../shared/control.ts'
@@ -139,6 +139,18 @@ const ATLAS: AtlasItem = {
   relatives: [{ chain: 'solana', address: AMM, name: 'pump_amm', similarity: 29, shared: 13, onlyHere: ['create'], onlyThere: ['create_pool'] }],
 }
 
+const KEPT: { item: ChainIndexItem; read: ChainRead } = {
+  item: { chain: 'ethereum', address: '0xc82fb8fb873b0c56e1aeb9238d79b27e3d67f155', name: 'ResolverRegistry', kind: 'contract', via: 'link', verifiedBy: 'sourcify', idl: false, sourceFiles: 2, sourceBytes: 516_400, codeHash: 'ef'.repeat(32), firstSeen: NOW - 86_400_000, readAt: NOW - 9_000 },
+  read: {
+    chain: 'ethereum', address: '0xc82fb8fb873b0c56e1aeb9238d79b27e3d67f155', kind: 'contract', name: 'ResolverRegistry', codeHash: 'ef'.repeat(32), upgradeable: false, upgradeAuthority: null, lastDeploySlot: null, programBytes: null, loader: null,
+    idl: null, securityTxt: null, bytecodeBytes: 12_100, proxy: null,
+    abi: { functions: ['register(bytes32,address)', 'resolve(bytes32)'], events: ['Registered(bytes32,address)'] },
+    verified: { by: 'sourcify', match: 'partial', repo: null, commit: null, compiler: 'v0.8.24' },
+    sources: [{ path: 'src/ResolverRegistry.sol', lang: 'solidity', bytes: 14_000 }, { path: 'lib/Ownable.sol', lang: 'solidity', bytes: 3_000 }],
+    notes: ['Sourcify partial match'], readAt: NOW - 9_000, rpcCalls: 2,
+  },
+}
+
 function fixtureSource(over: Partial<McpSource> = {}): McpSource & { lensCalls: { ip: string }[] } {
   const lensCalls: { ip: string }[] = []
   return {
@@ -155,6 +167,9 @@ function fixtureSource(over: Partial<McpSource> = {}): McpSource & { lensCalls: 
     },
     async feed(limit) {
       return FEED.slice(0, limit)
+    },
+    async chainItem(chain, address) {
+      return chain === KEPT.item.chain && address.toLowerCase() === KEPT.item.address ? KEPT : null
     },
     async lens(chain, address, ip) {
       lensCalls.push({ ip })
@@ -269,8 +284,8 @@ try {
   await test('tools/list: strict schemas, annotations, output schemas (2025-06-18)', async () => {
     const r = await post(url, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
     const tools = r.json.result.tools as any[]
-    assert.equal(tools.length, 8)
-    assert.deepEqual(tools.map((t) => t.name).sort(), ['lusca_atlas_relatives', 'lusca_control', 'lusca_control_summary', 'lusca_lens', 'lusca_radar', 'lusca_radar_event', 'lusca_scan_recent', 'lusca_stats'])
+    assert.equal(tools.length, 10)
+    assert.deepEqual(tools.map((t) => t.name).sort(), ['lusca_atlas_relatives', 'lusca_control', 'lusca_control_summary', 'lusca_controlled_by', 'lusca_kept_item', 'lusca_lens', 'lusca_radar', 'lusca_radar_event', 'lusca_scan_recent', 'lusca_stats'])
     for (const t of tools) {
       assert.equal(t.inputSchema.type, 'object', t.name)
       assert.equal(t.inputSchema.additionalProperties, false, `${t.name} schema is strict`)
@@ -519,6 +534,31 @@ try {
     assert.doesNotMatch(st.content[0].text + JSON.stringify(st.structuredContent), /inkIssued|\bINK\b|[Pp]ayout/, 'never payout amounts')
   })
 
+  await test('lusca_controlled_by: reverse lookup of a controller; lusca_kept_item: the stored read', async () => {
+    const c = (await call(url, 'lusca_controlled_by', { address: PUMP_AUTH })).json.result
+    assert.equal(c.isError, false)
+    assert.match(c.content[0].text, /Controlled by 7gZu\w+ · program-derived address · solana/)
+    assert.match(c.content[0].text, /can change 3 kept programs/)
+    assert.match(c.content[0].text, /pump_fees .* · via upgrade authority/)
+    assert.equal(c.structuredContent.total, 3)
+    assert.equal(c.structuredContent.role.kind, 'pda')
+    const none = (await call(url, 'lusca_controlled_by', { address: '0x' + '6'.repeat(40) })).json.result
+    assert.equal(none.isError, false)
+    assert.match(none.content[0].text, /holds no kept program or contract this address can change/)
+    const bad = (await call(url, 'lusca_controlled_by', { address: 'not-an-address-at-all-0000000000000' })).json.result
+    assert.equal(bad.isError, true)
+    const k = (await call(url, 'lusca_kept_item', { chain: 'ethereum', address: '0xC82fb8fb873b0c56e1aeb9238d79b27e3d67f155' })).json.result
+    assert.equal(k.isError, false)
+    assert.match(k.content[0].text, /Kept · ethereum · ResolverRegistry/)
+    assert.match(k.content[0].text, /verified: sourcify partial match · v0\.8\.24/)
+    assert.match(k.content[0].text, /source files \(2, 516\.4 KB\): src\/ResolverRegistry\.sol \(14\.0 KB\)/)
+    assert.match(k.content[0].text, /ABI functions \(2\): register\(bytes32,address\), resolve\(bytes32\)/)
+    assert.equal(k.structuredContent.sources.count, 2)
+    const nk = (await call(url, 'lusca_kept_item', { chain: 'solana', address: AMM })).json.result
+    assert.equal(nk.isError, true)
+    assert.match(nk.content[0].text, /not kept by LUSCA/)
+  })
+
   await test('2025-03-26 clients get text results without structuredContent', async () => {
     const r = await call(url, 'lusca_stats', {}, 1, { 'MCP-Protocol-Version': '2025-03-26' })
     assert.equal(r.json.result.structuredContent, undefined)
@@ -594,7 +634,7 @@ try {
         },
       }),
     )
-    assert.equal(m.listTools().length, 9)
+    assert.equal(m.listTools().length, 11)
     const r = await m.callTool('lusca_echo', { word: 'octopus' }, { ip: '1' })
     assert.equal(r.content[0].text, 'octopus')
     assert.throws(() => m.registry.add(TOOLS[0]), /registered twice/)
@@ -604,7 +644,7 @@ try {
 
   await test('localSource reads the hub modules; a missing module is a SourceError', async () => {
     const mods = {
-      chain: { stats: () => ({ agents: [], reads: 5, kept: 2, rejected: {}, programs: 1, contracts: 1, idls: 1, verified: 1, sourceBytes: 10, byChain: {}, frontier: {}, budget: {}, updatedAt: 1 }), feed: (n: number) => FEED.slice(0, n) },
+      chain: { stats: () => ({ agents: [], reads: 5, kept: 2, rejected: {}, programs: 1, contracts: 1, idls: 1, verified: 1, sourceBytes: 10, byChain: {}, frontier: {}, budget: {}, updatedAt: 1 }), feed: (n: number) => FEED.slice(0, n), item: () => KEPT },
       lens: { route: async (p: string, ip: string) => (p.includes(PUMP) ? { status: 200, json: JSON.stringify({ report: REPORT, cached: false, fresh: 1 }) } : { status: 429, json: JSON.stringify({ error: `slow ${ip}` }), headers: { 'Retry-After': '12' } }) },
       control: { summary: () => SUMMARY, list: () => ({ items: CONTROL, total: 3, next: null }), get: (_c: ChainId, a: string) => CONTROL.find((e) => e.address === a) ?? null },
       atlas: { route: (p: string) => (p.endsWith(PUMP) ? { status: 200, json: JSON.stringify(ATLAS) } : { status: 404, json: '{"error":"not on the atlas yet"}' }) },

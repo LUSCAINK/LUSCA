@@ -726,5 +726,100 @@ const atlasTool = defineTool({
   },
 })
 
+// ─── lusca_controlled_by ────────────────────────────────────────────────────
+
+const controlledByTool = defineTool({
+  name: 'lusca_controlled_by',
+  title: 'What can this key change?',
+  description:
+    "Reverse lookup of the control map: every kept Solana program and EVM contract that one address (an upgrade authority, proxy admin, ProxyAdmin, Safe or timelock anywhere in the custody chain) can change, with what that address is (single key, program-derived address, Safe threshold, timelock delay). Covers the programs and contracts LUSCA keeps.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      address: { ...addressSchema, description: 'Solana address (base58) or EVM address (0x + 40 hex) of the controller' },
+      limit: { type: 'integer', minimum: 1, maximum: 50, default: 25, description: 'How many items to list (1–50, default 25; the total is always given)' },
+    },
+    required: ['address'],
+    additionalProperties: false,
+  },
+  cacheS: 10,
+  async run(args, ctx) {
+    const address = String(args.address).trim()
+    if (!isSolanaAddress(address) && !EVM_RE.test(address)) throw new ToolError('address is not a Solana or EVM address')
+    const limit = (args.limit as number | undefined) ?? 25
+    const now = ctx.now()
+    const pg = await from(ctx.source.controlList({ controller: address, limit: Math.max(limit, 50) }))
+    const role = (() => {
+      for (const e of pg.items) for (let i = 1; i < e.hops.length; i++) if (sameAddr(e.hops[i].address, address)) return { hop: e.hops[i], chain: e.chain }
+      return null
+    })()
+    const items = pg.items.slice(0, limit).map((e) => ({ chain: e.chain, address: e.address, name: e.name, class: e.cls, via: e.hops.find((h, i) => i > 0 && sameAddr(h.address, address))?.via ?? null, url: ctx.site + lensPath(e.chain, e.address) }))
+    const h = role?.hop
+    const what = h ? `${h.label}${h.threshold ? ` (${h.threshold} of ${h.owners ?? '?'})` : ''}${h.delay ? ` (delay ${Math.round(h.delay / 3600)} h)` : ''}` : null
+    const out = [`Controlled by ${address}${what ? ` · ${what}` : ''}${role ? ` · ${role.chain}` : ''}`]
+    if (!pg.total) out.push("LUSCA's control map holds no kept program or contract this address can change (it maps the programs and contracts LUSCA keeps).")
+    else {
+      out.push(`can change ${int(pg.total)} kept program${pg.total === 1 ? '' : 's'} / contract${pg.total === 1 ? '' : 's'}:`)
+      for (const it of items) out.push(`  • ${it.chain} · ${it.name ?? '(no name)'} ${it.address}${it.via ? ` · via ${it.via}` : ''}`)
+      if (pg.total > items.length) out.push(`  … +${int(pg.total - items.length)} more`)
+    }
+    const l = links(ctx.site, '/control', `/api/control/items?controller=${address}`)
+    out.push(`Sources: ${l.join(' · ')}`)
+    return {
+      text: bound(out.join('\n'), TEXT_MAX),
+      data: { controller: address, role: h ? { kind: h.kind, label: h.label, threshold: h.threshold ?? null, owners: h.owners ?? null, delay: h.delay ?? null } : null, total: pg.total, items, links: l, asOf: now },
+    }
+  },
+})
+
+// ─── lusca_kept_item ────────────────────────────────────────────────────────
+
+const keptItemTool = defineTool({
+  name: 'lusca_kept_item',
+  title: 'What LUSCA keeps for an address',
+  description:
+    "The stored read of one kept program or contract (no new network calls): how and when the agents found it, verified source files with sizes (Sourcify / OtterSec match, compiler, repository and commit), the IDL instructions or ABI functions and events, security.txt, proxy and upgrade authority, and the read's notes. Kept items are LUSCA's SEPIA-1 training data.",
+  inputSchema: target(),
+  cacheS: 30,
+  async run(args, ctx) {
+    const { chain, address } = targetOf(args)
+    const now = ctx.now()
+    const r = await from(ctx.source.chainItem(chain, address))
+    if (!r) throw new ToolError(`${address} on ${chain} is not kept by LUSCA (not in the chain index). lusca_lens reads any address and says whether it would qualify.`)
+    const { item: it, read: rd } = r
+    const files = rd.sources.slice(0, 40).map((f) => ({ path: f.path, lang: f.lang, bytes: f.bytes }))
+    const fns = rd.abi?.functions ?? []
+    const ix = rd.idl?.instructions.map((i) => i.name) ?? []
+    const out = [
+      `Kept · ${it.chain} · ${it.name ?? rd.name ?? '(no name)'} ${it.address}`,
+      `${it.kind} · found via ${it.via} · first seen ${iso(it.firstSeen)} · read ${iso(it.readAt)} (${int(rd.rpcCalls)} RPC call${rd.rpcCalls === 1 ? "" : "s"})`,
+    ]
+    if (rd.verified) out.push(`verified: ${rd.verified.by}${rd.verified.match ? ` ${rd.verified.match} match` : ''}${rd.verified.compiler ? ` · ${rd.verified.compiler}` : ''}${rd.verified.repo ? ` · ${rd.verified.repo}${rd.verified.commit ? `@${rd.verified.commit.slice(0, 10)}` : ''}` : ''}`)
+    else out.push('verified: no verified source / build')
+    if (rd.upgradeable !== null || rd.upgradeAuthority) out.push(`upgradeable: ${yesNo(rd.upgradeable)}${rd.upgradeAuthority ? ` · upgrade authority ${rd.upgradeAuthority}` : ''}`)
+    if (rd.proxy) out.push(`proxy: ${rd.proxy.standard} → implementation ${rd.proxy.implementation}`)
+    if (rd.programBytes || rd.bytecodeBytes) out.push(`code: ${bytes(rd.programBytes ?? rd.bytecodeBytes)}${rd.codeHash ? ` · hash ${rd.codeHash}` : ''}${rd.lastDeploySlot ? ` · last deploy slot ${int(rd.lastDeploySlot)}` : ''}`)
+    if (files.length) out.push(`source files (${rd.sources.length}, ${bytes(it.sourceBytes)}): ${list(files.map((f) => `${f.path} (${bytes(f.bytes)})`), 14, '; ')}`)
+    if (ix.length) out.push(`IDL instructions (${ix.length}): ${list(ix, 30)}`)
+    if (fns.length) out.push(`ABI functions (${fns.length}): ${list(fns, 30)}`)
+    if (rd.abi?.events.length) out.push(`events (${rd.abi.events.length}): ${list(rd.abi.events, 12)}`)
+    if (rd.securityTxt) out.push(`security.txt: ${list(Object.entries(rd.securityTxt).map(([k, v]) => `${k}=${String(v).slice(0, 120)}`), 5, ' · ')}`)
+    if (rd.notes.length) out.push(`notes: ${rd.notes.slice(0, 6).join(' · ')}`)
+    const l = links(ctx.site, `/chain/${it.chain}/${it.address}`, `/api/chain/item/${it.chain}/${it.address}`, lensPath(it.chain, it.address))
+    out.push(`Sources: ${l.join(' · ')}`)
+    return {
+      text: bound(out.join('\n'), TEXT_MAX),
+      data: {
+        chain: it.chain, address: it.address, name: it.name ?? rd.name, kind: it.kind, foundVia: it.via, firstSeen: it.firstSeen, readAt: it.readAt,
+        verified: rd.verified, upgradeable: rd.upgradeable, upgradeAuthority: rd.upgradeAuthority, proxy: rd.proxy, codeHash: rd.codeHash,
+        sources: { count: rd.sources.length, bytes: it.sourceBytes, files },
+        idl: rd.idl ? { name: rd.idl.name, version: rd.idl.version, instructions: ix.slice(0, 60), accounts: rd.idl.accounts.length, errors: rd.idl.errors, events: rd.idl.events } : null,
+        abi: rd.abi ? { functions: fns.slice(0, 80), events: rd.abi.events.slice(0, 40), functionCount: fns.length } : null,
+        securityTxt: rd.securityTxt, notes: rd.notes.slice(0, 10), links: l, asOf: now,
+      },
+    }
+  },
+})
+
 /** The built-in LUSCA tools, in the order tools/list shows them. */
-export const TOOLS: McpTool[] = [lensTool, controlTool, radarTool, radarEventTool, atlasTool, scanTool, controlSummaryTool, statsTool]
+export const TOOLS: McpTool[] = [lensTool, controlTool, controlledByTool, radarTool, radarEventTool, atlasTool, keptItemTool, scanTool, controlSummaryTool, statsTool]
