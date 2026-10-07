@@ -687,7 +687,7 @@ export function createRadar(o: RadarOptions): Radar {
   const solanaHttp = o.solanaRpcUrl?.trim() || 'https://api.mainnet-beta.solana.com'
   const wsUrl = o.solanaWsUrl?.trim() || wsUrlOf(solanaHttp)
   if (wsUrl) registerSecretUrl(wsUrl)
-  const wsProvider = providerOfUrl(solanaHttp, 'Solana RPC')
+  const wsProvider = providerOfUrl(wsUrl || solanaHttp, 'Solana RPC') // name the socket actually opened
   solVia.ws = `${wsProvider === 'Solana public RPC' ? 'Solana public' : wsProvider} websocket`
   solVia.poll = `${o.rpc.provider('solana')} · loader signatures`
   let sub: LoaderSubscription | null = null
