@@ -170,4 +170,8 @@ export interface SearchStats {
   partial: string | null
   builtAt: number | null
   gen: number
+  /** Median time of the last (up to 200) searches this server computed, ms; null before 5 searches. */
+  p50Ms: number | null
+  /** Searches computed since the server started (cached answers not counted). */
+  searches: number
 }

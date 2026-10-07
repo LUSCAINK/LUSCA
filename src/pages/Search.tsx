@@ -556,7 +556,7 @@ export default function Search() {
       : s.state === 'off'
         ? 'off on this server'
         : s.state === 'ready' || s.ready
-          ? `index ready · ${fmtBytes(s.diskBytes)} on disk`
+          ? `index ready${s.p50Ms !== null ? ` · median search ${fmtInt(s.p50Ms)} ms` : ''} · ${fmtBytes(s.diskBytes)} on disk`
           : `building · ${fmtInt(s.contracts)} contracts so far`
 
   return (

@@ -144,6 +144,8 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
   let retiring: Worker | null = null
   let builderCrashes = 0
   let respawns: number[] = []
+  const recentMs: number[] = []
+  let searches = 0
   const builderIdleMs = o.builderIdleMs ?? 30_000
   const replay: unknown[] = []
   let gen = 0
@@ -368,6 +370,8 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
       partial: b?.partial ?? null,
       builtAt: b?.builtAt ?? null,
       gen,
+      p50Ms: recentMs.length >= 5 ? [...recentMs].sort((x, y) => x - y)[recentMs.length >> 1] : null,
+      searches,
     }
   }
 
@@ -395,6 +399,9 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     const out = await runJob(q)
     const ms = Math.round(performance.now() - t0)
     if (!out.ok) return emptyResult(q, raw, { code: out.code, message: out.message }, ms)
+    searches++
+    recentMs.push(ms)
+    if (recentMs.length > 200) recentMs.shift()
     const r = out.result as unknown as Omit<SearchResult, 'q' | 're' | 'case' | 'ms' | 'cached' | 'error' | 'next'> & { next: number | null; workerMs: number }
     return {
       q: q.q,
