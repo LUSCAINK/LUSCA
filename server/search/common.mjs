@@ -8,6 +8,10 @@ export const LIB_PATH_RE =
 
 export const isLibPath = (/** @type {string} */ p) => LIB_PATH_RE.test(p)
 
+/** A path as results show it: an absolute home directory from the verified metadata is cut to its project part. */
+export const HOME_RE = /^(?:\/(?:Users|home)\/[^/]+|[A-Za-z]:[\\/](?:Users|Documents and Settings)[\\/][^\\/]+)[\\/]/
+export const shownPath = (/** @type {string} */ p) => (HOME_RE.test(p) ? `…/${p.replace(HOME_RE, '')}` : p)
+
 /** ASCII lower-case table (bytes). Non-ASCII bytes stay as they are. */
 export const LOWER = new Uint8Array(256)
 for (let i = 0; i < 256; i++) LOWER[i] = i >= 65 && i <= 90 ? i | 32 : i

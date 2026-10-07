@@ -13,7 +13,7 @@ import path from 'node:path'
 import zlib from 'node:zlib'
 import crypto from 'node:crypto'
 import { parentPort } from 'node:worker_threads'
-import { LOWER, isLibPath, sigBitsFor } from './common.mjs'
+import { LOWER, isLibPath, shownPath, sigBitsFor } from './common.mjs'
 
 const port = /** @type {import('node:worker_threads').MessagePort} */ (parentPort)
 const MB = 1048576
@@ -42,9 +42,11 @@ let sigUsed = SIG_SEG_BYTES
 /** @type {Map<string, FileRec>} */ const fileByHash = new Map()
 /** @type {string[]} */ const paths = []
 /** @type {Map<string, number>} */ const pathId = new Map()
-/** @type {Set<string>} */ let codeIndex = new Set()
+/** @type {Buffer} */ let codeIndex = Buffer.alloc(0)
 /** @type {Record<string, number>} */ let shardSizes = {}
 let uniqueBytes = 0
+/** Bytes of the unique files some kept item still includes (what the index cap counts). */
+let liveBytes = 0
 let skipped = { big: 0, cap: 0 }
 let builtAt = /** @type {number | null} */ (null)
 let state = /** @type {'loading'|'building'|'ready'} */ ('loading')
@@ -53,17 +55,41 @@ let dirty = false
 let saveTimer = /** @type {NodeJS.Timeout | null} */ (null)
 
 // pending delta (flushed by flush())
-/** @type {{ segs: { kind: 'text' | 'sig'; idx: number; sab: SharedArrayBuffer }[]; items: any[]; paths: [number, string][]; files: any[]; refs: [number, number, number][]; drop: number[] }} */
-let delta = { segs: [], items: [], paths: [], files: [], refs: [], drop: [] }
-const emptyDelta = () => !delta.segs.length && !delta.items.length && !delta.paths.length && !delta.files.length && !delta.refs.length && !delta.drop.length
+/** @typedef {{ segs: { kind: 'text' | 'sig'; idx: number; sab: SharedArrayBuffer }[]; items: any[]; paths: [number, string][]; files: any[]; refs: [number, number, number][]; drop: number[]; ci: number[] }} Delta */
+/** @returns {Delta} */
+const newDelta = () => ({ segs: [], items: [], paths: [], files: [], refs: [], drop: [], ci: [] })
+let delta = newDelta()
+const emptyDelta = () => !delta.segs.length && !delta.items.length && !delta.paths.length && !delta.files.length && !delta.refs.length && !delta.drop.length && !delta.ci.length
 
-function flush() {
+function flush(withStats = true) {
   if (!emptyDelta()) {
     port.postMessage({ type: 'delta', delta })
-    delta = { segs: [], items: [], paths: [], files: [], refs: [], drop: [] }
+    delta = newDelta()
   }
-  port.postMessage({ type: 'stats', stats: stats(), meta: metaOf() })
+  if (withStats) port.postMessage({ type: 'stats', stats: stats(), meta: metaOf() })
 }
+
+/**
+ * The whole index as one delta (same ids): the main thread replaces its replay log with it, so a worker started
+ * later applies one delta instead of every change since the process started.
+ * @returns {Delta}
+ */
+function fullDelta() {
+  /** @type {[number, number, number][]} */
+  const refs = []
+  for (const f of files) for (const [iid, pid] of f.refs) refs.push([f.id, iid, pid])
+  return {
+    segs: [...textSegs.map((sab, idx) => ({ kind: /** @type {'text'} */ ('text'), idx, sab })), ...sigSegs.map((sab, idx) => ({ kind: /** @type {'sig'} */ ('sig'), idx, sab }))],
+    paths: paths.map((p, i) => /** @type {[number, string]} */ ([i, p])),
+    items: items.map((it) => ({ id: it.id, chain: it.chain, address: it.address, name: it.name, kind: it.kind, readAt: it.readAt })),
+    files: files.map(fileDelta),
+    refs,
+    drop: [],
+    ci: [],
+  }
+}
+
+const fileDelta = (/** @type {FileRec} */ f) => ({ id: f.id, h: f.h, seg: f.seg, off: f.off, len: f.len, clen: f.clen, sseg: f.sseg, soff: f.soff, sbits: f.sbits, lang: f.lang, lines: f.lines, ci: f.ci, idl: f.idl })
 
 /** What a restarted builder needs besides the deltas (see restore()). */
 function metaOf() {
@@ -112,7 +138,10 @@ function restore(/** @type {any[]} */ deltas, /** @type {any} */ meta) {
       it.files.push(fid)
       if (f.idl) it.idl = true
     }
+    for (const fid of d.ci ?? []) if (files[fid]) files[fid].ci = true
   }
+  liveBytes = 0
+  for (const f of files) if (f && f.refs.length) liveBytes += f.len
   shardSizes = meta.shardSizes ?? {}
   skipped = meta.skipped ?? { big: 0, cap: 0 }
   uniqueBytes = meta.uniqueBytes ?? 0
@@ -157,13 +186,14 @@ function allocSig(/** @type {number} */ bytes) {
   return at
 }
 
-// trigram signature scratch (distinct trigrams of one file), released when the builder is idle
-let seenTri = new Uint8Array(0)
+// trigram signature scratch (distinct trigrams of one file): a 2 MB bit set over the 2^24 trigram codes and a list
+// of the codes set, both released when the builder is idle
+let seenTri = new Int32Array(0)
 let touched = new Int32Array(0)
 function scratch() {
   if (!seenTri.length) {
-    seenTri = new Uint8Array(1 << 24)
-    touched = new Int32Array(1 << 18)
+    seenTri = new Int32Array(1 << 19)
+    touched = new Int32Array(1 << 12)
   }
 }
 
@@ -177,8 +207,10 @@ function signature(/** @type {Uint8Array} */ b) {
     for (let i = 2; i < b.length; i++) {
       const z = LOWER[b[i]]
       const t = (x << 16) | (y << 8) | z
-      if (!seenTri[t]) {
-        seenTri[t] = 1
+      const w = t >>> 5
+      const bit = 1 << (t & 31)
+      if ((seenTri[w] & bit) === 0) {
+        seenTri[w] |= bit
         if (cnt === touched.length) {
           const n = new Int32Array(touched.length * 2)
           n.set(touched)
@@ -196,12 +228,14 @@ function signature(/** @type {Uint8Array} */ b) {
   const words = new Int32Array(sigSegs[at.sseg], at.soff, bits >>> 5)
   for (let k = 0; k < cnt; k++) {
     const t = touched[k]
-    seenTri[t] = 0
+    seenTri[t >>> 5] = 0
     // skip trigrams with a non-ASCII byte: queries never ask for them (see trigramsOf)
     if ((t & 0x808080) !== 0) continue
     const bit = (Math.imul(t, 0x9e3779b1) >>> (32 - lg)) >>> 0
     words[bit >>> 5] |= 1 << (bit & 31)
   }
+  // a large file leaves a long list behind: shrink it again
+  if (touched.length > 1 << 16) touched = new Int32Array(1 << 12)
   return { ...at, sbits: bits }
 }
 
@@ -228,12 +262,19 @@ const countLines = (/** @type {Uint8Array} */ b) => {
 function addFile(/** @type {Buffer} */ bytes, /** @type {string} */ lang, /** @type {boolean} */ ci, /** @type {boolean} */ idl, /** @type {string | null} */ hash) {
   const h = hash ?? crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 32)
   const have = fileByHash.get(h)
-  if (have) return have.id
+  if (have) {
+    // the same file may be in the protocol code index under another copy's hash (CRLF / LF): any copy counts
+    if (ci && !have.ci) {
+      have.ci = true
+      delta.ci.push(have.id)
+    }
+    return have.id
+  }
   if (bytes.length > maxFileBytes) {
     skipped.big++
     return -1
   }
-  if (uniqueBytes + bytes.length > maxBytes) {
+  if (liveBytes + bytes.length > maxBytes) {
     skipped.cap++
     return -1
   }
@@ -247,12 +288,13 @@ function addFile(/** @type {Buffer} */ bytes, /** @type {string} */ lang, /** @t
   files.push(f)
   fileByHash.set(h, f)
   uniqueBytes += bytes.length
-  delta.files.push({ id: f.id, h: f.h, seg: f.seg, off: f.off, len: f.len, clen: f.clen, sseg: f.sseg, soff: f.soff, sbits: f.sbits, lang: f.lang, lines: f.lines, ci: f.ci, idl: f.idl })
+  delta.files.push(fileDelta(f))
   return f.id
 }
 
 function addRef(/** @type {number} */ fid, /** @type {Item} */ it, /** @type {string} */ p) {
   const pid = internPath(p)
+  if (!files[fid].refs.length) liveBytes += files[fid].len
   files[fid].refs.push([it.id, pid])
   it.files.push(fid)
   delta.refs.push([fid, it.id, pid])
@@ -261,7 +303,10 @@ function addRef(/** @type {number} */ fid, /** @type {Item} */ it, /** @type {st
 function dropItemRefs(/** @type {Item} */ it) {
   for (const fid of new Set(it.files)) {
     const f = files[fid]
-    if (f) f.refs = f.refs.filter((r) => r[0] !== it.id)
+    if (!f) continue
+    const had = f.refs.length
+    f.refs = f.refs.filter((r) => r[0] !== it.id)
+    if (had && !f.refs.length) liveBytes -= f.len
   }
   it.files = []
   it.idl = false
@@ -337,17 +382,17 @@ const langOf = (/** @type {string} */ l, /** @type {string} */ p) => {
   return ext === 'sol' ? 'solidity' : ext === 'vy' || ext === 'vyi' ? 'vyper' : ext === 'yul' ? 'yul' : 'other'
 }
 
-function indexRecord(/** @type {Item} */ it, /** @type {any} */ rec) {
+/** The unique files (stored or found) of one kept record and the path each is included under. */
+function filesOfRecord(/** @type {any} */ rec) {
+  /** @type {[number, string][]} */
+  const out = []
   if (rec.chain === 'solana') {
     const lines = idlLines(rec.idl)
     if (lines.length) {
       const fid = addFile(Buffer.from(lines.join('\n'), 'utf8'), 'idl', false, true, null)
-      if (fid >= 0) {
-        addRef(fid, it, 'idl')
-        it.idl = true
-      }
+      if (fid >= 0) out.push([fid, 'idl'])
     }
-    return
+    return out
   }
   const seen = new Set()
   for (const s of Array.isArray(rec.sources) ? rec.sources : []) {
@@ -357,11 +402,28 @@ function indexRecord(/** @type {Item} */ it, /** @type {any} */ rec) {
     const text = raw.includes('\r') ? raw.replace(/\r\n?/g, '\n') : raw
     const bytes = Buffer.from(text, 'utf8')
     const h = text === raw ? rawKey : crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 32)
-    const fid = addFile(bytes, langOf(s.lang, s.path), codeIndex.has(rawKey), false, h)
+    // in the protocol code index: this copy's hash, or the hash of its LF form
+    const ci = inCodeIndex(rawKey) || (h !== rawKey && inCodeIndex(h))
+    const fid = addFile(bytes, langOf(s.lang, s.path), ci, false, h)
     if (fid < 0 || seen.has(fid)) continue
     seen.add(fid)
-    addRef(fid, it, s.path)
+    out.push([fid, s.path])
   }
+  return out
+}
+
+/** Point an item at its record's files. A record kept again with the same files changes nothing (no delta). */
+function setItemFiles(/** @type {Item} */ it, /** @type {[number, string][]} */ next) {
+  /** @type {Set<string>} */
+  const cur = new Set()
+  for (const fid of it.files) for (const r of files[fid]?.refs ?? []) if (r[0] === it.id) cur.add(`${fid}:${paths[r[1]]}`)
+  if (cur.size === next.length && next.every(([fid, p]) => cur.has(`${fid}:${p}`))) return false
+  if (it.files.length || it.idl) dropItemRefs(it)
+  for (const [fid, p] of next) {
+    addRef(fid, it, p)
+    if (files[fid].idl) it.idl = true
+  }
+  return true
 }
 
 /** Stream the records of one shard file (multi-member gzip, one JSON record per line). */
@@ -418,7 +480,7 @@ async function syncOnce(/** @type {Map<string, [string, string, string, string |
   for (const it of items) {
     if (!it.readAt) continue
     const e = cur.get(it.key)
-    if (!e || e[5] !== it.readAt) {
+    if (!e) {
       if (it.files.length || it.idl) dropItemRefs(it)
       it.readAt = 0
       delta.items.push({ id: it.id, chain: it.chain, address: it.address, name: it.name, kind: it.kind, readAt: 0 })
@@ -481,11 +543,9 @@ async function syncOnce(/** @type {Map<string, [string, string, string, string |
           return
         }
         const it = upsertItem(e)
-        if (it.files.length || it.idl) dropItemRefs(it)
-        indexRecord(it, rec)
+        if (setItemFiles(it, filesOfRecord(rec))) indexed++
         pending.delete(k)
         unresolved.delete(k)
-        indexed++
         dirty = true
         if (Date.now() - lastFlush > 1500) {
           flush()
@@ -504,7 +564,7 @@ async function syncOnce(/** @type {Map<string, [string, string, string, string |
 }
 
 function finishBuild() {
-  seenTri = new Uint8Array(0)
+  seenTri = new Int32Array(0)
   touched = new Int32Array(0)
   if (state !== 'ready') {
     state = 'ready'
@@ -576,7 +636,7 @@ function stats() {
         if (!sample || (it.name && !sample.name)) sample = { chain: it.chain, address: it.address, name: it.name, path: paths[pid] }
       }
       const p = sample?.path ?? ''
-      return { id: f.id, path: p, contracts: n, chains, lines: f.lines, library: f.refs.some((r) => isLibPath(paths[r[1]])), codeIndex: f.ci, sample: sample ? { chain: sample.chain, address: sample.address, name: sample.name } : null }
+      return { id: f.id, path: shownPath(p), contracts: n, chains, lines: f.lines, library: f.refs.some((r) => isLibPath(paths[r[1]])), codeIndex: f.ci, sample: sample ? { chain: sample.chain, address: sample.address, name: sample.name } : null }
     }),
     partial,
     builtAt,
@@ -604,7 +664,7 @@ async function save() {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true })
     // the header and the bytes describe the same files even if a sync appends more while this writes
-    const list = files.slice()
+    const list = files.filter((f) => f.refs.length)
     const header = {
       v: SNAP_VERSION,
       savedAt: Date.now(),
@@ -691,14 +751,21 @@ async function load() {
       it.readAt = e[5]
     }
     for (const f of files) {
-      delta.files.push({ id: f.id, h: f.h, seg: f.seg, off: f.off, len: f.len, clen: f.clen, sseg: f.sseg, soff: f.soff, sbits: f.sbits, lang: f.lang, lines: f.lines, ci: f.ci, idl: f.idl })
-      for (const [iid, pid] of f.refs) {
-        const it = items[iid]
-        if (!it) continue
-        it.files.push(f.id)
-        if (f.idl) it.idl = true
-        delta.refs.push([f.id, iid, pid])
+      f.refs = f.refs.filter((/** @type {[number, number]} */ r) => items[r[0]])
+      if (f.refs.length) liveBytes += f.len
+      for (const [iid] of f.refs) {
+        items[iid].files.push(f.id)
+        if (f.idl) items[iid].idl = true
       }
+    }
+    // in chunks: the main thread passes each delta on to the query workers without a long pause
+    flush(false)
+    for (let i = 0; i < files.length; i += 1500) {
+      for (const f of files.slice(i, i + 1500)) {
+        delta.files.push(fileDelta(f))
+        for (const [iid, pid] of f.refs) delta.refs.push([f.id, iid, pid])
+      }
+      flush(false)
     }
     shardSizes = header.shardSizes ?? {}
     diskBytes = fs.statSync(file).size
@@ -718,26 +785,61 @@ async function load() {
     paths.length = 0
     pathId.clear()
     uniqueBytes = 0
+    liveBytes = 0
     shardSizes = {}
-    delta = { segs: [], items: [], paths: [], files: [], refs: [], drop: [] }
+    delta = newDelta()
     return false
   }
 }
 
-/** First 16 bytes (hex) of the sha256 of every file in the protocol code index (<data>/code/*.sha). */
+/**
+ * First 16 bytes of the sha256 of every file in the protocol code index (<data>/code/*.sha), as one sorted
+ * buffer of 16-byte records (binary search; no string per hash).
+ */
 function loadCodeIndex() {
   const dir = path.join(dataDir, 'code')
-  const out = new Set()
+  /** @type {Buffer[]} */
+  const parts = []
   try {
     for (const n of fs.readdirSync(dir)) {
       if (!n.endsWith('.sha')) continue
       const b = fs.readFileSync(path.join(dir, n))
-      for (let i = 0; i + 16 <= b.length; i += 16) out.add(b.subarray(i, i + 16).toString('hex'))
+      parts.push(b.subarray(0, b.length - (b.length % 16)))
     }
   } catch {
     /* no code index here */
   }
-  return out
+  const all = Buffer.concat(parts)
+  const n = all.length / 16
+  const order = new Int32Array(n)
+  for (let i = 0; i < n; i++) order[i] = i
+  // ascending: buf.compare(target, tStart, tEnd, sStart, sEnd) compares the source range with the target range
+  order.sort((a, b) => all.compare(all, b * 16, b * 16 + 16, a * 16, a * 16 + 16))
+  const out = Buffer.allocUnsafe(n * 16)
+  let k = 0
+  for (let i = 0; i < n; i++) {
+    const o = order[i] * 16
+    if (k && all.compare(out, (k - 1) * 16, k * 16, o, o + 16) === 0) continue
+    all.copy(out, k * 16, o, o + 16)
+    k++
+  }
+  return out.subarray(0, k * 16)
+}
+
+/** Is this sha256 prefix (32 hex characters) in the protocol code index? */
+function inCodeIndex(/** @type {string} */ hex) {
+  if (!codeIndex.length) return false
+  const key = Buffer.from(hex, 'hex')
+  let lo = 0
+  let hi = codeIndex.length / 16 - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1
+    const c = codeIndex.compare(key, 0, 16, mid * 16, mid * 16 + 16) // record[mid] vs key
+    if (c === 0) return true
+    if (c < 0) lo = mid + 1
+    else hi = mid - 1
+  }
+  return false
 }
 
 port.on('message', async (/** @type {any} */ m) => {
@@ -753,7 +855,7 @@ port.on('message', async (/** @type {any} */ m) => {
       // the loaded index answers right away; the first sync only adds what changed
       flush()
     } else flush()
-    port.postMessage({ type: 'loaded', snapshot: ok, codeIndexFiles: codeIndex.size })
+    port.postMessage({ type: 'loaded', snapshot: ok, codeIndexFiles: codeIndex.length / 16 })
     initDone = true
     if (wanted) void sync()
   } else if (m?.type === 'restore') {
@@ -768,6 +870,9 @@ port.on('message', async (/** @type {any} */ m) => {
   } else if (m?.type === 'sync') {
     wanted = new Map(m.items.map((/** @type {any} */ e) => [e[0], e]))
     if (initDone) void sync()
+  } else if (m?.type === 'compact') {
+    flush(false)
+    port.postMessage({ type: 'base', delta: fullDelta() })
   } else if (m?.type === 'save') {
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = null

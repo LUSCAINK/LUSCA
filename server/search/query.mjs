@@ -8,7 +8,7 @@
 // Out: { type: 'result', id, result }   { type: 'error', id, message }
 import zlib from 'node:zlib'
 import { parentPort } from 'node:worker_threads'
-import { escapeRe, isLibPath, pathMatcher, requiredRuns, sigBit, trigramsOf } from './common.mjs'
+import { escapeRe, isLibPath, pathMatcher, requiredRuns, shownPath, sigBit, trigramsOf } from './common.mjs'
 
 const port = /** @type {import('node:worker_threads').MessagePort} */ (parentPort)
 
@@ -33,7 +33,8 @@ function apply(/** @type {any} */ d) {
       cur.readAt = it.readAt
     } else items[it.id] = { chain: it.chain, address: it.address, name: it.name, readAt: it.readAt, files: new Set() }
   }
-  for (const f of d.files) files[f.id] = { ...f, lg: Math.log2(f.sbits), lib: false, refs: [] }
+  // only what a query needs (the content hash stays with the builder)
+  for (const f of d.files) files[f.id] = { id: f.id, seg: f.seg, off: f.off, len: f.len, clen: f.clen, sseg: f.sseg, soff: f.soff, sbits: f.sbits, lg: Math.log2(f.sbits), lang: f.lang, lines: f.lines, ci: f.ci, idl: f.idl, lib: false, refs: [] }
   for (const iid of d.drop) {
     const it = items[iid]
     if (!it) continue
@@ -51,6 +52,7 @@ function apply(/** @type {any} */ d) {
     it.files.add(fid)
     if (!f.lib && isLibPath(paths[pid] ?? '')) f.lib = true
   }
+  for (const fid of d.ci ?? []) if (files[fid]) files[fid].ci = true
   gen++
   matchCache.clear()
 }
@@ -67,9 +69,16 @@ const PAGE_FILES = 10
 const ALSO_IN = 8
 const IDL_SHOW = 12
 const IDL_ENTRIES = 6
+const MATCH_CACHE = 8
 
-/** @type {Map<string, any>} */
+/**
+ * Per query (filters included): the matching files in result order, as typed arrays — file id, matching lines,
+ * kept contracts in the filter — and the totals. Lines and snippets are recomputed for the page asked for,
+ * so a query that matches 16 000 files keeps about 200 KB here, not the lines of every file.
+ * @type {Map<string, { fids: Int32Array; counts: Int32Array; idlFids: Int32Array; idlCounts: Int32Array; total: any; scanned: any }>}
+ */
 const matchCache = new Map()
+
 
 const decode = (/** @type {{ seg: number; off: number; clen: number }} */ f) => zlib.inflateRawSync(Buffer.from(textSegs[f.seg], f.off, f.clen)).toString('utf8')
 
@@ -212,110 +221,146 @@ const primaryOf = (/** @type {[number, number][]} */ refs) => {
   return best
 }
 
+/** The refs of a file left by the chain and path filters. */
+function refsIn(/** @type {any} */ f, /** @type {string | null} */ chain, /** @type {((p: string) => boolean) | null} */ pm) {
+  let refs = f.refs
+  if (chain) refs = refs.filter((/** @type {[number, number]} */ r) => items[r[0]]?.chain === chain)
+  if (pm) refs = refs.filter((/** @type {[number, number]} */ r) => pm(paths[r[1]] ?? ''))
+  return refs
+}
+const distinctItems = (/** @type {[number, number][]} */ refs) => {
+  if (refs.length < 2) return refs.length
+  const set = new Set()
+  for (const r of refs) set.add(r[0])
+  return set.size
+}
+
+/** Scan the index for one query: matching files in result order (most shared first) and honest totals. */
+function scan(/** @type {any} */ q, /** @type {RegExp} */ rx, /** @type {number[]} */ tris, /** @type {number} */ deadline) {
+  const pm = pathMatcher(q.path)
+  /** @type {number[]} */ const hf = []
+  /** @type {number[]} */ const hc = []
+  /** @type {number[]} */ const hd = []
+  /** @type {number[]} */ const idf = []
+  /** @type {number[]} */ const idc = []
+  /** @type {Set<number>} */ const contracts = new Set()
+  /** @type {Set<number>} */ const programs = new Set()
+  let total = 0
+  let capped = false
+  let scannedFiles = 0
+  let scannedBytes = 0
+  let ofFiles = 0
+  let ofBytes = 0
+  const wantIdl = (!q.chain || q.chain === 'solana') && !q.lang && !q.path
+  const wantCode = q.chain !== 'solana'
+  for (const f of files) {
+    if (!f || !f.refs.length) continue
+    if (f.idl ? !wantIdl : !wantCode) continue
+    if (!f.idl) {
+      ofFiles++
+      ofBytes += f.len
+    }
+    if (q.lang && f.lang !== q.lang && !(q.lang === 'other' && !['solidity', 'vyper', 'yul'].includes(f.lang))) continue
+    if (q.custom && (f.lib || f.ci)) continue
+    const refs = refsIn(f, q.chain, pm)
+    if (!refs.length) continue
+    if (!sigHas(f, tris)) continue
+    if (capped) continue
+    if (!f.idl) {
+      scannedFiles++
+      scannedBytes += f.len
+    }
+    const r = matchText(decode(f), rx, 0, f.idl ? Infinity : MAX_COUNT - total, deadline)
+    if (r.count) {
+      if (f.idl) {
+        idf.push(f.id)
+        idc.push(r.count)
+        for (const x of refs) programs.add(x[0])
+      } else {
+        hf.push(f.id)
+        hc.push(r.count)
+        hd.push(distinctItems(refs))
+        total += r.count
+        for (const x of refs) contracts.add(x[0])
+      }
+    }
+    if (r.stopped || total >= MAX_COUNT || Date.now() > deadline) capped = true
+  }
+  const order = Array.from(hf.keys()).sort((a, b) => hd[b] - hd[a] || hc[b] - hc[a] || hf[a] - hf[b])
+  const iorder = Array.from(idf.keys()).sort((a, b) => idc[b] - idc[a] || idf[a] - idf[b])
+  /** @type {Record<string, number>} */
+  const chains = {}
+  for (const iid of contracts) {
+    const c = items[iid]?.chain
+    if (c) chains[c] = (chains[c] ?? 0) + 1
+  }
+  return {
+    fids: Int32Array.from(order, (i) => hf[i]),
+    counts: Int32Array.from(order, (i) => hc[i]),
+    idlFids: Int32Array.from(iorder, (i) => idf[i]),
+    idlCounts: Int32Array.from(iorder, (i) => idc[i]),
+    total: { matches: total, files: hf.length, contracts: contracts.size, chains, programs: programs.size, idlFiles: idf.length, capped },
+    scanned: { files: scannedFiles, bytes: scannedBytes, ofFiles, ofBytes },
+  }
+}
+
 /**
  * @param {{ q: string; re: boolean; case: boolean; chain: string | null; custom: boolean; path: string | null; lang: string | null; offset: number }} q
  */
 function run(q) {
   const t0 = Date.now()
-  const deadline = t0 + SOFT_MS
   const flags = `gm${q.case ? '' : 'i'}`
   const rx = new RegExp(q.re ? q.q : escapeRe(q.q), flags)
   const tris = trigramsOf(q.re ? requiredRuns(q.q) : [q.q])
   const ck = JSON.stringify([q.q, q.re, q.case, q.chain, q.custom, q.path, q.lang])
   let m = matchCache.get(ck)
-  if (!m) {
-    const pm = pathMatcher(q.path)
-    /** @type {{ fid: number; count: number; lines: { n: number; hits: [number, number][] }[]; refs: [number, number][] }[]} */
-    const hitsList = []
-    let total = 0
-    let capped = false
-    let scannedFiles = 0
-    let scannedBytes = 0
-    let ofFiles = 0
-    let ofBytes = 0
-    /** @type {{ fid: number; count: number; lines: { n: number; hits: [number, number][] }[]; refs: [number, number][] }[]} */
-    const idlHits = []
-    const wantIdl = (!q.chain || q.chain === 'solana') && !q.lang && !q.path
-    const wantCode = q.chain !== 'solana'
-    for (const f of files) {
-      if (!f || !f.refs.length) continue
-      if (f.idl ? !wantIdl : !wantCode) continue
-      if (!f.idl) {
-        ofFiles++
-        ofBytes += f.len
-      }
-      if (q.lang && f.lang !== q.lang && !(q.lang === 'other' && !['solidity', 'vyper', 'yul'].includes(f.lang))) continue
-      if (q.custom && (f.lib || f.ci)) continue
-      let refs = f.refs
-      if (q.chain) refs = refs.filter((r) => items[r[0]]?.chain === q.chain)
-      if (pm) refs = refs.filter((r) => pm(paths[r[1]] ?? ''))
-      if (!refs.length) continue
-      if (!sigHas(f, tris)) continue
-      if (capped) continue
-      if (!f.idl) {
-        scannedFiles++
-        scannedBytes += f.len
-      }
-      const r = matchText(decode(f), rx, f.idl ? IDL_ENTRIES : SHOW_HITS, MAX_COUNT - total, deadline)
-      if (r.count) {
-        ;(f.idl ? idlHits : hitsList).push({ fid: f.id, count: r.count, lines: r.lines, refs })
-        if (!f.idl) total += r.count
-      }
-      if (r.stopped || total >= MAX_COUNT || Date.now() > deadline) capped = true
-    }
-    const distinct = (/** @type {[number, number][]} */ refs) => new Set(refs.map((r) => r[0])).size
-    hitsList.sort((a, b) => distinct(b.refs) - distinct(a.refs) || b.count - a.count || a.fid - b.fid)
-    idlHits.sort((a, b) => b.count - a.count || a.fid - b.fid)
-    /** @type {Set<number>} */
-    const contracts = new Set()
-    for (const h of hitsList) for (const r of h.refs) contracts.add(r[0])
-    /** @type {Record<string, number>} */
-    const chains = {}
-    for (const iid of contracts) {
-      const c = items[iid]?.chain
-      if (c) chains[c] = (chains[c] ?? 0) + 1
-    }
-    const programs = new Set()
-    for (const h of idlHits) for (const r of h.refs) programs.add(r[0])
-    m = {
-      hitsList,
-      idlHits,
-      total: { matches: total, files: hitsList.length, contracts: contracts.size, chains, programs: programs.size, capped },
-      scanned: { files: scannedFiles, bytes: scannedBytes, ofFiles, ofBytes },
-    }
+  if (m) {
+    matchCache.delete(ck)
     matchCache.set(ck, m)
-    while (matchCache.size > 6) matchCache.delete(/** @type {string} */ (matchCache.keys().next().value))
+  } else {
+    m = scan(q, rx, tris, t0 + SOFT_MS)
+    matchCache.set(ck, m)
+    while (matchCache.size > MATCH_CACHE) matchCache.delete(/** @type {string} */ (matchCache.keys().next().value))
   }
+  const pm = pathMatcher(q.path)
+  // the page's own lines: each file of the page is matched again (at most PAGE_FILES files), within what is left
+  // of the soft budget plus a little (the main thread stops the worker at its hard budget)
+  const pageDeadline = Math.max(t0 + SOFT_MS, Date.now()) + 250
 
   // one page of file results, grouped by their primary contract
-  const page = m.hitsList.slice(q.offset, q.offset + PAGE_FILES)
+  const end = Math.min(m.fids.length, q.offset + PAGE_FILES)
   /** @type {Map<number, any>} */
   const groups = new Map()
-  for (const h of page) {
-    const f = files[h.fid]
-    const [piid, ppid] = primaryOf(h.refs)
+  for (let k = q.offset; k < end; k++) {
+    const f = files[m.fids[k]]
+    const count = m.counts[k]
+    const refs = refsIn(f, q.chain, pm)
+    if (!refs.length) continue
+    const text = decode(f)
+    const lines = matchText(text, rx, SHOW_HITS, Infinity, pageDeadline).lines
+    const [piid, ppid] = primaryOf(refs)
     /** @type {Record<string, number>} */
     const chains = {}
     const seen = new Set()
     /** @type {any[]} */
     const also = []
-    for (const [iid, pid] of h.refs) {
+    for (const [iid, pid] of refs) {
       if (seen.has(iid)) continue
       seen.add(iid)
       const c = items[iid].chain
       chains[c] = (chains[c] ?? 0) + 1
-      if (iid !== piid && also.length < ALSO_IN) also.push({ ...item(iid), path: paths[pid] })
+      if (iid !== piid && also.length < ALSO_IN) also.push({ ...item(iid), path: shownPath(paths[pid]) })
     }
     const g = groups.get(piid) ?? { item: item(piid), files: [] }
     g.files.push({
       id: f.id,
-      path: paths[ppid],
+      path: shownPath(paths[ppid]),
       lang: ['solidity', 'vyper', 'yul'].includes(f.lang) ? f.lang : 'other',
       lines: f.lines,
-      matches: h.count,
-      blocks: blocksOf(decode(f), h.lines),
-      moreMatches: Math.max(0, h.count - h.lines.length),
-      shared: { contracts: seen.size, chains },
+      matches: count,
+      blocks: blocksOf(text, lines),
+      moreMatches: Math.max(0, count - lines.length),
+      shared: { contracts: seen.size, chains, total: refs === f.refs ? seen.size : distinctItems(f.refs) },
       library: f.lib,
       codeIndex: f.ci,
       alsoIn: also,
@@ -323,14 +368,23 @@ function run(q) {
     groups.set(piid, g)
   }
 
-  const idl = m.idlHits.slice(0, IDL_SHOW).map((/** @type {any} */ h) => {
-    const f = files[h.fid]
-    const all = decode(f).split('\n')
-    const [piid] = primaryOf(h.refs)
-    return {
+  // IDL documents: IDL_SHOW per page, on the same cursor as the files
+  const page = Math.floor(q.offset / PAGE_FILES)
+  const iFrom = page * IDL_SHOW
+  const iEnd = Math.min(m.idlFids.length, iFrom + IDL_SHOW)
+  /** @type {any[]} */
+  const idl = []
+  for (let k = iFrom; k < iEnd; k++) {
+    const f = files[m.idlFids[k]]
+    const count = m.idlCounts[k]
+    const text = decode(f)
+    const all = text.split('\n')
+    const lines = matchText(text, rx, IDL_ENTRIES, Infinity, pageDeadline).lines
+    const [piid] = primaryOf(f.refs)
+    idl.push({
       item: item(piid),
-      sharedPrograms: new Set(h.refs.map((/** @type {[number, number]} */ r) => r[0])).size,
-      entries: h.lines.map((/** @type {{ n: number; hits: [number, number][] }} */ l) => {
+      sharedPrograms: distinctItems(f.refs),
+      entries: lines.map((/** @type {{ n: number; hits: [number, number][] }} */ l) => {
         const text = all[l.n - 1] ?? ''
         const sp = text.indexOf(' ')
         const kind = sp > 0 ? text.slice(0, sp) : 'entry'
@@ -338,17 +392,18 @@ function run(q) {
         const w = windowLine(rest, l.hits.map(([a, b]) => [Math.max(0, a - sp - 1), Math.max(0, b - sp - 1)]))
         return { kind, text: w.text, hits: w.hits.filter(([a, b]) => b > a) }
       }),
-      moreEntries: Math.max(0, h.count - h.lines.length),
-    }
-  })
+      moreEntries: Math.max(0, count - lines.length),
+    })
+  }
 
   const nextOff = q.offset + PAGE_FILES
   return {
     total: m.total,
     scanned: m.scanned,
     groups: [...groups.values()],
-    idl: q.offset ? [] : idl,
-    next: nextOff < m.hitsList.length ? nextOff : null,
+    idl,
+    idlFrom: iFrom,
+    next: nextOff < m.fids.length || iEnd < m.idlFids.length ? nextOff : null,
     gen,
     workerMs: Date.now() - t0,
   }
@@ -368,7 +423,7 @@ function fileRefs(/** @type {number} */ id) {
     seen.add(iid)
     const it = items[iid]
     chains[it.chain] = (chains[it.chain] ?? 0) + 1
-    list.push({ chain: it.chain, address: it.address, name: it.name, path: paths[pid] })
+    list.push({ chain: it.chain, address: it.address, name: it.name, path: shownPath(paths[pid]) })
   }
   const order = ['ethereum', 'base', 'arbitrum', 'solana']
   list.sort((a, b) => order.indexOf(a.chain) - order.indexOf(b.chain) || (a.name ?? '~').localeCompare(b.name ?? '~') || a.address.localeCompare(b.address))
@@ -415,7 +470,7 @@ function sourceOf(/** @type {number} */ id, /** @type {any} */ q) {
     matches: matchesCount,
     source: {
       id,
-      path: paths[ppid],
+      path: shownPath(paths[ppid]),
       lang: ['solidity', 'vyper', 'yul'].includes(f.lang) ? f.lang : 'other',
       lines: f.lines,
       bytes: f.len,
