@@ -869,3 +869,38 @@ mark {
     grid-column: 1 / -1;
   }
 }
+
+/* full "also in" list */
+.sx-also-w {
+  display: flex;
+  flex-direction: column;
+}
+.sx-also-h {
+  margin: 0 var(--gutter) 8px;
+  font-size: var(--t-2xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--fg-1);
+}
+.sx-also-h b {
+  font-family: var(--f-display);
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--hot);
+  letter-spacing: -0.01em;
+}
+.sx-also.full {
+  max-height: 420px;
+  overflow-y: auto;
+}
+@media (min-width: 1600px) {
+  .sx-also-h {
+    margin-left: 28px;
+    margin-right: 28px;
+  }
+}
+.sx-also a i {
+  margin-left: 8px;
+  font-style: normal;
+  color: var(--fg-3);
+}

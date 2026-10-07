@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import type { ChainId } from '@shared/chain'
-import type { SearchFileHit, SearchGroup, SearchIdlHit, SearchLang, SearchLine, SearchResult, SearchStats } from '@shared/search'
+import type { SearchFileHit, SearchFileRefs, SearchGroup, SearchIdlHit, SearchLang, SearchLine, SearchResult, SearchStats } from '@shared/search'
 import { Kicker } from '@/components/docs/pagekit'
 import { CHAINS, CHAIN_LABEL, CHAIN_SHORT, explorerName, explorerUrl, shortAddress } from '@/lib/chain'
 import { DASH, fmtBytes, fmtInt } from '@/lib/format'
@@ -40,6 +40,31 @@ const pctOf = (n: number, d: number) => {
 function chainsText(c: Partial<Record<ChainId, number>>): string {
   const ks = CHAINS.filter((k) => (c[k] ?? 0) > 0)
   return `${ks.length} chain${ks.length === 1 ? '' : 's'}`
+}
+
+/** A number that counts up to its value when it changes (instant with reduced motion). */
+function CountUp({ value }: { value: number }) {
+  const [shown, setShown] = useState(value)
+  const from = useRef(0)
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || value < 10) {
+      setShown(value)
+      return
+    }
+    const start = performance.now()
+    const a = from.current
+    let raf = 0
+    const tick = (now: number) => {
+      const k = Math.min(1, (now - start) / 700)
+      const e = 1 - Math.pow(2, -10 * k)
+      setShown(Math.round(a + (value - a) * (k >= 1 ? 1 : e)))
+      if (k < 1) raf = requestAnimationFrame(tick)
+      else from.current = value
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [value])
+  return <>{fmtInt(shown)}</>
 }
 
 function Hl({ text, hits }: { text: string; hits: [number, number][] }) {
@@ -97,7 +122,15 @@ function FileHit({ f, open, toggle }: { f: SearchFileHit; open: boolean; toggle:
           {firstHit ? <i>:{firstHit}</i> : null}
         </span>
         <span className="sx-file-meta mono">
-          {f.library && <span className="sx-lib">library</span>}
+          {f.library ? (
+            <span className="sx-lib" title="Library path (@openzeppelin, lib/, node_modules/ …): Custom only leaves it out">
+              library
+            </span>
+          ) : f.codeIndex ? (
+            <span className="sx-lib" title="The same file (sha256) is in the protocol code index of GitHub repositories: Custom only leaves it out">
+              in code index
+            </span>
+          ) : null}
           <span className="dim">
             {fmtInt(f.matches)} line{f.matches === 1 ? '' : 's'} · {fmtInt(f.lines)} in file
           </span>
@@ -115,20 +148,55 @@ function FileHit({ f, open, toggle }: { f: SearchFileHit; open: boolean; toggle:
           )}
         </div>
       )}
-      {open && f.alsoIn.length > 0 && (
-        <ul className="sx-also mono">
-          {f.alsoIn.map((a) => (
-            <li key={`${a.chain}:${a.address}`}>
-              <span className="sx-chip">{CHAIN_SHORT[a.chain]}</span>
-              <Link to={`/lens/${a.chain}/${a.address}`}>{a.name ?? shortAddress(a.address, 6, 6)}</Link>
-              <span className="dim" title={a.path}>
-                {a.path}
-              </span>
-            </li>
-          ))}
-          {f.shared.contracts - 1 > f.alsoIn.length && <li className="dim">and {fmtInt(f.shared.contracts - 1 - f.alsoIn.length)} more</li>}
-        </ul>
+      {open && f.alsoIn.length > 0 && <AlsoIn f={f} />}
+    </div>
+  )
+}
+
+/** Every kept contract with this exact file: the first 8 come with the result, the rest from /api/search/file. */
+function AlsoIn({ f }: { f: SearchFileHit }) {
+  const [refs, setRefs] = useState<SearchFileRefs | 'loading' | 'error' | null>(null)
+  const partial = f.shared.contracts - 1 > f.alsoIn.length
+  useEffect(() => {
+    if (!partial) return
+    const ac = new AbortController()
+    setRefs('loading')
+    fetch(`/api/search/file?id=${f.id}`, { signal: ac.signal })
+      .then((r) => (r.ok ? (r.json() as Promise<{ file: SearchFileRefs }>) : Promise.reject(new Error(String(r.status)))))
+      .then((j) => setRefs(j.file))
+      .catch(() => !ac.signal.aborted && setRefs('error'))
+    return () => ac.abort()
+  }, [f.id, partial])
+  const full = refs && typeof refs === 'object' ? refs : null
+  const list = full ? full.list : f.alsoIn
+  return (
+    <div className="sx-also-w">
+      {full && (
+        <div className="sx-also-h mono">
+          <b className="num">{fmtInt(full.contracts)}</b> kept contracts include this exact file ·{' '}
+          {CHAINS.filter((c) => (full.chains[c] ?? 0) > 0)
+            .map((c) => `${CHAIN_SHORT[c]} ${fmtInt(full.chains[c] ?? 0)}`)
+            .join(' · ')}
+        </div>
       )}
+      <ul className={`sx-also mono ${full ? 'full' : ''}`}>
+        {list.map((a) => (
+          <li key={`${a.chain}:${a.address}`}>
+            <span className="sx-chip">{CHAIN_SHORT[a.chain]}</span>
+            <Link to={`/lens/${a.chain}/${a.address}`} title={a.address}>
+              {a.name ?? shortAddress(a.address, 6, 6)}
+              {a.name ? <i>{shortAddress(a.address, 4, 4)}</i> : null}
+            </Link>
+            <span className="dim" title={a.path}>
+              {a.path}
+            </span>
+          </li>
+        ))}
+        {!full && partial && (
+          <li className="dim">{refs === 'error' ? `and ${fmtInt(f.shared.contracts - 1 - f.alsoIn.length)} more (could not load them)` : `loading the other ${fmtInt(f.shared.contracts - 1 - f.alsoIn.length)}…`}</li>
+        )}
+        {full && full.more > 0 && <li className="dim">and {fmtInt(full.more)} more</li>}
+      </ul>
     </div>
   )
 }
@@ -249,6 +317,20 @@ export default function Search() {
     document.title = active.q ? `${active.q} — Code search — LUSCA` : 'Code search — LUSCA'
   }, [active.q])
 
+  // "/" focuses the search box (as on code hosts)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      e.preventDefault()
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   useEffect(() => {
     let alive = true
     const pull = () =>
@@ -341,11 +423,20 @@ export default function Search() {
     ['unique source files', s ? fmtInt(s.uniqueFiles) : DASH, s ? `${fmtInt(s.fileRefs)} file references before deduplication` : '', true],
     ['kept contracts indexed', s ? fmtInt(s.contracts) : DASH, s ? `${CHAINS.filter((c) => c !== 'solana').map((c) => `${CHAIN_SHORT[c]} ${fmtInt(s.byChain[c] ?? 0)}`).join(' · ')} · ${fmtInt(s.programs)} Solana IDLs` : '', false],
     ['lines of verified code', s ? fmtInt(s.lines) : DASH, s ? `${fmtBytes(s.bytes)} searched per query at most` : '', false],
-    ['stored once, not', s && dedupX ? `${dedupX.toFixed(1)}×` : DASH, s ? `${fmtBytes(s.rawBytes)} of source → ${fmtBytes(s.bytes)} unique` : '', false],
+    ['deduplication', s && dedupX ? `${dedupX.toFixed(1)}×` : DASH, s ? `${fmtBytes(s.rawBytes)} of source files → ${fmtBytes(s.bytes)} stored once` : '', false],
   ]
 
   const t = res?.total
-  const live = statsErr ? 'server unreachable' : !s ? 'loading' : s.state === 'ready' ? `index ready · ${fmtBytes(s.diskBytes)} on disk` : s.state === 'off' ? 'off on this server' : `building · ${fmtInt(s.contracts)} contracts so far`
+  const nChains = t ? CHAINS.filter((c) => (t.chains[c] ?? 0) > 0).length : 0
+  const live = statsErr
+    ? 'server unreachable'
+    : !s
+      ? 'loading'
+      : s.state === 'off'
+        ? 'off on this server'
+        : s.state === 'ready' || s.ready
+          ? `index ready · ${fmtBytes(s.diskBytes)} on disk`
+          : `building · ${fmtInt(s.contracts)} contracts so far`
 
   return (
     <div className="sx">
@@ -486,19 +577,41 @@ export default function Search() {
             ) : t ? (
               <>
                 <p className="sx-sum-main">
-                  <b className="num">{fmtInt(t.matches)}{t.capped ? '+' : ''}</b> matching line{t.matches === 1 ? '' : 's'} in <b className="num">{fmtInt(t.contracts)}</b> contract
-                  {t.contracts === 1 ? '' : 's'} across <b className="num">{CHAINS.filter((c) => (t.chains[c] ?? 0) > 0).length}</b> chain
-                  {CHAINS.filter((c) => (t.chains[c] ?? 0) > 0).length === 1 ? '' : 's'}
-                  {t.programs > 0 ? (
+                  {t.files > 0 ? (
                     <>
-                      {' '}
-                      · <b className="num">{fmtInt(t.programs)}</b> Solana IDL{t.programs === 1 ? '' : 's'}
+                      <b className="num">
+                        <CountUp value={t.matches} />
+                        {t.capped ? '+' : ''}
+                      </b>{' '}
+                      matching line{t.matches === 1 ? '' : 's'} in{' '}
+                      <b className="num">
+                        <CountUp value={t.contracts} />
+                      </b>{' '}
+                      contract{t.contracts === 1 ? '' : 's'} across{' '}
+                      <b className="num">{nChains}</b> chain{nChains === 1 ? '' : 's'}
+                      {t.programs > 0 ? (
+                        <>
+                          {' '}
+                          · <b className="num">{fmtInt(t.programs)}</b> Solana IDL{t.programs === 1 ? '' : 's'}
+                        </>
+                      ) : null}
                     </>
-                  ) : null}
+                  ) : t.programs > 0 ? (
+                    <>
+                      <b className="num">
+                        <CountUp value={t.programs} />
+                      </b>{' '}
+                      Solana program{t.programs === 1 ? '' : 's'} with a matching IDL entry
+                    </>
+                  ) : (
+                    <>
+                      <b className="num">0</b> matches
+                    </>
+                  )}
                   <span className="sx-ms num"> · {fmtInt(res!.ms)} ms</span>
                 </p>
                 <p className="sx-sum-sub mono">
-                  {fmtInt(t.files)} unique file{t.files === 1 ? '' : 's'} matched · the trigram index left {fmtInt(res!.scanned.files)} of {fmtInt(res!.scanned.ofFiles)} files to scan (
+                  {fmtInt(t.files)} unique source file{t.files === 1 ? '' : 's'} matched · the trigram index left {fmtInt(res!.scanned.files)} of {fmtInt(res!.scanned.ofFiles)} files to scan (
                   {pctOf(res!.scanned.bytes, res!.scanned.ofBytes)} of {fmtBytes(res!.scanned.ofBytes)})
                   {CHAINS.filter((c) => (t.chains[c] ?? 0) > 0).length ? ` · ${CHAINS.filter((c) => (t.chains[c] ?? 0) > 0).map((c) => `${CHAIN_SHORT[c]} ${fmtInt(t.chains[c] ?? 0)}`).join(' · ')}` : ''}
                   {res!.cached ? ' · cached' : ''}
@@ -569,7 +682,7 @@ export default function Search() {
                       {CHAINS.filter((c) => (f.chains[c] ?? 0) > 0)
                         .map((c) => `${CHAIN_SHORT[c]} ${fmtInt(f.chains[c] ?? 0)}`)
                         .join(' · ')}{' '}
-                      · {fmtInt(f.lines)} lines{f.library ? ' · library' : ''}
+                      · {fmtInt(f.lines)} lines{f.library ? ' · library' : f.codeIndex ? ' · in code index' : ''}
                       {f.sample ? ` · e.g. ${f.sample.name ?? shortAddress(f.sample.address, 4, 4)}` : ''}
                     </span>
                   </span>

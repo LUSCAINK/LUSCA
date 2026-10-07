@@ -6,6 +6,7 @@
 //
 // In:  { type: 'delta', delta }  (applied in order)    { type: 'query', id, q }
 // Out: { type: 'result', id, result }   { type: 'error', id, message }
+import zlib from 'node:zlib'
 import { parentPort } from 'node:worker_threads'
 import { escapeRe, isLibPath, pathMatcher, requiredRuns, sigBit, trigramsOf } from './common.mjs'
 
@@ -15,7 +16,7 @@ const port = /** @type {import('node:worker_threads').MessagePort} */ (parentPor
 /** @type {Int32Array[]} */ const sigSegs = []
 /** @type {{ chain: string; address: string; name: string | null; readAt: number; files: Set<number> }[]} */ const items = []
 /** @type {string[]} */ const paths = []
-/** @type {{ id: number; seg: number; off: number; len: number; sseg: number; soff: number; sbits: number; lg: number; lang: string; lines: number; ci: boolean; idl: boolean; lib: boolean; refs: [number, number][] }[]} */
+/** @type {{ id: number; seg: number; off: number; len: number; clen: number; sseg: number; soff: number; sbits: number; lg: number; lang: string; lines: number; ci: boolean; idl: boolean; lib: boolean; refs: [number, number][] }[]} */
 const files = []
 let gen = 0
 
@@ -32,7 +33,7 @@ function apply(/** @type {any} */ d) {
       cur.readAt = it.readAt
     } else items[it.id] = { chain: it.chain, address: it.address, name: it.name, readAt: it.readAt, files: new Set() }
   }
-  for (const f of d.files) files[f.id] = { ...f, lg: Math.log2(f.sbits), lib: f.ci, refs: [] }
+  for (const f of d.files) files[f.id] = { ...f, lg: Math.log2(f.sbits), lib: false, refs: [] }
   for (const iid of d.drop) {
     const it = items[iid]
     if (!it) continue
@@ -70,7 +71,7 @@ const IDL_ENTRIES = 6
 /** @type {Map<string, any>} */
 const matchCache = new Map()
 
-const decode = (/** @type {{ seg: number; off: number; len: number }} */ f) => Buffer.from(textSegs[f.seg], f.off, f.len).toString('utf8')
+const decode = (/** @type {{ seg: number; off: number; clen: number }} */ f) => zlib.inflateRawSync(Buffer.from(textSegs[f.seg], f.off, f.clen)).toString('utf8')
 
 /** Every file passes the signature test for all trigrams (no false negatives; rare false positives). */
 function sigHas(/** @type {any} */ f, /** @type {number[]} */ tris) {
@@ -91,7 +92,7 @@ function sigHas(/** @type {any} */ f, /** @type {number[]} */ tris) {
 function matchText(/** @type {string} */ s, /** @type {RegExp} */ rx, /** @type {number} */ keep, /** @type {number} */ budgetLeft, /** @type {number} */ deadline) {
   rx.lastIndex = 0
   let count = 0
-  /** @type {{ n: number; hits: [number, number][] }[]} */
+  /** @type {{ n: number; hits: [number, number][]; more?: [number, number, number][] }[]} */
   const lines = []
   let line = 1
   let pos = 0 // scanned for '\n' up to here
@@ -116,8 +117,20 @@ function matchText(/** @type {string} */ s, /** @type {RegExp} */ rx, /** @type 
     const cur = lines.length && lines[lines.length - 1].n === line ? lines[lines.length - 1] : null
     if (cur && cur.hits.length < 8) {
       const lineEnd = s.indexOf(NL, at)
-      const end = Math.min(at + Math.max(1, m[0].length), lineEnd < 0 ? s.length : lineEnd)
+      const mEnd = at + Math.max(1, m[0].length)
+      const end = Math.min(mEnd, lineEnd < 0 ? s.length : lineEnd)
       cur.hits.push([at - lineStart, Math.max(at - lineStart + 1, end - lineStart)])
+      // a match that runs over several lines: highlight its continuation (up to 12 lines)
+      if (lineEnd >= 0 && mEnd > lineEnd + 1) {
+        let ls = lineEnd + 1
+        for (let n = line + 1; ls < mEnd && n <= line + 12; n++) {
+          const le = s.indexOf(NL, ls)
+          const e = Math.min(mEnd, le < 0 ? s.length : le)
+          if (e > ls) (cur.more ??= []).push([n, 0, e - ls])
+          if (le < 0) break
+          ls = le + 1
+        }
+      }
     }
     // standard non-overlapping matching (a regex may span lines; a match counts on the line where it starts)
     if (m[0].length === 0) rx.lastIndex = at + 1
@@ -146,23 +159,35 @@ function windowLine(/** @type {string} */ text, /** @type {[number, number][]} *
 }
 
 /** Snippet blocks: each matching line with CTX lines around it, merged when they touch. */
-function blocksOf(/** @type {string} */ s, /** @type {{ n: number; hits: [number, number][] }[]} */ hl) {
-  const all = s.split('\n')
+function blocksOf(/** @type {string} */ s, /** @type {{ n: number; hits: [number, number][]; more?: [number, number, number][] }[]} */ hl) {
+  const all = s.split(NL)
   /** @type {{ n: number; text: string; hits: [number, number][] }[][]} */
   const blocks = []
   /** @type {{ n: number; text: string; hits: [number, number][] }[] | null} */
   let cur = null
   let curEnd = 0
-  const hitAt = new Map(hl.map((h) => [h.n, h.hits]))
+  /** @type {Map<number, [number, number][]>} */
+  const hitAt = new Map()
+  const add = (/** @type {number} */ n, /** @type {[number, number]} */ r) => {
+    const a = hitAt.get(n)
+    if (a) a.push(r)
+    else hitAt.set(n, [r])
+  }
   for (const h of hl) {
+    for (const r of h.hits) add(h.n, r)
+    for (const [n, a, b] of h.more ?? []) add(n, [a, b])
+  }
+  const row = (/** @type {number} */ n) => ({ n, ...windowLine(all[n - 1] ?? '', hitAt.get(n) ?? []) })
+  for (const h of hl) {
+    const last = h.more?.length ? h.more[h.more.length - 1][0] : h.n
     const from = Math.max(1, h.n - CTX)
-    const to = Math.min(all.length, h.n + CTX)
+    const to = Math.min(all.length, Math.max(h.n + CTX, last + 1))
     if (cur && from <= curEnd + 1) {
-      for (let n = curEnd + 1; n <= to; n++) cur.push({ n, ...windowLine(all[n - 1] ?? '', hitAt.get(n) ?? []) })
+      for (let n = curEnd + 1; n <= to; n++) cur.push(row(n))
       curEnd = Math.max(curEnd, to)
     } else {
       cur = []
-      for (let n = from; n <= to; n++) cur.push({ n, ...windowLine(all[n - 1] ?? '', hitAt.get(n) ?? []) })
+      for (let n = from; n <= to; n++) cur.push(row(n))
       curEnd = to
       blocks.push(cur)
     }
@@ -203,7 +228,7 @@ function run(q) {
         ofBytes += f.len
       }
       if (q.lang && f.lang !== q.lang && !(q.lang === 'other' && !['solidity', 'vyper', 'yul'].includes(f.lang))) continue
-      if (q.custom && f.lib) continue
+      if (q.custom && (f.lib || f.ci)) continue
       let refs = f.refs
       if (q.chain) refs = refs.filter((r) => items[r[0]]?.chain === q.chain)
       if (pm) refs = refs.filter((r) => pm(paths[r[1]] ?? ''))
@@ -290,6 +315,7 @@ function run(q) {
       moreMatches: Math.max(0, h.count - h.lines.length),
       shared: { contracts: seen.size, chains },
       library: f.lib,
+      codeIndex: f.ci,
       alsoIn: also,
     })
     groups.set(piid, g)
@@ -326,11 +352,32 @@ function run(q) {
   }
 }
 
+/** Every kept contract that includes one unique file (the full "also in" list), at most 500. */
+function fileRefs(/** @type {number} */ id) {
+  const f = files[id]
+  if (!f || f.idl || !f.refs.length) return { gen, file: null }
+  const seen = new Set()
+  /** @type {{ chain: string; address: string; name: string | null; path: string }[]} */
+  const list = []
+  /** @type {Record<string, number>} */
+  const chains = {}
+  for (const [iid, pid] of f.refs) {
+    if (seen.has(iid)) continue
+    seen.add(iid)
+    const it = items[iid]
+    chains[it.chain] = (chains[it.chain] ?? 0) + 1
+    list.push({ chain: it.chain, address: it.address, name: it.name, path: paths[pid] })
+  }
+  const order = ['ethereum', 'base', 'arbitrum', 'solana']
+  list.sort((a, b) => order.indexOf(a.chain) - order.indexOf(b.chain) || (a.name ?? '~').localeCompare(b.name ?? '~') || a.address.localeCompare(b.address))
+  return { gen, file: { id, lines: f.lines, bytes: f.len, contracts: list.length, chains, list: list.slice(0, 500), more: Math.max(0, list.length - 500) } }
+}
+
 port.on('message', (/** @type {any} */ msg) => {
   if (msg?.type === 'delta') apply(msg.delta)
   else if (msg?.type === 'query') {
     try {
-      port.postMessage({ type: 'result', id: msg.id, result: run(msg.q) })
+      port.postMessage({ type: 'result', id: msg.id, result: msg.q.file !== undefined ? fileRefs(msg.q.file) : run(msg.q) })
     } catch (e) {
       port.postMessage({ type: 'error', id: msg.id, message: /** @type {Error} */ (e)?.message ?? String(e) })
     }

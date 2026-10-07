@@ -2,6 +2,7 @@
 // Shared between server/search/** and the client (src/pages/Search.tsx).
 //
 // REST: GET /api/search?q=&re=1&case=1&chain=&custom=1&path=&lang=&cursor= -> SearchResult
+//       GET /api/search/file?id= -> { file: SearchFileRefs }
 //       GET /api/search/stats -> SearchStats
 import type { ChainId } from './chain.ts'
 
@@ -53,8 +54,10 @@ export interface SearchFileHit {
   moreMatches: number
   /** How many kept contracts include this exact file (content hash), and on which chains. */
   shared: { contracts: number; chains: Partial<Record<ChainId, number>> }
-  /** Library path or a file also in the protocol code index (what custom=1 leaves out). */
+  /** Library path (@openzeppelin, lib/, node_modules/ …): custom=1 leaves it out. */
   library: boolean
+  /** The same file (sha256) is in the protocol code index (GitHub repositories): custom=1 leaves it out. */
+  codeIndex: boolean
   /** Other contracts that include this exact file (up to 8; shared.contracts is the total). */
   alsoIn: (SearchItem & { path: string })[]
 }
@@ -105,7 +108,19 @@ export interface SearchResult {
   error: { code: 'invalid' | 'refused' | 'timeout' | 'busy' | 'not-ready'; message: string } | null
 }
 
-export interface SearchTopFile { path: string; contracts: number; chains: Partial<Record<ChainId, number>>; lines: number; library: boolean; sample: SearchItem | null }
+/** Every kept contract that includes one unique file (GET /api/search/file?id=). */
+export interface SearchFileRefs {
+  id: number
+  lines: number
+  bytes: number
+  contracts: number
+  chains: Partial<Record<ChainId, number>>
+  /** At most 500, by chain then name; `more` counts the rest. */
+  list: (SearchItem & { path: string })[]
+  more: number
+}
+
+export interface SearchTopFile { path: string; contracts: number; chains: Partial<Record<ChainId, number>>; lines: number; library: boolean; codeIndex: boolean; sample: SearchItem | null }
 
 export interface SearchStats {
   ready: boolean
@@ -127,6 +142,8 @@ export interface SearchStats {
   rawBytes: number
   /** Index snapshot on disk (gzip), bytes. */
   diskBytes: number
+  /** Shared memory holding the unique files and their trigram signatures, bytes. */
+  sharedBytes: number
   /** Resident memory of the server process, bytes (index included). */
   rss: number
   byChain: Partial<Record<ChainId, number>>

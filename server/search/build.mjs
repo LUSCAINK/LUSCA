@@ -17,13 +17,13 @@ import { LOWER, isLibPath, sigBitsFor } from './common.mjs'
 
 const port = /** @type {import('node:worker_threads').MessagePort} */ (parentPort)
 const MB = 1048576
-const SEG_BYTES = 32 * MB
-const SIG_SEG_BYTES = 8 * MB
-const SNAP_VERSION = 1
+const SEG_BYTES = 8 * MB
+const SIG_SEG_BYTES = 4 * MB
+const SNAP_VERSION = 2
 const LANGS = new Set(['solidity', 'vyper', 'yul'])
 
 /** @typedef {{ id: number; key: string; chain: string; address: string; name: string | null; kind: string; readAt: number; files: number[]; idl: boolean }} Item */
-/** @typedef {{ id: number; h: string; seg: number; off: number; len: number; sseg: number; soff: number; sbits: number; lang: string; lines: number; ci: boolean; idl: boolean; refs: [number, number][] }} FileRec */
+/** @typedef {{ id: number; h: string; seg: number; off: number; len: number; clen: number; sseg: number; soff: number; sbits: number; lang: string; lines: number; ci: boolean; idl: boolean; refs: [number, number][] }} FileRec */
 
 const log = (/** @type {'info'|'warn'|'error'} */ lvl, /** @type {string} */ msg) => port.postMessage({ type: 'log', lvl, msg })
 
@@ -62,7 +62,67 @@ function flush() {
     port.postMessage({ type: 'delta', delta })
     delta = { segs: [], items: [], paths: [], files: [], refs: [], drop: [] }
   }
-  port.postMessage({ type: 'stats', stats: stats() })
+  port.postMessage({ type: 'stats', stats: stats(), meta: metaOf() })
+}
+
+/** What a restarted builder needs besides the deltas (see restore()). */
+function metaOf() {
+  return { shardSizes, skipped, uniqueBytes, textUsed, sigUsed, fullScanned, builtAt, diskBytes, state, dirty }
+}
+
+/** Rebuild the builder's state from the deltas it sent before (kept by the main thread): no copy of any file. */
+function restore(/** @type {any[]} */ deltas, /** @type {any} */ meta) {
+  for (const d of deltas) {
+    for (const sg of d.segs) {
+      if (sg.kind === 'text') textSegs[sg.idx] = sg.sab
+      else sigSegs[sg.idx] = sg.sab
+    }
+    for (const [id, p] of d.paths) {
+      paths[id] = p
+      pathId.set(p, id)
+    }
+    for (const x of d.items) {
+      const cur = items[x.id]
+      if (cur) {
+        cur.name = x.name
+        cur.readAt = x.readAt
+        cur.kind = x.kind
+      } else {
+        const it = { id: x.id, key: keyOf(x.chain, x.address), chain: x.chain, address: x.address, name: x.name, kind: x.kind, readAt: x.readAt, files: /** @type {number[]} */ ([]), idl: false }
+        items[x.id] = it
+        itemByKey.set(it.key, it)
+      }
+    }
+    for (const f of d.files) {
+      files[f.id] = { ...f, refs: [] }
+      fileByHash.set(f.h, files[f.id])
+    }
+    for (const iid of d.drop) {
+      const it = items[iid]
+      if (!it) continue
+      for (const fid of new Set(it.files)) if (files[fid]) files[fid].refs = files[fid].refs.filter((r) => r[0] !== iid)
+      it.files = []
+      it.idl = false
+    }
+    for (const [fid, iid, pid] of d.refs) {
+      const f = files[fid]
+      const it = items[iid]
+      if (!f || !it) continue
+      f.refs.push([iid, pid])
+      it.files.push(fid)
+      if (f.idl) it.idl = true
+    }
+  }
+  shardSizes = meta.shardSizes ?? {}
+  skipped = meta.skipped ?? { big: 0, cap: 0 }
+  uniqueBytes = meta.uniqueBytes ?? 0
+  textUsed = meta.textUsed ?? SEG_BYTES
+  sigUsed = meta.sigUsed ?? SIG_SEG_BYTES
+  fullScanned = !!meta.fullScanned
+  builtAt = meta.builtAt ?? null
+  diskBytes = meta.diskBytes ?? 0
+  state = meta.state === 'ready' ? 'ready' : 'building'
+  dirty = !!meta.dirty
 }
 
 // ─── storage ─────────────────────────────────────────────────────────────────
@@ -97,12 +157,19 @@ function allocSig(/** @type {number} */ bytes) {
   return at
 }
 
-// trigram signature scratch (distinct trigrams of one file)
-const seenTri = new Uint8Array(1 << 24)
-let touched = new Int32Array(1 << 20)
+// trigram signature scratch (distinct trigrams of one file), released when the builder is idle
+let seenTri = new Uint8Array(0)
+let touched = new Int32Array(0)
+function scratch() {
+  if (!seenTri.length) {
+    seenTri = new Uint8Array(1 << 24)
+    touched = new Int32Array(1 << 18)
+  }
+}
 
 /** Trigram signature of bytes (lower-cased ASCII) written into a new slot of a signature segment. */
 function signature(/** @type {Uint8Array} */ b) {
+  scratch()
   let cnt = 0
   if (b.length >= 3) {
     let x = LOWER[b[0]]
@@ -170,15 +237,17 @@ function addFile(/** @type {Buffer} */ bytes, /** @type {string} */ lang, /** @t
     skipped.cap++
     return -1
   }
-  const at = allocText(bytes.length)
-  new Uint8Array(textSegs[at.seg], at.off, bytes.length).set(bytes)
+  // each unique file is kept deflate-compressed (≈ 4× smaller); a query inflates only the files the trigram index leaves
+  const z = zlib.deflateRawSync(bytes, { level: 6 })
+  const at = allocText(z.length)
+  new Uint8Array(textSegs[at.seg], at.off, z.length).set(z)
   const sig = signature(bytes)
   /** @type {FileRec} */
-  const f = { id: files.length, h, seg: at.seg, off: at.off, len: bytes.length, ...sig, lang, lines: countLines(bytes), ci, idl, refs: [] }
+  const f = { id: files.length, h, seg: at.seg, off: at.off, len: bytes.length, clen: z.length, ...sig, lang, lines: countLines(bytes), ci, idl, refs: [] }
   files.push(f)
   fileByHash.set(h, f)
   uniqueBytes += bytes.length
-  delta.files.push({ id: f.id, seg: f.seg, off: f.off, len: f.len, sseg: f.sseg, soff: f.soff, sbits: f.sbits, lang: f.lang, lines: f.lines, ci: f.ci, idl: f.idl })
+  delta.files.push({ id: f.id, h: f.h, seg: f.seg, off: f.off, len: f.len, clen: f.clen, sseg: f.sseg, soff: f.soff, sbits: f.sbits, lang: f.lang, lines: f.lines, ci: f.ci, idl: f.idl })
   return f.id
 }
 
@@ -211,7 +280,7 @@ function upsertItem(/** @type {[string, string, string, string | null, string, n
     it.readAt = readAt
     it.kind = kind
   }
-  delta.items.push({ id: it.id, chain, address, name, readAt })
+  delta.items.push({ id: it.id, chain, address, name, kind, readAt })
   return it
 }
 
@@ -352,6 +421,7 @@ async function syncOnce(/** @type {Map<string, [string, string, string, string |
     if (!e || e[5] !== it.readAt) {
       if (it.files.length || it.idl) dropItemRefs(it)
       it.readAt = 0
+      delta.items.push({ id: it.id, chain: it.chain, address: it.address, name: it.name, kind: it.kind, readAt: 0 })
       dirty = true
     }
   }
@@ -434,13 +504,15 @@ async function syncOnce(/** @type {Map<string, [string, string, string, string |
 }
 
 function finishBuild() {
+  seenTri = new Uint8Array(0)
+  touched = new Int32Array(0)
   if (state !== 'ready') {
     state = 'ready'
     builtAt = Date.now()
   } else if (dirty) builtAt = Date.now()
   flush()
   if (dirty) scheduleSave()
-  port.postMessage({ type: 'idle' })
+  port.postMessage({ type: 'idle', dirty })
 }
 
 // ─── stats ───────────────────────────────────────────────────────────────────
@@ -489,6 +561,7 @@ function stats() {
     bytes,
     rawBytes,
     diskBytes,
+    sharedBytes: textSegs.reduce((a, b) => a + b.byteLength, 0) + sigSegs.reduce((a, b) => a + b.byteLength, 0),
     byChain,
     top: top.slice(0, 8).map(({ f, n }) => {
       /** @type {Record<string, number>} */
@@ -503,7 +576,7 @@ function stats() {
         if (!sample || (it.name && !sample.name)) sample = { chain: it.chain, address: it.address, name: it.name, path: paths[pid] }
       }
       const p = sample?.path ?? ''
-      return { path: p, contracts: n, chains, lines: f.lines, library: f.ci || f.refs.some((r) => isLibPath(paths[r[1]])), sample: sample ? { chain: sample.chain, address: sample.address, name: sample.name } : null }
+      return { path: p, contracts: n, chains, lines: f.lines, library: f.refs.some((r) => isLibPath(paths[r[1]])), codeIndex: f.ci, sample: sample ? { chain: sample.chain, address: sample.address, name: sample.name } : null }
     }),
     partial,
     builtAt,
@@ -536,9 +609,9 @@ async function save() {
       shardSizes,
       items: items.map((it) => [it.key, it.chain, it.address, it.name, it.kind, it.readAt]),
       paths,
-      files: files.map((f) => [f.h, f.len, f.lang, f.lines, f.ci ? 1 : 0, f.idl ? 1 : 0, f.refs]),
+      files: files.map((f) => [f.h, f.len, f.clen, f.sbits, f.lang, f.lines, f.ci ? 1 : 0, f.idl ? 1 : 0, f.refs]),
     }
-    const gz = zlib.createGzip({ level: 6 })
+    const gz = zlib.createGzip({ level: 1 })
     const out = fs.createWriteStream(tmp)
     const done = new Promise((resolve, reject) => {
       out.on('finish', () => resolve(undefined))
@@ -548,13 +621,17 @@ async function save() {
     gz.pipe(out)
     const write = (/** @type {Buffer} */ b) => (gz.write(b) ? Promise.resolve() : new Promise((r) => gz.once('drain', () => r(undefined))))
     await write(Buffer.from(`${JSON.stringify(header)}\n`, 'utf8'))
-    for (const f of files) await write(Buffer.from(new Uint8Array(textSegs[f.seg], f.off, f.len)))
+    for (const f of files) {
+      await write(Buffer.from(new Uint8Array(textSegs[f.seg], f.off, f.clen)))
+      await write(Buffer.from(new Uint8Array(sigSegs[f.sseg], f.soff, f.sbits >>> 3)))
+    }
     gz.end()
     await done
     fs.renameSync(tmp, file)
     diskBytes = fs.statSync(file).size
     log('info', `search index snapshot saved (${(diskBytes / MB).toFixed(1)} MB gzip, ${files.length} unique files)`)
-    port.postMessage({ type: 'stats', stats: stats() })
+    port.postMessage({ type: 'stats', stats: stats(), meta: metaOf() })
+    if (!running && !dirty) port.postMessage({ type: 'idle', dirty: false })
   } catch (e) {
     dirty = true
     try {
@@ -566,65 +643,40 @@ async function save() {
   }
 }
 
-/** Load the snapshot (streamed: header line, then the bytes of every file in order). */
+/** Load the snapshot: a header line, then each file's deflated bytes and trigram signature, in file order. */
 async function load() {
+  for (let v = 1; v < SNAP_VERSION; v++) {
+    try {
+      fs.rmSync(path.join(dataDir, 'search', `index.v${v}.gz`), { force: true })
+    } catch {
+      /* older format, gone */
+    }
+  }
   const file = snapFile()
   if (!fs.existsSync(file)) return false
   try {
-    const gz = fs.createReadStream(file).pipe(zlib.createGunzip())
+    const buf = zlib.gunzipSync(fs.readFileSync(file))
+    const nl = buf.indexOf(10)
+    if (nl < 0) throw new Error('no header')
     /** @type {any} */
-    let header = null
-    /** @type {Buffer[]} */
-    let headParts = []
+    const header = JSON.parse(buf.subarray(0, nl).toString('utf8'))
+    if (header?.v !== SNAP_VERSION || !Array.isArray(header.files) || !Array.isArray(header.items) || !Array.isArray(header.paths)) throw new Error('unknown snapshot format')
+    let pos = nl + 1
     let fi = 0
-    let fileBuf = /** @type {Buffer | null} */ (null)
-    let fileFill = 0
-    const startFile = () => {
-      while (fi < header.files.length && header.files[fi][1] === 0) {
-        place(Buffer.alloc(0))
-      }
-      if (fi < header.files.length) {
-        fileBuf = Buffer.allocUnsafe(header.files[fi][1])
-        fileFill = 0
-      } else fileBuf = null
-    }
-    const place = (/** @type {Buffer} */ bytes) => {
-      const [h, , lang, , ci, idl, refs] = header.files[fi]
-      const at = allocText(bytes.length)
-      new Uint8Array(textSegs[at.seg], at.off, bytes.length).set(bytes)
-      const sig = signature(bytes)
+    for (const [h, len, clen, sbits, lang, lines, ci, idl, refs] of header.files) {
+      if (pos + clen + (sbits >>> 3) > buf.length) throw new Error('snapshot cut short')
+      const at = allocText(clen)
+      new Uint8Array(textSegs[at.seg], at.off, clen).set(buf.subarray(pos, pos + clen))
+      pos += clen
+      const sg = allocSig(sbits >>> 3)
+      new Uint8Array(sigSegs[sg.sseg], sg.soff, sbits >>> 3).set(buf.subarray(pos, pos + (sbits >>> 3)))
+      pos += sbits >>> 3
       /** @type {FileRec} */
-      const f = { id: files.length, h, seg: at.seg, off: at.off, len: bytes.length, ...sig, lang, lines: header.files[fi][3], ci: !!ci, idl: !!idl, refs }
+      const f = { id: files.length, h, seg: at.seg, off: at.off, len, clen, ...sg, sbits, lang, lines, ci: !!ci, idl: !!idl, refs }
       files.push(f)
       fileByHash.set(h, f)
-      uniqueBytes += f.len
+      uniqueBytes += len
       fi++
-    }
-    for await (const chunk of gz) {
-      let b = /** @type {Buffer} */ (chunk)
-      if (!header) {
-        const nl = b.indexOf(10)
-        if (nl < 0) {
-          headParts.push(Buffer.from(b))
-          continue
-        }
-        headParts.push(b.subarray(0, nl))
-        header = JSON.parse(Buffer.concat(headParts).toString('utf8'))
-        headParts = []
-        if (header?.v !== SNAP_VERSION || !Array.isArray(header.files) || !Array.isArray(header.items) || !Array.isArray(header.paths)) throw new Error('unknown snapshot format')
-        b = b.subarray(nl + 1)
-        startFile()
-      }
-      while (b.length && fileBuf) {
-        const take = Math.min(b.length, fileBuf.length - fileFill)
-        b.copy(fileBuf, fileFill, 0, take)
-        fileFill += take
-        b = b.subarray(take)
-        if (fileFill === fileBuf.length) {
-          place(fileBuf)
-          startFile()
-        }
-      }
     }
     if (!header || fi !== header.files.length) throw new Error('snapshot cut short')
     for (const p of header.paths) {
@@ -637,7 +689,7 @@ async function load() {
       it.readAt = e[5]
     }
     for (const f of files) {
-      delta.files.push({ id: f.id, seg: f.seg, off: f.off, len: f.len, sseg: f.sseg, soff: f.soff, sbits: f.sbits, lang: f.lang, lines: f.lines, ci: f.ci, idl: f.idl })
+      delta.files.push({ id: f.id, h: f.h, seg: f.seg, off: f.off, len: f.len, clen: f.clen, sseg: f.sseg, soff: f.soff, sbits: f.sbits, lang: f.lang, lines: f.lines, ci: f.ci, idl: f.idl })
       for (const [iid, pid] of f.refs) {
         const it = items[iid]
         if (!it) continue
@@ -700,6 +752,15 @@ port.on('message', async (/** @type {any} */ m) => {
       flush()
     } else flush()
     port.postMessage({ type: 'loaded', snapshot: ok, codeIndexFiles: codeIndex.size })
+    initDone = true
+    if (wanted) void sync()
+  } else if (m?.type === 'restore') {
+    dataDir = m.dataDir
+    if (m.maxBytes) maxBytes = m.maxBytes
+    if (m.maxFileBytes) maxFileBytes = m.maxFileBytes
+    if (m.saveDelayMs !== undefined) saveDelayMs = m.saveDelayMs
+    codeIndex = loadCodeIndex()
+    restore(m.deltas, m.meta ?? {})
     initDone = true
     if (wanted) void sync()
   } else if (m?.type === 'sync') {

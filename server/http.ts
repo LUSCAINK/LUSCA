@@ -1771,7 +1771,7 @@ export function createHub(opts: HubOptions): Hub {
     }
 
     // ── CODE SEARCH: grep over kept verified sources and IDLs (server/search; its own per-address limit, cache, workers) ──
-    if (p === '/api/search' || p === '/api/search/stats') {
+    if (p === '/api/search' || p === '/api/search/stats' || p === '/api/search/file') {
       allow(['GET', 'HEAD'])
       const m = requireModules()
       if (!m.search) throw new HttpError(503, 'code search is not available on this server')

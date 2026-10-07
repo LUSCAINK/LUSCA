@@ -12,10 +12,10 @@ export const isLibPath = (/** @type {string} */ p) => LIB_PATH_RE.test(p)
 export const LOWER = new Uint8Array(256)
 for (let i = 0; i < 256; i++) LOWER[i] = i >= 65 && i <= 90 ? i | 32 : i
 
-/** Trigram signature bits for a file with `distinct` distinct trigrams (≈ 8 bits per trigram, power of two). */
+/** Trigram signature bits for a file with `distinct` distinct trigrams (4 to 8 bits per trigram, a power of two). */
 export function sigBitsFor(/** @type {number} */ distinct) {
   let bits = 256
-  const want = Math.max(256, distinct * 8)
+  const want = Math.max(256, distinct * 4)
   while (bits < want && bits < 1 << 22) bits <<= 1
   return bits
 }

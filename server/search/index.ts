@@ -11,13 +11,14 @@
 // gets 20 uncached searches a minute.
 //
 // REST: GET /api/search?q=&re=1&case=1&chain=&custom=1&path=&lang=&cursor= -> SearchResult
+//       GET /api/search/file?id= -> { file: SearchFileRefs }   (every kept contract that includes one unique file)
 //       GET /api/search/stats -> SearchStats
-// Module API (MCP): search(query: SearchQuery): Promise<SearchResult> ; stats(): SearchStats
+// Module API (MCP): search(query: SearchQuery): Promise<SearchResult> ; file(id): Promise<SearchFileRefs | null> ; stats(): SearchStats
 import fs from 'node:fs'
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
 import type { ChainId, ChainIndexItem } from '../../shared/chain.ts'
-import { SEARCH_LANGS, type SearchLang, type SearchQuery, type SearchResult, type SearchStats } from '../../shared/search.ts'
+import { SEARCH_LANGS, type SearchFileRefs, type SearchLang, type SearchQuery, type SearchResult, type SearchStats } from '../../shared/search.ts'
 import { refuseRegex } from './common.mjs'
 
 type Log = (lvl: 'info' | 'warn' | 'error', msg: string) => void
@@ -41,6 +42,8 @@ export interface CodeSearchOptions {
   perIpPerMin?: number
   /** Snapshot save debounce after changes, ms (default 120 s). */
   saveDelayMs?: number
+  /** The builder worker exits after this long with nothing to do and nothing unsaved, ms (default 30 s); the next change starts it again from the deltas the main thread keeps. */
+  builderIdleMs?: number
 }
 
 export interface CodeSearch {
@@ -48,6 +51,8 @@ export interface CodeSearch {
   stop(): Promise<void>
   /** Run one query (validated, cached, bounded). Never throws for bad input: the result carries `error`. */
   search(q: SearchQuery): Promise<SearchResult>
+  /** Every kept contract that includes one unique file (SearchFileHit.id), at most 500; null when unknown. */
+  file(id: number): Promise<SearchFileRefs | null>
   stats(): SearchStats
   /** HTTP: /api/search and /api/search/stats. */
   route(p: string, params: URLSearchParams, ip: string): Promise<{ status: number; json: string; headers?: Record<string, string> }>
@@ -55,6 +60,8 @@ export interface CodeSearch {
   idle(): Promise<void>
   /** Write the snapshot now (tests, tools). */
   save(): Promise<void>
+  /** V8 heap in use per worker (builder first), bytes. */
+  heaps(): Promise<number[]>
 }
 
 const MB = 1048576
@@ -66,7 +73,7 @@ const QUEUE_MAX = 12
 const QUEUE_WAIT_MS = 4000
 
 interface NormQuery { q: string; re: boolean; case: boolean; chain: ChainId | null; custom: boolean; path: string | null; lang: SearchLang | null; offset: number }
-interface Job { id: number; q: NormQuery; resolve: (r: WorkerOut) => void; queuedAt: number; timer: NodeJS.Timeout | null }
+interface Job { id: number; q: NormQuery | { file: number }; resolve: (r: WorkerOut) => void; queuedAt: number; timer: NodeJS.Timeout | null }
 type WorkerOut = { ok: true; result: Record<string, unknown> } | { ok: false; code: 'timeout' | 'busy' | 'invalid'; message: string }
 interface QW { w: Worker; job: Job | null; dead: boolean }
 
@@ -127,6 +134,10 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
   const queryUrl = new URL('./query.mjs', import.meta.url)
 
   let builder: Worker | null = null
+  let builderMeta: unknown = null
+  let builderExit: NodeJS.Timeout | null = null
+  let retiring: Worker | null = null
+  const builderIdleMs = o.builderIdleMs ?? 30_000
   const replay: unknown[] = []
   let gen = 0
   let bstats: BuilderStats | null = null
@@ -148,8 +159,8 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
 
   // ─── workers ───────────────────────────────────────────────────────────────
 
-  function spawnBuilder() {
-    const w = new Worker(buildUrl, { resourceLimits: { maxOldGenerationSizeMb: 512 } })
+  function spawnBuilder(restore: boolean) {
+    const w = new Worker(buildUrl, { resourceLimits: { maxOldGenerationSizeMb: 192, maxYoungGenerationSizeMb: 16 } })
     builder = w
     w.unref()
     w.on('message', (m: { type: string; [k: string]: unknown }) => {
@@ -159,6 +170,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
         for (const q of pool) if (!q.dead) q.w.postMessage({ type: 'delta', delta: m.delta })
       } else if (m.type === 'stats') {
         bstats = m.stats as BuilderStats
+        if (m.meta) builderMeta = m.meta
         state = bstats.state
         statsCache = null
       } else if (m.type === 'log') log(m.lvl as 'info', String(m.msg))
@@ -167,6 +179,18 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
         const ws = idleWaiters
         idleWaiters = []
         for (const f of ws) f()
+        // nothing to do and nothing unsaved: let the builder go (its memory with it) until the next change
+        if (!m.dirty && !stopped) {
+          if (builderExit) clearTimeout(builderExit)
+          builderExit = setTimeout(() => {
+            builderExit = null
+            if (builder !== w || busyBuilding) return
+            retiring = w
+            builder = null
+            void w.terminate()
+          }, builderIdleMs)
+          builderExit.unref?.()
+        }
       } else if (m.type === 'saved') {
         const ws = saveWaiters
         saveWaiters = []
@@ -177,15 +201,19 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     })
     w.on('error', (e) => log('error', `code search builder: ${e.stack ?? e.message}`))
     w.on('exit', (code) => {
-      if (stopped) return
-      log('warn', `code search builder exited (${code}) — search keeps the index it has`)
-      builder = null
+      if (stopped || retiring === w) return
+      log('warn', `code search builder exited (${code}) — search keeps the index it has; the next change starts a new one`)
+      if (builder === w) builder = null
+      busyBuilding = false
+      lastSig = ''
     })
-    w.postMessage({ type: 'init', dataDir: o.dataDir, maxBytes, saveDelayMs: o.saveDelayMs ?? 120_000 })
+    const base = { dataDir: o.dataDir, maxBytes, saveDelayMs: o.saveDelayMs ?? 120_000 }
+    if (restore) w.postMessage({ type: 'restore', ...base, deltas: replay, meta: builderMeta })
+    else w.postMessage({ type: 'init', ...base })
   }
 
   function spawnQuery(): QW {
-    const w = new Worker(queryUrl, { resourceLimits: { maxOldGenerationSizeMb: 256 } })
+    const w = new Worker(queryUrl, { resourceLimits: { maxOldGenerationSizeMb: 64, maxYoungGenerationSizeMb: 8 } })
     w.unref()
     const qw: QW = { w, job: null, dead: false }
     for (const d of replay) w.postMessage({ type: 'delta', delta: d })
@@ -238,7 +266,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     }
   }
 
-  function runJob(q: NormQuery): Promise<WorkerOut> {
+  function runJob(q: NormQuery | { file: number }): Promise<WorkerOut> {
     if (queue.length >= QUEUE_MAX) return Promise.resolve({ ok: false, code: 'busy', message: 'search is busy — try again in a few seconds' })
     return new Promise((resolve) => {
       queue.push({ id: ++jobSeq, q, resolve, queuedAt: Date.now(), timer: null })
@@ -249,7 +277,6 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
   // ─── sync with the chain store ─────────────────────────────────────────────
 
   function syncNow() {
-    if (!builder) return
     const entries: [string, ChainId, string, string | null, string, number][] = []
     let cursor: string | undefined
     let guard = 0
@@ -270,7 +297,12 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     if (sig === lastSig) return
     lastSig = sig
     busyBuilding = true
-    builder.postMessage({ type: 'sync', items: entries })
+    if (builderExit) {
+      clearTimeout(builderExit)
+      builderExit = null
+    }
+    if (!builder) spawnBuilder(true)
+    builder!.postMessage({ type: 'sync', items: entries })
   }
 
   // ─── public ────────────────────────────────────────────────────────────────
@@ -288,6 +320,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
       bytes: b?.bytes ?? 0,
       rawBytes: b?.rawBytes ?? 0,
       diskBytes: b?.diskBytes ?? 0,
+      sharedBytes: b?.sharedBytes ?? 0,
       rss: process.memoryUsage().rss,
       byChain: b?.byChain ?? {},
       top: b?.top ?? [],
@@ -338,6 +371,13 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     }
   }
 
+  async function file(id: number): Promise<SearchFileRefs | null> {
+    if (!Number.isSafeInteger(id) || id < 0 || !stats().ready) return null
+    const out = await runJob({ file: id })
+    if (!out.ok) return null
+    return (out.result as { file: SearchFileRefs | null }).file
+  }
+
   const cacheKey = (q: NormQuery) => `${gen}|${JSON.stringify([q.q, q.re, q.case, q.chain, q.custom, q.path, q.lang, q.offset])}`
 
   function takeIp(ip: string): number {
@@ -349,7 +389,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
     }
     ts.push(now)
     hits.set(ip, ts)
-    if (hits.size > 50_000) hits.delete(hits.keys().next().value as string)
+    if (hits.size > 5_000) for (const [k, v] of hits) if (!v.length || v[v.length - 1] <= now - 60_000) hits.delete(k)
     return 0
   }
 
@@ -358,6 +398,21 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
       const now = Date.now()
       if (!statsCache || now - statsCache.at > 5000) statsCache = { at: now, json: JSON.stringify(stats()) }
       return { status: 200, json: statsCache.json, headers: { 'Cache-Control': 'public, max-age=5' } }
+    }
+    if (p === '/api/search/file') {
+      const raw = params.get('id') ?? ''
+      if (!/^\d{1,7}$/.test(raw)) return { status: 400, json: JSON.stringify({ error: 'id must be a file id from a search result' }) }
+      const key = `${gen}|file|${raw}`
+      const hit = cache.get(key)
+      if (hit && Date.now() - hit.at < CACHE_TTL_MS) return { status: hit.status, json: hit.json, headers: { 'Cache-Control': 'public, max-age=60' } }
+      const wait = takeIp(ip)
+      if (wait > 0) return { status: 429, json: JSON.stringify({ error: `${perIp} searches a minute per address — wait ${Math.ceil(wait / 1000)} s` }), headers: { 'Retry-After': String(Math.ceil(wait / 1000)) } }
+      const f = await file(Number(raw))
+      const json = JSON.stringify(f ? { file: f } : { error: 'no such file in the index (it may have been rebuilt: search again)' })
+      const status = f ? 200 : 404
+      cache.set(key, { at: Date.now(), json, status })
+      while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value as string)
+      return { status, json, headers: f ? { 'Cache-Control': 'public, max-age=60' } : undefined }
     }
     if (p !== '/api/search') return { status: 404, json: JSON.stringify({ error: 'not found' }) }
     const raw = queryFromParams(params)
@@ -396,7 +451,7 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
       if (started || stopped) return
       started = true
       state = 'loading'
-      spawnBuilder()
+      spawnBuilder(false)
       for (let i = 0; i < POOL; i++) pool.push(spawnQuery())
       const tick = () => {
         try {
@@ -418,18 +473,26 @@ export function createCodeSearch(o: CodeSearchOptions): CodeSearch {
       stopped = true
       if (startTimer) clearTimeout(startTimer)
       if (syncTimer) clearInterval(syncTimer)
+      if (builderExit) clearTimeout(builderExit)
       for (const j of queue.splice(0)) j.resolve({ ok: false, code: 'busy', message: 'the server is stopping' })
       await Promise.all(pool.map((q) => q.w.terminate().catch(() => 0)))
       if (builder) await builder.terminate().catch(() => 0)
     },
     search,
+    file,
     stats,
     route,
     idle() {
       if (!busyBuilding) return Promise.resolve()
       return new Promise((r) => idleWaiters.push(r))
     },
+    async heaps() {
+      const ws = [builder, ...pool.map((q) => q.w)]
+      const hs = await Promise.all(ws.map((w) => (w ? w.getHeapStatistics().catch(() => null) : null)))
+      return hs.map((h) => (h ? h.used_heap_size : 0))
+    },
     save() {
+      // no builder: it left with nothing unsaved
       if (!builder) return Promise.resolve()
       return new Promise((r) => {
         saveWaiters.push(r)

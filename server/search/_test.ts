@@ -163,7 +163,7 @@ fs.mkdirSync(path.join(tmp, 'code'), { recursive: true })
 fs.writeFileSync(path.join(tmp, 'code', 'x__vault.1.sha'), crypto.createHash('sha256').update('@external\ndef withdraw(amount: uint256):\n    send(msg.sender, amount)\n').digest().subarray(0, 16))
 
 let live = recs.slice()
-let s = createCodeSearch({ source: sourceOf(() => live), dataDir: tmp, log, startDelayMs: 0, syncMs: 100, hardMs: 600, perIpPerMin: 1000, saveDelayMs: 0 })
+let s = createCodeSearch({ source: sourceOf(() => live), dataDir: tmp, log, startDelayMs: 0, syncMs: 100, hardMs: 600, perIpPerMin: 1000, saveDelayMs: 0, builderIdleMs: 150 })
 s.start()
 await ready(s)
 
@@ -188,6 +188,11 @@ await test('dedup: a file shared by 40 contracts is stored once and counted per 
   const pool = await s.search({ q: 'selfdestruct(payable(owner))', case: true })
   assert.equal(pool.total.files, 1, 'CRLF and LF copies are one file')
   assert.equal(pool.total.contracts, 10)
+  // a regex match over two lines counts once (on its first line) and highlights both
+  const two = await s.search({ q: 'onlyOwner \\{\\s*selfdestruct', re: true })
+  assert.equal(two.total.matches, 1)
+  const lines = two.groups[0].files[0].blocks.flat()
+  assert.deepEqual(lines.filter((l) => l.hits.length).map((l) => l.n), [2, 3])
 })
 
 await test('trigram prefilter: same totals as a brute-force scan (no false negatives)', async () => {
@@ -272,6 +277,11 @@ await test('caps and paging: totals stop at the cap and say so; pages do not rep
   const files2 = p2.groups.flatMap((g) => g.files.map((f) => f.id))
   assert.equal(files2.length, 10)
   assert.equal(files1.filter((x) => files2.includes(x)).length, 0)
+  // the builder left once idle with everything saved (its memory goes with it) …
+  for (let i = 0; i < 200 && (await s.heaps())[0] !== 0; i++) await new Promise((r) => setTimeout(r, 25))
+  assert.equal((await s.heaps())[0], 0, 'the idle builder exited')
+  assert.ok(fs.existsSync(path.join(tmp, 'search', 'index.v2.gz')), 'after saving its snapshot')
+  // … and the next change starts a new one from the deltas the main thread keeps (no shard re-read of old items)
   // > 20 000 matching lines: counting stops, capped = true
   const big = Array.from({ length: 12_000 }, (_, i) => `uint256 constant K${i} = ${i};`).join('\n')
   live = live.concat([
@@ -324,6 +334,15 @@ await test('route: validation, cache, per-address limit', async () => {
   assert.equal((JSON.parse(a.json) as SearchResult).cached, false)
   const b = await s.route('/api/search', new URLSearchParams({ q: 'tx.origin' }), '1.1.1.1')
   assert.equal((JSON.parse(b.json) as SearchResult).cached, true)
+  const lib = (await s.search({ q: 'target.delegatecall(data)' })).groups[0].files[0]
+  const fr = await s.route('/api/search/file', new URLSearchParams({ id: String(lib.id) }), '1.1.1.1')
+  assert.equal(fr.status, 200)
+  const full = JSON.parse(fr.json).file
+  assert.equal(full.contracts, 40)
+  assert.equal(full.list.length, 40)
+  assert.deepEqual(full.chains, { ethereum: 14, base: 13, arbitrum: 13 })
+  assert.equal((await s.route('/api/search/file', new URLSearchParams({ id: '99999' }), '1.1.1.1')).status, 404)
+  assert.equal((await s.route('/api/search/file', new URLSearchParams({ id: 'x' }), '1.1.1.1')).status, 400)
   const st = await s.route('/api/search/stats', new URLSearchParams(), '1.1.1.1')
   assert.equal(st.status, 200)
   assert.ok(JSON.parse(st.json).uniqueFiles > 60)
@@ -341,7 +360,7 @@ await test('route: validation, cache, per-address limit', async () => {
 
 await test('snapshot: a restart loads the gzip snapshot and answers the same', async () => {
   await s.save()
-  const snap = path.join(tmp, 'search', 'index.v1.gz')
+  const snap = path.join(tmp, 'search', 'index.v2.gz')
   assert.ok(fs.existsSync(snap))
   const before = await s.search({ q: 'delegatecall(data)', chain: 'arbitrum' })
   await s.stop()
