@@ -1,0 +1,270 @@
+{
+ "readAt": "2026-10-07",
+ "total": 2485,
+ "chains": {
+  "arbitrum": 680,
+  "ethereum": 1266,
+  "base": 539
+ },
+ "classes": [
+  {
+   "key": "secp256k1",
+   "label": "secp256k1 ECDSA",
+   "n": 687,
+   "byChain": {
+    "arbitrum": 202,
+    "ethereum": 317,
+    "base": 168
+   },
+   "examples": [
+    {
+     "chain": "arbitrum",
+     "address": "0xd9db270c1b5e3bd161e8c8503c55ceabee709552",
+     "name": "GnosisSafe"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0x43506849d7c04f9138d1a2050bbf3a0c054402dd",
+     "name": "FiatTokenV2_2"
+    },
+    {
+     "chain": "arbitrum",
+     "address": "0x3e5c63644e683549055b9be8653de26e0b4cd36e",
+     "name": "GnosisSafeL2"
+    },
+    {
+     "chain": "arbitrum",
+     "address": "0xdc5ed7b972710594082479af498b1da02d03a273",
+     "name": "StakingVault"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0x66a9893cc07d91d95644aedd05d03f95e1dba8af",
+     "name": "UniversalRouter"
+    }
+   ],
+   "note": "ecrecover, precompile 0x01, SignatureChecker (permit, EIP-712, multisig signatures)."
+  },
+  {
+   "key": "p256",
+   "label": "P-256 (secp256r1)",
+   "n": 8,
+   "byChain": {
+    "arbitrum": 3,
+    "ethereum": 1,
+    "base": 4
+   },
+   "examples": [
+    {
+     "chain": "arbitrum",
+     "address": "0x0a034977733ca864d65f61f7f35a2ad054d8013b",
+     "name": "SmartWallet"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0x000000009b1d0af20d8c6d0a44e162d11f9b8f00",
+     "name": "CaliburEntry"
+    },
+    {
+     "chain": "arbitrum",
+     "address": "0x05a16513bf74629b834878731f07b075cca33f55",
+     "name": "EspressoSGXTEEVerifier"
+    },
+    {
+     "chain": "arbitrum",
+     "address": "0x69523d25e25e5c78d828df90459b75f189d40cf7",
+     "name": "V3QuoteVerifier"
+    },
+    {
+     "chain": "base",
+     "address": "0x13f091e58b60fd0bd8052b8e7045553d83d80de0",
+     "name": "SendAccount"
+    }
+   ],
+   "note": "P256VERIFY precompile 0x100 (RIP-7212) or P256/WebAuthn verify calls; passkey wallets."
+  },
+  {
+   "key": "bn254",
+   "label": "BN254 pairing / ecAdd / ecMul",
+   "n": 44,
+   "byChain": {
+    "arbitrum": 4,
+    "base": 5,
+    "ethereum": 35
+   },
+   "examples": [
+    {
+     "chain": "arbitrum",
+     "address": "0xd9d5c8456a168dd25561064f47bf116111131b1d",
+     "name": "SP1Verifier"
+    },
+    {
+     "chain": "arbitrum",
+     "address": "0x291f3fd0608ca03e3d69646f56815f90cd1d972f",
+     "name": "Groth16Verifier"
+    },
+    {
+     "chain": "base",
+     "address": "0xc9c98965297bc527861c898329ee280632b76e18",
+     "name": "ConditionalTokens"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0x91ff8bbd8ebb07893010d50a48a1609e5ebd8e34",
+     "name": "Rollup"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0xd662c4b1f22aceb0beacdf3a493de6f478686a0c",
+     "name": "RailgunSmartWallet"
+    }
+   ],
+   "note": "Precompiles 0x06-0x08: Groth16/PLONK/fflonk verifiers. 6 of these matched only ecAdd/ecMul (0x06/0x07)."
+  },
+  {
+   "key": "kzg",
+   "label": "KZG point evaluation",
+   "n": 13,
+   "byChain": {
+    "arbitrum": 2,
+    "ethereum": 11
+   },
+   "examples": [
+    {
+     "chain": "arbitrum",
+     "address": "0x18cc27b3a95a6fdef9eaa391eff28f48f42ffe3f",
+     "name": "OneStepProverHostIo"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0x9961d34d3bae6914635c882e8fe382e14e0f172a",
+     "name": "Starknet"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0x91ff8bbd8ebb07893010d50a48a1609e5ebd8e34",
+     "name": "Rollup"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0x1fb8cdfc6831fc866ed9c51af8817da5c287add3",
+     "name": "PreimageOracle"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0x052b73d934e9412045bf731574463fd026d74645",
+     "name": "LineaRollup"
+    }
+   ],
+   "note": "Precompile 0x0a (EIP-4844 blob proofs)."
+  },
+  {
+   "key": "bls12381",
+   "label": "BLS12-381",
+   "n": 4,
+   "byChain": {
+    "ethereum": 4
+   },
+   "examples": [
+    {
+     "chain": "ethereum",
+     "address": "0xd640787ee67e36ba2d728363e9b8ebfd49f9a1d2",
+     "name": "RelayerRegistryLogic"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0xb08dbc68c521cd7a4318dc4c807a42beb20f1106",
+     "name": "TopUpGateway"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0x17be979344f2c2cc806229a532d92f8742c10462",
+     "name": "ConsolidationGateway"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0xe78717192c45736df0e4be55c0219ee7f9addd0d",
+     "name": "PredepositGuarantee"
+    }
+   ],
+   "note": "EIP-2537 precompiles 0x0b-0x11."
+  },
+  {
+   "key": "hashonly",
+   "label": "Hash-only (Merkle proofs)",
+   "n": 66,
+   "byChain": {
+    "arbitrum": 23,
+    "ethereum": 39,
+    "base": 4
+   },
+   "examples": [
+    {
+     "chain": "arbitrum",
+     "address": "0x2aa638596429e4734d872fec6e7a42e3f3d9fbf8",
+     "name": "QuestBoardSidechain"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0x0000000000000068f116a894984e2db1123eb395",
+     "name": "Seaport"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0xece6e0cde61078f76b66ef0c338a6875e5d01f79",
+     "name": "FeeOracle"
+    },
+    {
+     "chain": "arbitrum",
+     "address": "0xf3ec8c6a306fb010ed8ae693a21481f639aa5119",
+     "name": "Distributor"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0x678f0d5aac7398502b50b24b3ce67ea2dc4fc29c",
+     "name": "UserWithdrawalManager"
+    }
+   ],
+   "note": "Merkle proof verification with no elliptic-curve check anywhere in the source bundle."
+  },
+  {
+   "key": "none",
+   "label": "None of these",
+   "n": 1675,
+   "byChain": {
+    "arbitrum": 447,
+    "ethereum": 866,
+    "base": 362
+   },
+   "examples": [
+    {
+     "chain": "arbitrum",
+     "address": "0x70d95587d40a2caf56bd97485ab3eec10bee6336",
+     "name": "MarketToken"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+     "name": "TetherToken"
+    },
+    {
+     "chain": "arbitrum",
+     "address": "0xb08ca18499389abfdf7b14b09bd2bd4d56d7fbbb",
+     "name": "OneStepProverMath"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+     "name": "UniswapV2Router02"
+    },
+    {
+     "chain": "ethereum",
+     "address": "0x0000000071727de22e5e9d8baf0edac6f37da032",
+     "name": "EntryPoint"
+    }
+   ],
+   "note": "No signature, pairing or Merkle proof check found in the verified source."
+  }
+ ],
+ "basis": "2485 verified EVM contracts kept by LUSCA (Ethereum 1266, Arbitrum 680, Base 539), local corpus read 2026-10-07. Each contract's full verified source bundle (comments stripped) was matched for call sites: ecrecover / staticcall to 0x01 / SignatureChecker; staticcall to 0x100 or P256/WebAuthn verify; staticcall to 0x06-0x08; 0x0a; 0x0b-0x11; MerkleProof verify/processProof. A contract can be in several classes. Pattern match on source, not execution traces: an imported library counts even if a given path never calls it. Solana programs not included."
+}

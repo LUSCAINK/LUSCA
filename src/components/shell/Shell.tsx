@@ -41,6 +41,7 @@ export const NAV_MORE: { title: string; items: NavEntry[] }[] = [
       { to: '/atlas', label: 'Atlas', n: NAV_N.atlas, note: 'Kept code mapped by the names it shares' },
       { to: '/advisories', label: 'Advisories', n: NAV_N.advisories, note: 'OpenZeppelin advisories and solc bugs in kept code' },
       { to: '/binary', label: 'Binary', n: NAV_N.binary, note: 'Interfaces read from Solana program executables' },
+      { to: '/exposure', label: 'Exposure', n: NAV_N.exposure, note: 'Which keys are already public, and what they control' },
     ],
   },
   {

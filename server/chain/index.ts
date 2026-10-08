@@ -39,6 +39,7 @@ import { createRadarDiff, type RadarDiffService } from '../radar/code-diff.ts'
 import { createAtlas, type Atlas } from '../atlas/index.ts'
 import type { RadarEvent } from '../../shared/radar.ts'
 import { createControl, type Control } from '../control/index.ts'
+import { createExposure, type Exposure } from '../exposure/index.ts'
 import { createCodeSearch, type CodeSearch } from '../search/index.ts'
 import { createAdvisoryCheck, type AdvisoryCheck } from '../advisory/index.ts'
 import { createBinary, type BinaryService } from '../binary/index.ts'
@@ -60,6 +61,8 @@ export interface ChainAgentsApi {
   radarDiff: RadarDiffService | null
   /** CONTROL MAP (server/control): who can change the code of each kept item; null when LUSCA_CONTROL=0. */
   control: Control | null
+  /** EXPOSURE (server/exposure): live key-exposure lookups; null when LUSCA_EXPOSURE=0. */
+  exposure: Exposure | null
   /** CODE ATLAS (server/atlas): map of kept items from stored reads only (no RPC); null when LUSCA_ATLAS=0. */
   atlas: Atlas | null
   /** CODE SEARCH (server/search): grep over kept verified sources and IDLs (stored data only); null when LUSCA_SEARCH=0. */
@@ -266,6 +269,11 @@ export function createChainAgents(opts: {
     ? createControl({ rpc, store, dataDir: opts.dataDir, log, ...(controlCalls >= 0 ? { evmCalls: controlCalls } : {}) })
     : null
 
+  // EXPOSURE: live reads under its own caps (LUSCA_EXPOSURE=0 off); the map from Control Map entries
+  const exposure: Exposure | null = /^(0|false|no|off)$/i.test(process.env.LUSCA_EXPOSURE?.trim() ?? '')
+    ? null
+    : createExposure({ rpc, control, dataDir: opts.dataDir, log })
+
   feedOf = (n) => agents.feed(n)
 
   // the feed survives restarts (newest 200 events)
@@ -320,6 +328,7 @@ export function createChainAgents(opts: {
       if (lens) provenance.start() // code-index hashes for Lens provenance (background, incremental)
       radarDiff?.start()
       control?.start() // stored reads first; EVM proxies under its own slice
+      exposure?.start()
       atlas?.start()
       search?.start()
       advisory?.start()
@@ -351,6 +360,7 @@ export function createChainAgents(opts: {
       await radarDiff?.stop()
       await radar?.stop()
       await control?.stop()
+      exposure?.stop()
       await atlas?.stop()
       await search?.stop()
       await advisory?.stop()
@@ -371,6 +381,7 @@ export function createChainAgents(opts: {
     radar,
     radarDiff,
     control,
+    exposure,
     atlas,
     search,
     advisory,

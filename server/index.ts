@@ -555,7 +555,7 @@ async function main() {
       corpusExport = null
     }
   }
-  const modules = { crawler, trainer, coordinator, auth, payouts, code: codeIndex, chain: chainAgents, model: modelExport, proofs: proofsModule, lens: chainAgents?.lens, radar: chainAgents?.radar, radarDiff: chainAgents?.radarDiff, control: chainAgents?.control, atlas: chainAgents?.atlas, search: chainAgents?.search, advisory: chainAgents?.advisory, binary: chainAgents?.binary, export: corpusExport }
+  const modules = { crawler, trainer, coordinator, auth, payouts, code: codeIndex, chain: chainAgents, model: modelExport, proofs: proofsModule, lens: chainAgents?.lens, radar: chainAgents?.radar, radarDiff: chainAgents?.radarDiff, control: chainAgents?.control, exposure: chainAgents?.exposure, atlas: chainAgents?.atlas, search: chainAgents?.search, advisory: chainAgents?.advisory, binary: chainAgents?.binary, export: corpusExport }
   hub.bind(modules)
 
   let port: number

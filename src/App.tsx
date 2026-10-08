@@ -18,6 +18,7 @@ const Mcp = lazy(() => import('@/pages/Mcp'))
 const Search = lazy(() => import('@/pages/Search'))
 const Advisories = lazy(() => import('@/pages/Advisories'))
 const Binary = lazy(() => import('@/pages/Binary'))
+const Exposure = lazy(() => import('@/pages/Exposure'))
 const Sepia = lazy(() => import('@/pages/Sepia'))
 const Earn = lazy(() => import('@/pages/Earn'))
 const Docs = lazy(() => import('@/pages/Docs'))
@@ -59,6 +60,8 @@ export default function App() {
             <Route path="advisories" element={<Suspense fallback={<Loading />}><Advisories /></Suspense>} />
             <Route path="binary" element={<Suspense fallback={<Loading />}><Binary /></Suspense>} />
             <Route path="binary/:address" element={<Suspense fallback={<Loading />}><Binary /></Suspense>} />
+            <Route path="exposure" element={<Suspense fallback={<Loading />}><Exposure /></Suspense>} />
+            <Route path="exposure/:chain/:address" element={<Suspense fallback={<Loading />}><Exposure /></Suspense>} />
             <Route path="node" element={<Suspense fallback={<Loading />}><Node /></Suspense>} />
             <Route path="sepia" element={<Suspense fallback={<Loading />}><Sepia /></Suspense>} />
             <Route path="earn" element={<Suspense fallback={<Loading />}><Earn /></Suspense>} />
