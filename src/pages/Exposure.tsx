@@ -43,6 +43,7 @@ const CHAIN_TAG: Record<ExposureChain, string> = { solana: 'SOL', ethereum: 'ETH
 
 const KIND_LABEL: Record<ExposureKeyKind, string> = {
   wallet: 'Wallet · keypair',
+  account: 'Data account (owned by a program)',
   pda: 'Program-derived address',
   program: 'Program',
   eoa: 'Account without code (EOA)',
@@ -228,7 +229,7 @@ export default function Exposure() {
           <p className="ex-sub">
             Elliptic-curve signatures (ECDSA on secp256k1 for EVM chains, Ed25519 for Solana) could be broken earlier than planned: by a quantum computer
             running Shor’s algorithm, or by new mathematics. Either attack starts from a public key. Keys whose public key is already on-chain would be the
-            first in reach; hash-based signatures do not have this problem.
+            first in reach. Hash-based signatures do not rely on elliptic curves.
           </p>
           <OnThisPage
             className="ex-otp"
@@ -291,10 +292,10 @@ export default function Exposure() {
               <span className="dimmer">cached per address</span> {status ? `${fmtInt(Math.round(status.cacheTtlMs / 60_000))} min` : DASH}
             </span>
             <span>
-              <span className="dimmer">lookups this minute</span> {status ? `${fmtInt(status.perMinute.used)} / ${fmtInt(status.perMinute.limit)}` : DASH}
+              <span className="dimmer">new lookups per connection</span> {status?.perIp ? `${fmtInt(status.perIp.perMinute)} / min · ${fmtInt(status.perIp.perDay)} / day` : DASH}
             </span>
             <span>
-              <span className="dimmer">today</span> {status ? `${fmtInt(status.perDay.used)} / ${fmtInt(status.perDay.limit)}` : DASH}
+              <span className="dimmer">all connections today</span> {status ? `${fmtInt(status.perDay.used)} / ${fmtInt(status.perDay.limit)}` : DASH}
             </span>
           </div>
         </form>
@@ -412,6 +413,8 @@ function Report({ r }: { r: ExposureReport }) {
         ))}
       </dl>
 
+      {k.authorities && k.authorities.length > 0 && <Authorities r={r} />}
+
       <div className="ex-cols">
         <Holds r={r} />
         <Controls r={r} exposed={k.exposed === true} />
@@ -521,8 +524,52 @@ function Holds({ r }: { r: ExposureReport }) {
           showing {fmtInt(h.tokens.length)} of {fmtInt(h.tokenCount)} balances
         </p>
       )}
-      {nothing && <p className="ex-note mono">nothing held at this address on {CHAIN_NAME[r.chain]}</p>}
+      {nothing && (
+        <p className="ex-note mono">
+          {r.chain === 'solana'
+            ? r.partial.some((p) => /token balances/i.test(p))
+              ? `no SOL at this address; token balances not read`
+              : `nothing held at this address on Solana`
+            : `no ETH at this address on ${CHAIN_NAME[r.chain]}; ERC-20 balances not read`}
+        </p>
+      )}
       {!h.usd && h.tokens.length > 0 && <p className="ex-note mono">no dollar total: no public price source was read for this lookup</p>}
+    </section>
+  )
+}
+
+function Authorities({ r }: { r: ExposureReport }) {
+  const list = r.key.authorities ?? []
+  return (
+    <section className="ex-box ex-auth" aria-label="Keys stored in this account">
+      <div className="ex-sub-h mono">
+        <span>
+          <span className="hot">■</span> keys stored in this account
+        </span>
+        <span className="dim">read from the account's own data</span>
+      </div>
+      <ol className="ex-ctl">
+        {list.map((a, i) => (
+          <li key={`${a.role}:${a.address ?? 'none'}:${i}`}>
+            <div className="ex-ctl-h">
+              <span className="ex-pill mono">{a.role}</span>
+              {a.address ? (
+                <Link to={`/exposure/solana/${a.address}`} className="ex-ctl-t" title={a.address}>
+                  {shortAddress(a.address, 6, 6)}
+                </Link>
+              ) : (
+                <span className="ex-ctl-t">None</span>
+              )}
+            </div>
+            <div className="ex-ctl-l">
+              {!a.address ? 'not set: nobody holds this power' : a.keyKind === 'pda' ? 'program-derived address: no private key, a program signs' : 'on-curve address: look it up to see what kind of key it is'}
+            </div>
+            <div className="ex-ctl-e mono">
+              <span className="dimmer">via</span> {a.via}
+            </div>
+          </li>
+        ))}
+      </ol>
     </section>
   )
 }
@@ -575,7 +622,9 @@ function Controls({ r, exposed }: { r: ExposureReport; exposed: boolean }) {
 
 function SafeOwners({ safe, chain }: { safe: ExposureSafe; chain: ExposureChain }) {
   const exposed = safe.owners.filter((o) => o.exposed === true).length
-  const unread = safe.owners.filter((o) => o.exposed === null).length
+  const contracts = safe.owners.filter((o) => o.contract).length
+  const may = safe.owners.filter((o) => o.exposed === null && !o.contract && o.txCount === 0).length
+  const unread = safe.owners.filter((o) => o.exposed === null).length - contracts - may
   return (
     <section className="ex-box ex-safe" aria-label="Safe owners">
       <div className="ex-sub-h mono">
@@ -583,7 +632,7 @@ function SafeOwners({ safe, chain }: { safe: ExposureSafe; chain: ExposureChain 
           <span className="hot">■</span> Safe · {fmtInt(safe.threshold)} of {fmtInt(safe.owners.length)} owners must sign
         </span>
         <span className="dim">
-          {fmtInt(exposed)} of {fmtInt(safe.owners.length)} owner keys exposed{unread ? ` · ${fmtInt(unread)} not read` : ''}
+          {fmtInt(exposed)} of {fmtInt(safe.owners.length)} owner keys exposed by sent transactions{may ? ` · ${fmtInt(may)} may be public from this Safe's executions` : ''}{contracts ? ` · ${fmtInt(contracts)} contract owner${contracts > 1 ? 's' : ''}` : ''}{unread ? ` · ${fmtInt(unread)} not read` : ''}{safe.nonce !== undefined ? ` · Safe nonce ${fmtInt(safe.nonce)}` : ''}
           {exposed >= safe.threshold && safe.threshold > 0 ? ' · the exposed keys alone meet the threshold' : ''}
         </span>
       </div>
@@ -601,6 +650,7 @@ function SafeOwners({ safe, chain }: { safe: ExposureSafe; chain: ExposureChain 
         <tbody>
           {safe.owners.map((o) => {
             const t = o.exposed === true ? 'exposed' : o.exposed === false ? 'hidden' : 'unknown'
+            const lab = o.contract ? 'contract owner' : o.exposed === true ? 'exposed' : o.exposed === false ? 'not exposed by a tx' : o.txCount === 0 ? 'may be public' : 'not read'
             return (
               <tr key={o.address}>
                 <td className="mono">
@@ -609,7 +659,7 @@ function SafeOwners({ safe, chain }: { safe: ExposureSafe; chain: ExposureChain 
                   </Link>
                 </td>
                 <td>
-                  <span className={`ex-dot t-${t} mono`}>{o.exposed === true ? 'exposed' : o.exposed === false ? 'not exposed by a tx' : 'not read'}</span>
+                  <span className={`ex-dot t-${t} mono`}>{lab}</span>
                 </td>
                 <td className="r num">{o.txCount !== undefined ? fmtInt(o.txCount) : DASH}</td>
                 <td className="ex-owner-b">{o.basis}</td>

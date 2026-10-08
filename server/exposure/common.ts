@@ -2,7 +2,7 @@
 
 import type { ControlEntry } from '../../shared/control.ts'
 import type { ExposureChain, ExposureControl, ExposureHolds, ExposureKey, ExposureSafe } from '../../src/lib/exposure-types.ts'
-import { BudgetError, RpcError, redact } from '../chain/rpc.ts'
+import { BudgetError, type BudgetKey, RpcError, redact } from '../chain/rpc.ts'
 
 /** One call of a lookup, charged to the Exposure slice and the shared chain budget. */
 export interface LookupCtx {
@@ -35,6 +35,14 @@ export interface LookupResult {
   safe?: ExposureSafe
   partial: string[]
   notes: string[]
+}
+
+/** Exposure's own share of a chain budget is used up: 'day' (resets 00:00 UTC) or 'hour' (frees at the next full hour). */
+export class ExposureBudgetError extends BudgetError {
+  constructor(key: BudgetKey, readonly scope: 'day' | 'hour') {
+    super(key)
+    this.name = 'ExposureBudgetError'
+  }
 }
 
 /** The lookup ran past its deadline: no further calls are sent. */
@@ -74,7 +82,9 @@ export const int = (n: number) => Math.round(n).toLocaleString('en-US')
 
 /** Plain reason for a step that did not complete (never a URL or key). */
 export function reasonOf(what: string, e: unknown): string {
-  if (e instanceof BudgetError) return `${what}: not read, today's Exposure budget for this chain is used up (resets 00:00 UTC)`
+  if (e instanceof ExposureBudgetError)
+    return e.scope === 'hour' ? `${what}: not read, Exposure has used this hour's share of its ${e.key} reads (frees at the next full hour, UTC)` : `${what}: not read, Exposure's daily share of LUSCA's ${e.key} reads is used up (resets 00:00 UTC)`
+  if (e instanceof BudgetError) return `${what}: not read, LUSCA's shared daily ${e.key} read budget is used up (resets 00:00 UTC)`
   if (e instanceof DeadlineError) return `${what}: not read, the lookup ran out of time`
   if (e instanceof RpcError) {
     if (e.kind === 'too-large') return `${what}: more results than one answer may carry, not listed`

@@ -25,7 +25,9 @@ export const EXPOSURE_EVM_CHAINS: readonly ExposureChain[] = ['ethereum', 'base'
 
 /**
  * What the address is.
- *   wallet    Solana account owned by the System Program whose address is an ed25519 point (a keypair can sign)
+ *   wallet    Solana account owned by the System Program (or not created yet) whose address is an ed25519 point
+ *   account   Solana data account owned by another program (a mint, token account, multisig, stake account …):
+ *             what moves it is decided by that program and the authorities stored in its data (`authorities`)
  *   pda       Solana program-derived address (off the curve): no private key exists
  *   program   Solana executable account (a program)
  *   eoa       EVM account without code
@@ -34,7 +36,7 @@ export const EXPOSURE_EVM_CHAINS: readonly ExposureChain[] = ['ethereum', 'base'
  *   safe      EVM Safe (getThreshold() / getOwners() answer)
  *   unknown   could not be read (see `partial`)
  */
-export type ExposureKeyKind = 'wallet' | 'pda' | 'program' | 'eoa' | 'eoa-7702' | 'contract' | 'safe' | 'unknown'
+export type ExposureKeyKind = 'wallet' | 'account' | 'pda' | 'program' | 'eoa' | 'eoa-7702' | 'contract' | 'safe' | 'unknown'
 export type ExposureCurve = 'ed25519' | 'secp256k1'
 
 export interface ExposureKey {
@@ -57,8 +59,23 @@ export interface ExposureKey {
   delegate?: string
   /** Solana: the program that owns the account (System Program for a wallet). */
   owner?: string
-  /** EVM: the same key's nonce on every supported EVM chain that was read (one key signs on all of them). */
-  chains?: { chain: ExposureChain; txCount: number | null }[]
+  /** EVM: the same key's nonce on every supported EVM chain that was read (one key signs on all of them).
+   *  `contract`: the address holds contract code there, so that nonce counts contract creations, not signatures. */
+  chains?: { chain: ExposureChain; txCount: number | null; contract?: boolean }[]
+  /** Solana: the keys stored in this account's own data that decide what happens to it (mint / freeze
+   *  authority, multisig signers, stake authorities, token account owner, upgrade authority). */
+  authorities?: ExposureAuthority[]
+}
+
+export interface ExposureAuthority {
+  /** 'Mint authority', 'Freeze authority', 'Signer (2 of 3)', 'Upgrade authority', 'Withdrawer' … */
+  role: string
+  /** null = the field is set to None (nobody holds that power). */
+  address: string | null
+  /** 'key' = an Ed25519 point (its public key is the address), 'pda' = off the curve (a program signs). */
+  keyKind?: 'key' | 'pda'
+  /** Where it was read: account, offset. */
+  via: string
 }
 
 export interface ExposureNative {
@@ -134,15 +151,20 @@ export interface ExposureControl {
 
 export interface ExposureSafeOwner {
   address: string
-  /** Same meaning as ExposureKey.exposed for that owner. */
+  /** Same meaning as ExposureKey.exposed for that owner (null also when the Safe's own executions may have published it). */
   exposed: boolean | null
   basis: string
+  /** Nonce summed over the EVM chains where the owner is not a contract. */
   txCount?: number
+  /** The owner is a contract (a nested Safe, an EIP-1271 wallet): no key of its own. */
+  contract?: boolean
 }
 
 export interface ExposureSafe {
   threshold: number
   owners: ExposureSafeOwner[]
+  /** The Safe's nonce(): transactions it has executed (each one published its signers' signatures). */
+  nonce?: number
 }
 
 export interface ExposureReport {
@@ -188,9 +210,9 @@ export interface ExposureSafeStat {
   /** 'k of n' */
   label: string
   safes: number
-  /** Owners whose key is exposed (nonce > 0) across these Safes. */
-  ownersExposed: number
-  ownersRead: number
+  /** Owners whose key is exposed (nonce > 0) across these Safes; absent while owners are not read for the map. */
+  ownersExposed?: number
+  ownersRead?: number
 }
 
 export interface ExposureSummary {
@@ -207,6 +229,10 @@ export interface ExposureSummary {
 }
 
 export interface ExposureStatus {
+  /** Lookups one connection may start per minute / per UTC day (cache hits are free). */
+  perIp?: { perMinute: number; perDay: number }
+  /** Exposure's daily share of each chain budget, in budget units. */
+  budget?: Record<string, { used: number; limit: number }>
   perMinute: { used: number; limit: number }
   perDay: { used: number; limit: number }
   cacheTtlMs: number

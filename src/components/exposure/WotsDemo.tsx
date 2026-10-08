@@ -320,7 +320,7 @@ export function WotsDemo() {
             <div className="ex-reuse-l">
               <h3>Why one key signs only once</h3>
               <p>
-                One signature reveals each chain from its digit down. Forging another message would need every one of its 67 digits at or below what was
+                One signature lets anyone hash each chain forward from its revealed digit. Forging another message would need every one of its 67 digits at or past (≥) what was
                 revealed, but raising message digits lowers the checksum, so one signature never covers a second message. Sign a different message with the
                 same key and each chain is revealed from the lower of the two digits: messages that were never signed start to fit.
               </p>

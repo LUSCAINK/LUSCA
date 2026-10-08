@@ -2,10 +2,10 @@
 import assert from 'node:assert/strict'
 import { base58Decode, base58Encode } from '../../shared/base58.ts'
 import { createExposure, validate } from './index.ts'
-import { delegationOf, verdictOfNonce } from './evm.ts'
-import { gpaFilters, gpaKeys, parseTokenAccounts, programOfFilters } from './solana.ts'
+import { delegationOf, keyNonce, verdictOfNonce } from './evm.ts'
+import { gpaFilters, gpaKeys, parseDataAccount, parseTokenAccounts, programOfFilters, TOKEN, STAKE } from './solana.ts'
 import { cmpDecimal, formatUnits } from './common.ts'
-import type { RpcCtx } from '../chain/rpc.ts'
+import { RpcError, type RpcCtx } from '../chain/rpc.ts'
 
 let n = 0
 const t = async (name: string, f: () => void | Promise<void>) => {
@@ -115,7 +115,7 @@ await t('EVM EOA lookup, cache and caps', async () => {
   assert.equal(j.key.exposed, true)
   assert.equal(j.key.txCount, 5)
   assert.equal(j.holds.native.amount, '1')
-  assert.equal(j.calls, 5) // 3 nonces + code + balance
+  assert.equal(j.calls, 5) // 3 nonces + code here (nonce 0 elsewhere: no code read) + balance
   const r2 = JSON.parse((await ex.route(`/api/exposure/ethereum/${a}`, 'ip1')).json)
   assert.equal(r2.cached, true)
   assert.equal(r2.calls, 0)
@@ -132,29 +132,123 @@ await t('EVM nonce 0 everywhere and Safe owners', async () => {
   const r = await ex.lookup('base', '0x' + '22'.repeat(20))
   assert.equal(r.key.exposed, false)
   assert.equal(r.key.verdict, 'Not exposed by any transaction')
-  const owners = '0x' + (32).toString(16).padStart(64, '0') + (2).toString(16).padStart(64, '0') + '33'.repeat(12).replace(/./g, '0') + '33'.repeat(20) + '0'.repeat(24) + '44'.repeat(20)
-  const rpc = fakeRpc({ eth_getTransactionCount: '0x1', eth_getCode: '0x6080', eth_getBalance: '0x0', eth_call: '0x2' })
+  const safeA = '0x' + '55'.repeat(20)
+  const o1 = '0x' + '33'.repeat(20)
+  const o2 = '0x' + '44'.repeat(20)
+  const o3 = '0x' + '66'.repeat(20)
+  const word = (h: string) => h.replace(/^0x/, '').padStart(64, '0')
+  const owners = '0x' + word('20') + word('3') + word(o1) + word(o2) + word(o3)
+  const rpc = fakeRpc({})
   let k = 0
-  rpc.call = async (_chain, method, params) => {
-    rpc.calls.push(method)
-    if (method === 'eth_call') return (params as [{ data: string }])[0].data === '0xe75235b8' ? (k++, '0x' + '2'.padStart(64, '0')) : owners
-    return ({ eth_getTransactionCount: '0x1', eth_getCode: '0x6080', eth_getBalance: '0x0' } as Record<string, string>)[method]
+  rpc.call = async (chain, method, params) => {
+    const p = params as [unknown, string]
+    rpc.calls.push(`${chain}:${method}`)
+    if (method === 'eth_call') {
+      const data = (p[0] as { data: string }).data
+      if (data === '0xe75235b8') return (k++, '0x' + word('2'))
+      if (data === '0xaffed0e0') return '0x' + word('7')
+      return owners
+    }
+    const who = String(p[0]).toLowerCase()
+    if (method === 'eth_getCode') return who === safeA || who === o3 ? '0x6080' : '0x'
+    if (method === 'eth_getTransactionCount') return who === o1 && chain === 'arbitrum' ? '0x4' : who === o3 || who === safeA ? '0x1' : '0x0'
+    return '0x0'
   }
-  const s = await createExposure({ rpc }).lookup('ethereum', '0x' + '55'.repeat(20))
+  const s = await createExposure({ rpc }).lookup('ethereum', safeA)
   assert.equal(s.key.kind, 'safe')
   assert.equal(s.safe?.threshold, 2)
-  assert.equal(s.safe?.owners.length, 2)
-  assert.equal(s.safe?.owners[0].exposed, true)
+  assert.equal(s.safe?.nonce, 7)
+  assert.equal(s.safe?.owners.length, 3)
+  assert.equal(s.safe?.owners[0].exposed, true) // nonce on another chain counts
+  assert.equal(s.safe?.owners[1].exposed, null) // nonce 0, but the Safe executed 7 times
+  assert.match(s.safe?.owners[1].basis ?? '', /may already be public/)
+  assert.equal(s.safe?.owners[2].contract, true) // contract owner, not an exposed key
+  assert.equal(s.safe?.owners[2].exposed, null)
+  assert.match(s.notes.join(' '), /2 owner signatures are needed; 1 of the 3/)
   assert.equal(k, 1)
 })
 
-await t('Solana wallet lookup: partial, not an error', async () => {
-  const rpc = fakeRpc({ getAccountInfo: { value: { owner: '11111111111111111111111111111111', executable: false, lamports: 2_000_000_000 } }, getTokenAccountsByOwner: { value: [] }, getProgramAccounts: new Error('boom') })
+await t('EVM: a contract on another chain is not an exposed key', async () => {
+  const rpc = fakeRpc({})
+  rpc.call = async (chain, method) => {
+    rpc.calls.push(`${chain}:${method}`)
+    if (method === 'eth_getTransactionCount') return chain === 'base' ? '0x1' : '0x0'
+    if (method === 'eth_getCode') return chain === 'base' ? '0x6080' : '0x'
+    return '0x0'
+  }
+  const r = await createExposure({ rpc }).lookup('ethereum', '0x' + '77'.repeat(20))
+  assert.equal(r.key.kind, 'contract')
+  assert.equal(r.key.exposed, null)
+  assert.match(r.key.verdict, /Contract on base/)
+  assert.equal(keyNonce([{ chain: 'base', txCount: 1, code: 'contract' }, { chain: 'ethereum', txCount: 2, code: 'none' }]).total, 2)
+})
+
+await t('EVM: a failed Safe check is partial, a revert is not', async () => {
+  const mk = (err: Error) => {
+    const rpc = fakeRpc({ eth_getTransactionCount: '0x1', eth_getCode: '0x6080', eth_getBalance: '0x0', eth_call: err })
+    return createExposure({ rpc }).lookup('ethereum', '0x' + '88'.repeat(20))
+  }
+  const t1 = await mk(new RpcError('timeout', 'x', { transient: true }))
+  assert.equal(t1.key.verdict, 'Contract (Safe check not read)')
+  assert.ok(t1.partial.some((p) => /Safe check/.test(p)))
+  const t2 = await mk(new RpcError('rpc', 'execution reverted', { code: 3 }))
+  assert.equal(t2.key.verdict, 'Contract (no private key)')
+  assert.ok(!t2.partial.some((p) => /Safe check/.test(p)))
+})
+
+const b64 = (d: Uint8Array) => Buffer.from(d).toString('base64')
+await t('Solana wallet lookup: partial, not an error; no mint gPA', async () => {
+  const rpc = fakeRpc({ getAccountInfo: { value: { owner: '11111111111111111111111111111111', executable: false, lamports: 2_000_000_000, data: ['', 'base64'] } }, getTokenAccountsByOwner: { value: [] }, getProgramAccounts: new Error('boom') })
   const r = await createExposure({ rpc }).lookup('solana', AUTH)
   assert.equal(r.key.kind, 'wallet')
   assert.equal(r.key.exposed, true)
   assert.equal(r.holds.native?.amount, '2')
-  assert.ok(r.partial.length >= 5)
+  assert.equal(rpc.calls.filter((c) => c.endsWith('getProgramAccounts')).length, 3) // ProgramData + staker + withdrawer
+  assert.ok(r.partial.some((p) => /reverse mint-authority/.test(p)))
+})
+
+await t('Solana: a mint is a data account with its authorities, not a wallet', async () => {
+  const d = new Uint8Array(82)
+  d.set([1, 0, 0, 0], 0)
+  d.set(base58Decode(AUTH) as Uint8Array, 4)
+  d[45] = 1
+  const p = parseDataAccount(TOKEN, d, 82)
+  assert.equal(p?.authorities[0].role, 'Mint authority')
+  assert.equal(p?.authorities[0].address, AUTH)
+  assert.equal(p?.authorities[1].address, null) // freeze None
+  const rpc = fakeRpc({ getAccountInfo: { value: { owner: TOKEN, executable: false, lamports: 1, data: [b64(d), 'base64'], space: 82 } } })
+  const r = await createExposure({ rpc }).lookup('solana', AUTH)
+  assert.equal(r.key.kind, 'account')
+  assert.equal(r.key.exposed, null)
+  assert.match(r.key.verdict, /mint/)
+  assert.equal(r.key.authorities?.length, 2)
+  assert.deepEqual(rpc.calls, ['solana:getAccountInfo']) // one read, no reverse lookups
+  const st = new Uint8Array(200)
+  st[0] = 1
+  st.set(base58Decode(AUTH) as Uint8Array, 44)
+  assert.equal(parseDataAccount(STAKE, st, 200)?.authorities[1].address, AUTH)
+})
+
+await t('Exposure share: a day share and an hourly share stop calls before the shared budget', async () => {
+  const rpc = fakeRpc({ getAccountInfo: { value: { owner: '11111111111111111111111111111111', executable: false, lamports: 1, data: ['', 'base64'] } }, getTokenAccountsByOwner: { value: [] }, getProgramAccounts: [] })
+  const ex = createExposure({ rpc, limits: { budget: { solana: 20 }, hourShare: 1, ipPerMin: 100, perMin: 100 } })
+  const r = await ex.lookup('solana', AUTH)
+  // 1 + 2 = 3 units, then 30 for the reverse lookups do not fit the share of 20
+  assert.equal(rpc.calls.filter((c) => c.endsWith('getProgramAccounts')).length, 0)
+  assert.ok(r.partial.some((p) => /daily share/.test(p)))
+  const ex2 = createExposure({ rpc: fakeRpc({ eth_getTransactionCount: '0x1', eth_getCode: '0x', eth_getBalance: '0x0' }), limits: { budget: { ethereum: 100 }, hourShare: 0.01 } })
+  const r2 = await ex2.lookup('ethereum', '0x' + '99'.repeat(20))
+  assert.ok(r2.partial.some((p) => /this hour's share/.test(p)))
+})
+
+await t('per-IP day cap', async () => {
+  const ex = createExposure({ rpc: fakeRpc({ eth_getTransactionCount: '0x0', eth_getCode: '0x', eth_getBalance: '0x0' }), limits: { ipPerMin: 100, ipPerDay: 2 } })
+  assert.equal((await ex.route(`/api/exposure/base/0x${'a1'.repeat(20)}`, 'ipX')).status, 200)
+  assert.equal((await ex.route(`/api/exposure/base/0x${'a2'.repeat(20)}`, 'ipX')).status, 200)
+  const third = await ex.route(`/api/exposure/base/0x${'a3'.repeat(20)}`, 'ipX')
+  assert.equal(third.status, 429)
+  assert.match(third.json, /your connection/)
+  assert.equal((await ex.route(`/api/exposure/base/0x${'a1'.repeat(20)}`, 'ipX')).status, 200) // cached answers stay free
 })
 
 console.log(`exposure: ${n} tests passed`)

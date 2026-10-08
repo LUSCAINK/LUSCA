@@ -85,6 +85,7 @@ function Group({ g }: { g: ExposureGroup }) {
 }
 
 export function ExposureMap({ sum, err }: { sum: ExposureSummary | null; err: string | null }) {
+  const ownersRead = !!sum?.safes?.some((s) => (s.ownersRead ?? 0) > 0)
   return (
     <section className="ex-map pk-anchor" id="ex-map" aria-labelledby="ex-map-h">
       <div className="ex-sec-head">
@@ -120,12 +121,16 @@ export function ExposureMap({ sum, err }: { sum: ExposureSummary | null; err: st
                     <th scope="col" className="r">
                       Safes
                     </th>
-                    <th scope="col" className="r">
-                      owner keys exposed
-                    </th>
-                    <th scope="col" className="r">
-                      owners read
-                    </th>
+                    {ownersRead && (
+                      <>
+                        <th scope="col" className="r">
+                          owner keys exposed
+                        </th>
+                        <th scope="col" className="r">
+                          owners read
+                        </th>
+                      </>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -133,15 +138,29 @@ export function ExposureMap({ sum, err }: { sum: ExposureSummary | null; err: st
                     <tr key={s.label}>
                       <td className="mono">{s.label}</td>
                       <td className="r num">{fmtInt(s.safes)}</td>
-                      <td className="r num">
-                        {fmtInt(s.ownersExposed)} <span className="dim">({share(s.ownersExposed, s.ownersRead)})</span>
-                      </td>
-                      <td className="r num">{fmtInt(s.ownersRead)}</td>
+                      {ownersRead && (
+                        <>
+                          <td className="r num">
+                            {s.ownersRead ? (
+                              <>
+                                {fmtInt(s.ownersExposed ?? 0)} <span className="dim">({share(s.ownersExposed ?? 0, s.ownersRead)})</span>
+                              </>
+                            ) : (
+                              DASH
+                            )}
+                          </td>
+                          <td className="r num">{s.ownersRead ? fmtInt(s.ownersRead) : DASH}</td>
+                        </>
+                      )}
                     </tr>
                   ))}
                 </tbody>
               </table>
-              <p className="ex-note mono">An owner key counts as exposed when that owner has sent a transaction (nonce above 0).</p>
+              <p className="ex-note mono">
+                {ownersRead
+                  ? 'An owner key counts as exposed when that owner has sent a transaction (nonce above 0).'
+                  : 'Owner keys of these Safes are not read for the map yet; look a Safe up above to read its owners.'}
+              </p>
             </div>
           )}
           {sum.partial.length > 0 && (

@@ -3,16 +3,22 @@
 //   GET /api/exposure/summary           Exposure Map from the Control Map's stored entries (cached ≥ 1 h; EOA nonces
 //                                       refreshed in a bounded background pass, never on the request path)
 //   GET /api/exposure/status            limits and usage
-// Env: LUSCA_EXPOSURE=0 off · LUSCA_EXPOSURE_IP_PER_MIN (4) · LUSCA_EXPOSURE_PER_MIN (20) · LUSCA_EXPOSURE_PER_DAY (600)
+// Env: LUSCA_EXPOSURE=0 off · LUSCA_EXPOSURE_IP_PER_MIN (4) · LUSCA_EXPOSURE_IP_PER_DAY (40)
+//      LUSCA_EXPOSURE_PER_MIN (20) · LUSCA_EXPOSURE_PER_DAY (600)
+//      LUSCA_EXPOSURE_SOL_CALLS / LUSCA_EXPOSURE_EVM_CALLS: Exposure's daily share of each chain budget, in budget
+//      units (default 10 % of the shared limit), charged on top of the shared budget (which is never exceeded);
+//      at most 25 % of a share in one clock hour. Persisted in <data>/exposure/budget.json (write-ahead).
+//      At most 1 Exposure call in flight on Solana and 2 per EVM chain, so the chain agents always keep a slot;
+//      the wait for a slot counts against the lookup deadline.
 //      LUSCA_EXPOSURE_SUMMARY_CALLS (EVM nonce reads per summary pass, 40)
 import fs from 'node:fs'
 import path from 'node:path'
 import type { ControlEntry } from '../../shared/control.ts'
 import { isSolanaAddress } from '../../shared/base58.ts'
 import { EXPOSURE_CHAINS, type ExposureBucket, type ExposureChain, type ExposureReport, type ExposureStatus, type ExposureSummary } from '../../src/lib/exposure-types.ts'
-import { BudgetError, type RpcCtx, redact } from '../chain/rpc.ts'
+import { BudgetError, DEFAULT_LIMITS, type RpcCtx, redact } from '../chain/rpc.ts'
 import { createWindow } from '../lens/index.ts'
-import { DeadlineError, type KnownIndex, type LookupCtx, NO_KNOWN } from './common.ts'
+import { DeadlineError, ExposureBudgetError, type KnownIndex, type LookupCtx, NO_KNOWN } from './common.ts'
 import { lookupEvm, hexInt } from './evm.ts'
 import { lookupSolana } from './solana.ts'
 
@@ -27,7 +33,7 @@ export interface ExposureOptions {
   dataDir?: string
   log?: Log
   now?: () => number
-  limits?: { ipPerMin?: number; perMin?: number; perDay?: number; summaryCalls?: number }
+  limits?: { ipPerMin?: number; ipPerDay?: number; perMin?: number; perDay?: number; summaryCalls?: number; budget?: Partial<Record<ExposureChain, number>>; hourShare?: number }
   lookupTimeoutMs?: number
 }
 export interface Exposure {
@@ -58,10 +64,13 @@ export function validate(chain: string, address: string): { chain: ExposureChain
 export function createExposure(o: ExposureOptions): Exposure {
   const now = o.now ?? Date.now
   const log: Log = (l, m) => o.log?.(l, redact(m))
-  const ipLim = createWindow(60_000, o.limits?.ipPerMin ?? env('LUSCA_EXPOSURE_IP_PER_MIN', 4), now)
   const minLim = createWindow(60_000, o.limits?.perMin ?? env('LUSCA_EXPOSURE_PER_MIN', 20), now)
   const dayMax = o.limits?.perDay ?? env('LUSCA_EXPOSURE_PER_DAY', 600)
+  const ipPerMin = o.limits?.ipPerMin ?? env('LUSCA_EXPOSURE_IP_PER_MIN', 4)
+  const ipDayMax = o.limits?.ipPerDay ?? env('LUSCA_EXPOSURE_IP_PER_DAY', 40)
+  let ipDay = new Map<string, number>()
   const summaryCalls = o.limits?.summaryCalls ?? env('LUSCA_EXPOSURE_SUMMARY_CALLS', 40)
+  const ipLim = createWindow(60_000, ipPerMin, now)
   let day = { d: new Date(now()).toISOString().slice(0, 10), used: 0 }
   let minUsed: number[] = []
   const cache = new Map<string, { at: number; r: ExposureReport }>()
@@ -112,18 +121,125 @@ export function createExposure(o: ExposureOptions): Exposure {
       }
     : NO_KNOWN
 
+  // ── Exposure's own share of each chain budget (on top of the shared one), per UTC day and per clock hour ──
+  const DAY = 86_400_000
+  const HOUR = 3_600_000
+  const sharedLimit = (c: ExposureChain): number => {
+    try {
+      const u = o.rpc.usage()[c]
+      if (u && Number.isFinite(u.limit)) return u.limit
+    } catch {
+      /* default */
+    }
+    return DEFAULT_LIMITS[c]
+  }
+  const share: Record<ExposureChain, number> = Object.fromEntries(
+    EXPOSURE_CHAINS.map((c) => [c, o.limits?.budget?.[c] ?? env(c === 'solana' ? 'LUSCA_EXPOSURE_SOL_CALLS' : 'LUSCA_EXPOSURE_EVM_CALLS', Math.floor(sharedLimit(c) * 0.1))]),
+  ) as Record<ExposureChain, number>
+  const hourShare = o.limits?.hourShare ?? 0.25
+  const budgetFile = dir ? path.join(dir, 'budget.json') : null
+  let bDay = Math.floor(now() / DAY)
+  let bHour = Math.floor(now() / HOUR)
+  let used: Partial<Record<ExposureChain, number>> = {}
+  let hourUsed: Partial<Record<ExposureChain, number>> = {}
+  try {
+    const j = budgetFile ? (JSON.parse(fs.readFileSync(budgetFile, 'utf8')) as { day?: number; used?: Record<string, number> }) : null
+    if (j?.day === bDay && j.used) for (const c of EXPOSURE_CHAINS) if (Number.isFinite(j.used[c]) && j.used[c] > 0) used[c] = Math.floor(j.used[c])
+  } catch {
+    /* first day */
+  }
+  let onDisk: Partial<Record<ExposureChain, number>> = { ...used }
+  const RESERVE = 40
+  const rollBudget = () => {
+    const d = Math.floor(now() / DAY)
+    if (d !== bDay) {
+      bDay = d
+      used = {}
+      onDisk = {}
+    }
+    const h = Math.floor(now() / HOUR)
+    if (h !== bHour) {
+      bHour = h
+      hourUsed = {}
+    }
+  }
+  /** Why `w` more units on `c` do not fit Exposure's share now, else null. */
+  const shareWhy = (c: ExposureChain, w: number): 'day' | 'hour' | null => {
+    rollBudget()
+    if ((used[c] ?? 0) + w > share[c]) return 'day'
+    if ((hourUsed[c] ?? 0) + w > Math.max(1, Math.ceil(share[c] * hourShare))) return 'hour'
+    return null
+  }
+  const charge = (c: ExposureChain, w: number) => {
+    const next = (used[c] ?? 0) + w
+    if (budgetFile && dir && next > (onDisk[c] ?? 0)) {
+      // write-ahead: the file always holds at least what was charged, so a restart never forgets spent units
+      const ahead = { ...used, [c]: Math.min(share[c], next + RESERVE) }
+      fs.mkdirSync(dir, { recursive: true })
+      const tmp = `${budgetFile}.tmp`
+      fs.writeFileSync(tmp, JSON.stringify({ day: bDay, used: ahead }))
+      fs.renameSync(tmp, budgetFile)
+      onDisk = ahead
+    }
+    used[c] = next
+    hourUsed[c] = (hourUsed[c] ?? 0) + w
+  }
+
+  // ── at most 1 Exposure call in flight on Solana, 2 per EVM chain; the wait counts against the deadline ──
+  const gates = new Map<ExposureChain, { active: number; q: { wake: () => void }[] }>()
+  async function enter(c: ExposureChain, deadline: number) {
+    let g = gates.get(c)
+    if (!g) gates.set(c, (g = { active: 0, q: [] }))
+    const max = c === 'solana' ? 1 : 2
+    while (g.active >= max) {
+      const left = deadline - now()
+      if (left <= 0) throw new DeadlineError()
+      await new Promise<void>((res) => {
+        const w = { wake: () => (clearTimeout(t), res()) }
+        const t = setTimeout(() => {
+          const i = g!.q.indexOf(w)
+          if (i >= 0) g!.q.splice(i, 1)
+          res()
+        }, left)
+        g!.q.push(w)
+      })
+    }
+    g.active++
+  }
+  const leave = (c: ExposureChain) => {
+    const g = gates.get(c)
+    if (!g) return
+    g.active--
+    g.q.shift()?.wake()
+  }
+
   function ctxFor(deadline: number, counter: { n: number }): LookupCtx {
     return {
       async call(chain, method, params, opt) {
         if (now() > deadline) throw new DeadlineError()
-        const w = opt?.weight ?? 1
+        const w = Math.max(1, Math.floor(opt?.weight ?? 1))
+        const pre = shareWhy(chain, w)
+        if (pre) throw new ExposureBudgetError(chain, pre)
         if (!o.rpc.canSpend(chain, w)) throw new BudgetError(chain)
-        counter.n++
-        const left = Math.max(1000, deadline - now())
-        return o.rpc.call(chain, method, params as unknown[], { timeoutMs: Math.min(opt?.timeoutMs ?? 8000, left), ...(opt?.maxBytes ? { maxBytes: opt.maxBytes } : {}), weight: w })
+        await enter(chain, deadline)
+        try {
+          if (now() > deadline) throw new DeadlineError()
+          const why = shareWhy(chain, w)
+          if (why) throw new ExposureBudgetError(chain, why)
+          if (!o.rpc.canSpend(chain, w)) throw new BudgetError(chain)
+          charge(chain, w)
+          counter.n++
+          const left = Math.max(1000, deadline - now())
+          return await o.rpc.call(chain, method, params as unknown[], { timeoutMs: Math.min(opt?.timeoutMs ?? 8000, left), ...(opt?.maxBytes ? { maxBytes: opt.maxBytes } : {}), weight: w })
+        } finally {
+          leave(chain)
+        }
       },
       short(chain, w) {
-        return o.rpc.canSpend(chain, w) ? null : `today's ${chain} budget is used up`
+        const why = shareWhy(chain, w)
+        if (why === 'day') return `Exposure's daily share of LUSCA's ${chain} reads is used up (resets 00:00 UTC)`
+        if (why === 'hour') return `Exposure has used this hour's share of its ${chain} reads (frees at the next full hour, UTC)`
+        return o.rpc.canSpend(chain, w) ? null : `LUSCA's shared daily ${chain} read budget is used up (resets 00:00 UTC)`
       },
     }
   }
@@ -175,7 +291,7 @@ export function createExposure(o: ExposureOptions): Exposure {
     }
     const partial: string[] = []
     if (evmUnread) partial.push(`${evmUnread} EVM contracts controlled by a single key: that key's nonce not read yet (bounded background reads)`)
-    if (safeStats.size) partial.push('Safe owners: nonces not read for the map in this version')
+    if (safeStats.size) partial.push('Safe owners: not read for the map in this version (look a Safe up above to read its owners)')
     return {
       v: 1,
       readAt: now(),
@@ -203,12 +319,12 @@ export function createExposure(o: ExposureOptions): Exposure {
             b('eoa-unread', 'Single key, nonce not read yet', evmUnread, 'Final controller is an EOA; its nonce is read in bounded background passes.'),
             b('safe', 'Safe multisig', cnt(evm, (e) => e.cls === 'safe'), 'A Safe controls the code; owners publish ECDSA signatures at every execution.'),
             b('timelock', 'Timelock', cnt(evm, (e) => e.cls === 'timelock'), 'A timelock sits in the control path; changes wait for its delay.'),
-            b('immutable', 'Immutable', cnt(evm, (e) => e.cls === 'immutable'), 'Not a proxy and no upgrade path found: the code cannot be changed.'),
+            b('immutable', 'Immutable', cnt(evm, (e) => e.cls === 'immutable'), 'Not a proxy and no upgrade path found: the code cannot be changed. Owner, admin, pause or mint roles held by keys are not counted here.'),
             b('other', 'Other contract or not resolved', cnt(evm, (e) => !['key', 'safe', 'timelock', 'immutable'].includes(e.cls)), 'Controlled by another contract, or not resolved.'),
           ],
         },
       ],
-      ...(safeStats.size ? { safes: [...safeStats].sort((x, y) => y[1] - x[1]).map(([label, safes]) => ({ label, safes, ownersExposed: 0, ownersRead: 0 })) } : {}),
+      ...(safeStats.size ? { safes: [...safeStats].sort((x, y) => y[1] - x[1]).map(([label, safes]) => ({ label, safes })) } : {}),
       basis: `${entries.length} kept programs and contracts from LUSCA's Control Map; counts are from stored reads, not estimates.`,
       refreshing,
       partial,
@@ -269,7 +385,8 @@ export function createExposure(o: ExposureOptions): Exposure {
   function status(): ExposureStatus {
     const t = now()
     minUsed = minUsed.filter((x) => x > t - 60_000)
-    return { perMinute: { used: minUsed.length, limit: o.limits?.perMin ?? env('LUSCA_EXPOSURE_PER_MIN', 20) }, perDay: { used: day.used, limit: dayMax }, cacheTtlMs: CACHE_MS, chains: [...EXPOSURE_CHAINS] }
+    rollBudget()
+    return { perIp: { perMinute: ipPerMin, perDay: ipDayMax }, budget: Object.fromEntries(EXPOSURE_CHAINS.map((c) => [c, { used: used[c] ?? 0, limit: share[c] }])), perMinute: { used: minUsed.length, limit: o.limits?.perMin ?? env('LUSCA_EXPOSURE_PER_MIN', 20) }, perDay: { used: day.used, limit: dayMax }, cacheTtlMs: CACHE_MS, chains: [...EXPOSURE_CHAINS] }
   }
 
   async function route(p: string, ip: string) {
@@ -283,9 +400,13 @@ export function createExposure(o: ExposureOptions): Exposure {
     const hit = cache.get(k)
     if (!(hit && now() - hit.at < CACHE_MS) && !inflight.has(k)) {
       const d = new Date(now()).toISOString().slice(0, 10)
-      if (d !== day.d) day = { d, used: 0 }
+      if (d !== day.d) {
+        day = { d, used: 0 }
+        ipDay = new Map()
+      }
+      if ((ipDay.get(ip) ?? 0) >= ipDayMax) return json(429, { error: `your connection has used today's ${ipDayMax} lookups (resets 00:00 UTC); answers already read stay free for 10 minutes` })
       const wIp = ipLim.take(ip)
-      if (wIp > 0) return json(429, { error: 'too many lookups from this address, retry shortly', retryMs: wIp }, { 'retry-after': String(Math.ceil(wIp / 1000)) })
+      if (wIp > 0) return json(429, { error: `at most ${ipPerMin} new lookups per minute from your connection, retry shortly`, retryMs: wIp }, { 'retry-after': String(Math.ceil(wIp / 1000)) })
       const wAll = minLim.take('all')
       if (wAll > 0) {
         ipLim.refund(ip)
@@ -296,6 +417,7 @@ export function createExposure(o: ExposureOptions): Exposure {
         return json(429, { error: "today's Exposure lookups are used up (resets 00:00 UTC)" })
       }
       day.used++
+      if (ipDay.size < 100_000) ipDay.set(ip, (ipDay.get(ip) ?? 0) + 1)
       minUsed.push(now())
     }
     try {
